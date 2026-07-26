@@ -198,3 +198,68 @@ def test_emit_before_fit_raises():
 def test_orchestrator_satisfies_the_agent_interface():
     assert issubclass(Orchestrator, Agent)
     assert Orchestrator(verbose=False).name == "orchestrator"
+
+
+# --- Shipped configurations + graceful degradation -------------------------
+
+def test_shipped_configs_are_what_the_ablation_selected():
+    from orchestrator.fusion import DEFAULT_CONFIG, ORCHESTRATOR_CONFIGS
+    assert DEFAULT_CONFIG == "primary"
+    assert ORCHESTRATOR_CONFIGS["primary"] == ("vitals_tcn", "news2", "labs", "notes")
+    assert ORCHESTRATOR_CONFIGS["core-3"] == ("vitals_tcn", "news2", "labs")
+    assert ORCHESTRATOR_CONFIGS["all-5"] == (
+        "vitals_tcn", "news2", "labs", "ecg", "notes")
+    # ECG significantly hurt the fusion, so it must not be in the primary path.
+    assert "ecg" not in ORCHESTRATOR_CONFIGS["primary"]
+
+
+def _touch_agents(tmp_path, agents, splits=("train", "val", "test")):
+    for a in agents:
+        for s in splits:
+            (tmp_path / f"{a}_{s}.npz").write_bytes(b"")
+
+
+def test_resolve_config_uses_primary_when_everything_is_cached(tmp_path):
+    from orchestrator.fusion import ORCHESTRATOR_CONFIGS, resolve_config
+    _touch_agents(tmp_path, ORCHESTRATOR_CONFIGS["all-5"])
+    name, agents = resolve_config(emb_dir=tmp_path)
+    assert name == "primary"
+    assert agents == ORCHESTRATOR_CONFIGS["primary"]
+
+
+def test_resolve_config_degrades_to_core3_when_notes_are_missing(tmp_path):
+    """The realistic deployment case: a site without a notes pipeline."""
+    from orchestrator.fusion import resolve_config
+    _touch_agents(tmp_path, ("vitals_tcn", "news2", "labs"))
+    name, agents = resolve_config(emb_dir=tmp_path)
+    assert name == "core-3"
+    assert "notes" not in agents
+
+
+def test_degradation_never_adds_a_modality_the_caller_did_not_ask_for(tmp_path):
+    from orchestrator.fusion import ORCHESTRATOR_CONFIGS, resolve_config
+    _touch_agents(tmp_path, ORCHESTRATOR_CONFIGS["all-5"])
+    for preferred in ("primary", "core-3"):
+        _, agents = resolve_config(preferred, emb_dir=tmp_path)
+        assert "ecg" not in agents      # only reachable by asking for all-5
+
+
+def test_partial_cache_does_not_count_as_available(tmp_path):
+    """An agent missing even one split must not be treated as usable."""
+    from orchestrator.fusion import available_agents
+    _touch_agents(tmp_path, ("vitals_tcn", "news2", "labs"))
+    _touch_agents(tmp_path, ("notes",), splits=("train", "val"))   # no test split
+    assert "notes" not in available_agents(emb_dir=tmp_path)
+
+
+def test_resolve_config_raises_when_even_core3_is_incomplete(tmp_path):
+    from orchestrator.fusion import resolve_config
+    _touch_agents(tmp_path, ("vitals_tcn", "news2"))
+    with pytest.raises(RuntimeError, match="no usable configuration"):
+        resolve_config(emb_dir=tmp_path)
+
+
+def test_unknown_config_name_is_rejected():
+    from orchestrator.fusion import config_agents
+    with pytest.raises(KeyError):
+        config_agents("core-9")

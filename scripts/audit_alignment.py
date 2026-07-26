@@ -30,12 +30,18 @@ import torch  # noqa: E402
 
 from agents.base import AgentOutput  # noqa: E402
 from agents.labs_agent import build_lab_features, load_labs  # noqa: E402
-from orchestrator.fusion import AgentBank, Orchestrator  # noqa: E402
+from orchestrator.fusion import (  # noqa: E402
+    AgentBank, Orchestrator, resolve_config,
+)
 
 COHORT = REPO / "data" / "cache" / "mimic_cohort_hourly.parquet"
 RAW = REPO / "data" / "cache" / "mimic_raw_hourly.parquet"
 EMB = REPO / "data" / "cache" / "embeddings"
-AGENTS = ("vitals_tcn", "news2", "labs")
+
+# Derived from the SHIPPED configuration rather than hardcoded: the audit must
+# follow whatever the orchestrator actually fuses, or it silently stops checking
+# a modality (this bit once -- the list said 3 agents while the bank loaded 4).
+AGENTS = resolve_config(emb_dir=EMB)[1]
 
 failures = []
 

@@ -39,8 +39,79 @@ from agents.vitals_tcn import TCNBlock, collate, make_batches
 from config import SEED
 
 LABEL = "label_24h"
-DEFAULT_AGENTS = ("vitals_tcn", "news2", "labs")
 EMB_DIR = "data/cache/embeddings"
+
+# --- Shipped agent configurations ------------------------------------------
+# Chosen by scripts/modality_ablation.py, which trained the orchestrator on each
+# subset with everything else held identical (test: 361,229 patient-hours):
+#
+#   config           AUPRC   AUROC   vs core-3 (paired stay bootstrap)
+#   core-3 + notes   0.234   0.788   +0.0029 AUPRC [-0.0011, +0.0065]  <- PRIMARY
+#   core-3           0.231   0.784   (reference)
+#   all-5            0.216   0.783   -0.0146 AUPRC [-0.0225, -0.0068]
+#   core-3 + ECG     0.217   0.780   -0.0139 AUPRC [-0.0211, -0.0066]
+#
+# ECG is excluded from the primary config because adding it *significantly hurts*
+# (CI clear of zero) -- consistent with its standalone result (AUROC 0.607 on
+# covered hours, beaten by NEWS2). The attention head does downweight it to 0.04
+# against a 0.20 uniform baseline, but downweighting mitigates the damage rather
+# than removing it.
+#
+# notes is included on a lean, not a certainty: its gain over core-3 does not
+# reach significance (P(>0)=93% on AUPRC). core-3 remains a fully defensible
+# fallback and is the configuration that carries the audited headline result.
+ORCHESTRATOR_CONFIGS = {
+    "primary": ("vitals_tcn", "news2", "labs", "notes"),
+    "core-3": ("vitals_tcn", "news2", "labs"),
+    "all-5": ("vitals_tcn", "news2", "labs", "ecg", "notes"),
+}
+DEFAULT_CONFIG = "primary"
+
+# Order tried when agents are missing at run time (graceful degradation). Only
+# ever moves to a SMALLER agent set -- never silently adds a modality the caller
+# did not ask for.
+DEGRADATION_ORDER = ("primary", "core-3")
+
+# Back-compat for callers that imported the old name.
+DEFAULT_AGENTS = ORCHESTRATOR_CONFIGS[DEFAULT_CONFIG]
+
+
+def config_agents(config=DEFAULT_CONFIG):
+    """Agent tuple for a named configuration."""
+    if config not in ORCHESTRATOR_CONFIGS:
+        raise KeyError(f"unknown config {config!r}; "
+                       f"choose from {sorted(ORCHESTRATOR_CONFIGS)}")
+    return ORCHESTRATOR_CONFIGS[config]
+
+
+def available_agents(emb_dir=EMB_DIR, splits=("train", "val", "test")):
+    """Which agents have a complete set of cached emissions on disk."""
+    from pathlib import Path
+    emb_dir = Path(emb_dir)
+    every = {a for names in ORCHESTRATOR_CONFIGS.values() for a in names}
+    return {a for a in every
+            if all((emb_dir / f"{a}_{s}.npz").exists() for s in splits)}
+
+
+def resolve_config(preferred=DEFAULT_CONFIG, emb_dir=EMB_DIR):
+    """Pick the best configuration whose agents are all cached.
+
+    Returns ``(config_name, agents)``. Falls back down
+    :data:`DEGRADATION_ORDER` when a modality is unavailable -- the realistic
+    deployment condition, since notes and ECG depend on separately-credentialed
+    sources that a given site may not have.
+    """
+    have = available_agents(emb_dir)
+    candidates = [preferred] + [c for c in DEGRADATION_ORDER if c != preferred]
+    for name in candidates:
+        agents = ORCHESTRATOR_CONFIGS[name]
+        if set(agents) <= have:
+            return name, agents
+    missing = set(ORCHESTRATOR_CONFIGS["core-3"]) - have
+    raise RuntimeError(
+        f"no usable configuration: even core-3 is missing {sorted(missing)}. "
+        f"Run the agent training scripts first."
+    )
 
 
 # --- Loading the agents' cached emissions ----------------------------------
@@ -69,8 +140,15 @@ class AgentBank:
         return self.matrix.shape[1]
 
     @classmethod
-    def load(cls, splits=("train", "val", "test"), agent_names=DEFAULT_AGENTS,
-             emb_dir=EMB_DIR):
+    def load(cls, splits=("train", "val", "test"), agent_names=None,
+             emb_dir=EMB_DIR, config=DEFAULT_CONFIG):
+        """Load cached emissions for a named config (or an explicit agent list).
+
+        With neither argument this loads the shipped PRIMARY configuration,
+        degrading automatically if a modality is uncached (see resolve_config).
+        """
+        if agent_names is None:
+            config, agent_names = resolve_config(config, emb_dir)
         from pathlib import Path
         emb_dir = Path(emb_dir)
         per_split = []
