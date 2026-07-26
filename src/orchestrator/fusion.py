@@ -181,7 +181,8 @@ class Orchestrator(Agent):
 
     def __init__(self, bank=None, d_model=32, kernel_size=3, dilations=(1, 2, 4),
                  dropout=0.1, lr=1e-3, batch_size=64, max_epochs=8, patience=2,
-                 seed=SEED, verbose=True):
+                 seed=SEED, verbose=True, death_weight=1.0,
+                 select_on="composite"):
         super().__init__()
         self.hparams = dict(d_model=d_model, kernel_size=kernel_size,
                             dilations=dilations, dropout=dropout)
@@ -192,6 +193,15 @@ class Orchestrator(Agent):
         self.bank = bank
         self.net = None
         self.device = torch.device("cpu")     # ~25k params; CPU is plenty
+        # Loss weight applied to rows whose 24h window contains a DEATH event.
+        # 1.0 reproduces the unweighted orchestrator exactly. Death is only
+        # ~16% of positive hours, so without reweighting the fusion optimises
+        # almost entirely for the vent/vaso majority.
+        self.death_weight = float(death_weight)
+        # Which label the early-stopping criterion watches. Reweighting the loss
+        # without also changing what we select on would keep picking the epoch
+        # that is best for the majority events.
+        self.select_on = select_on
 
     def _ensure_bank(self):
         if self.bank is None:
@@ -199,12 +209,24 @@ class Orchestrator(Agent):
         return self.bank
 
     def _sequences(self, df, with_labels=True):
-        """Per-stay sequences of fused agent features."""
+        """Per-stay sequences of fused agent features.
+
+        Each row also carries a loss weight ``w``: ``death_weight`` where the
+        24h window contains a death event, 1.0 everywhere else. Also carries
+        ``y_death`` so early stopping can be scored on death specifically.
+        """
         bank = self._ensure_bank()
         X, keys = bank.lookup(df)
         ordered = df.sort_values(list(KEY_COLUMNS)).reset_index(drop=True)
         y = (ordered[LABEL].to_numpy(dtype=float) if with_labels
              else np.zeros(len(ordered), dtype=float))
+
+        death_col = f"{LABEL}_death"
+        if with_labels and death_col in ordered.columns:
+            y_death = ordered[death_col].to_numpy(dtype=float)
+        else:
+            y_death = np.zeros(len(ordered), dtype=float)
+        w = np.where(y_death == 1, self.death_weight, 1.0).astype(float)
 
         stay = keys["stay_id"].to_numpy()
         hour = keys["hour"].to_numpy()
@@ -212,8 +234,19 @@ class Orchestrator(Agent):
         sequences = []
         for lo, hi in zip(np.r_[0, boundaries], np.r_[boundaries, len(stay)]):
             sequences.append({"stay_id": stay[lo], "hours": hour[lo:hi],
-                              "X": X[lo:hi], "y": y[lo:hi]})
+                              "X": X[lo:hi], "y": y[lo:hi],
+                              "w": w[lo:hi], "y_death": y_death[lo:hi]})
         return sequences
+
+    @staticmethod
+    def _pad_weights(sequences, idx, device):
+        """Pad the per-row loss weights to match a collated batch."""
+        items = [sequences[i] for i in idx]
+        T = max(len(s["hours"]) for s in items)
+        out = np.zeros((len(items), T), dtype=np.float32)
+        for i, s in enumerate(items):
+            out[i, :len(s["hours"])] = s["w"]
+        return torch.from_numpy(out).to(device)
 
     def _split_batch(self, X):
         """(B, F, T) tensor -> per-agent latents (B, T, dim) + risks (B, T, A)."""
@@ -245,10 +278,14 @@ class Orchestrator(Agent):
             total, seen = 0.0, 0.0
             for idx in make_batches(train_seq, self.batch_size, shuffle=True, rng=rng):
                 X, y, mask = collate(train_seq, idx, self.device)
+                weights = self._pad_weights(train_seq, idx, self.device) * mask
                 latents, risks = self._split_batch(X)
                 logits, _, _ = self.net(latents, risks)
-                loss = (F.binary_cross_entropy_with_logits(logits, y, reduction="none")
-                        * mask).sum() / mask.sum()
+                # Weighted mean over real hours. Normalising by the weight sum
+                # (not the row count) keeps the loss scale comparable across
+                # death_weight settings, so the learning rate stays meaningful.
+                per_row = F.binary_cross_entropy_with_logits(logits, y, reduction="none")
+                loss = (per_row * weights).sum() / weights.sum()
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
@@ -256,13 +293,17 @@ class Orchestrator(Agent):
                 total += float(loss.detach()) * n_valid
                 seen += n_valid
 
-            scores, y_val = self._score_sequences(val_seq)
+            scores, y_val, y_val_death = self._score_sequences(val_seq)
             val_auprc = auprc(y_val, scores)
+            death_auprc = (auprc(y_val_death, scores) if y_val_death.sum() > 0
+                           else float("nan"))
+            selection = death_auprc if self.select_on == "death" else val_auprc
             if self.verbose:
                 print(f"  epoch {epoch}: train loss {total/seen:.4f} | "
-                      f"val AUPRC {val_auprc:.4f}")
-            if val_auprc > best:
-                best, stale = val_auprc, 0
+                      f"val AUPRC {val_auprc:.4f} | val death AUPRC "
+                      f"{death_auprc:.4f}")
+            if selection > best:
+                best, stale = selection, 0
                 best_state = {k: v.detach().clone()
                               for k, v in self.net.state_dict().items()}
             else:
@@ -275,7 +316,8 @@ class Orchestrator(Agent):
         if best_state is not None:
             self.net.load_state_dict(best_state)
         if self.verbose:
-            print(f"[{self.name}] best val AUPRC {best:.4f}")
+            print(f"[{self.name}] best val {self.select_on} AUPRC {best:.4f} "
+                  f"(death_weight={self.death_weight:g})")
         return self
 
     @torch.no_grad()
@@ -302,11 +344,12 @@ class Orchestrator(Agent):
                 np.concatenate(keys))
 
     def _score_sequences(self, sequences):
+        """Scores plus the composite and death labels, in forward order."""
         logits, _, _, _ = self._forward(sequences)
-        y = np.concatenate([sequences[i]["y"]
-                            for idx in make_batches(sequences, self.batch_size)
-                            for i in idx])
-        return 1.0 / (1.0 + np.exp(-logits)), y
+        order = [i for idx in make_batches(sequences, self.batch_size) for i in idx]
+        y = np.concatenate([sequences[i]["y"] for i in order])
+        y_death = np.concatenate([sequences[i]["y_death"] for i in order])
+        return 1.0 / (1.0 + np.exp(-logits)), y, y_death
 
     # -- emission ---------------------------------------------------------
     def _emit_raw(self, df):

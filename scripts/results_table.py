@@ -100,7 +100,14 @@ def main():
     orch = Orchestrator(bank=AgentBank.load(), max_epochs=args.epochs, verbose=False)
     orch.fit(train, val)
     results["ORCHESTRATOR"] = (orch.raw_risk(test), orch.emit(test).risk)
-    print(f"[fit] orchestrator {time.time() - t0:.0f}s")
+    # Re-cache the orchestrator too. Its emissions are a function of the agent
+    # latents cached moments ago, so leaving an older file on disk would strand a
+    # model trained on superseded inputs -- which is exactly what happened once:
+    # the ablation's LATENT column and this table's ORCHESTRATOR row came from
+    # two different training runs. audit_alignment.py now fails on that skew.
+    for split_name, df in (("train", train), ("val", val), ("test", test)):
+        orch.emit_and_cache(df, EMB_DIR / f"{orch.name}_{split_name}.npz")
+    print(f"[fit] orchestrator {time.time() - t0:.0f}s (cached)")
 
     # --- random reference -------------------------------------------------
     rng = np.random.default_rng(42)
