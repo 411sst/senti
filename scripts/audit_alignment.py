@@ -242,6 +242,49 @@ def main():
     check("labs at hour t == last result AVAILABLE (storetime) before t",
           lviol == 0, f"{lchecked:,} cells, {lviol} violations")
 
+    # notes: only run when the shipped config actually fuses them
+    if "notes" in AGENTS:
+        from agents.notes_agent import STALENESS_HOURS as NOTE_STALENESS
+        from agents.notes_agent import assemble_note_features
+
+        z = np.load(REPO / "data" / "cache" / "note_embeddings.npz", allow_pickle=True)
+        note_index = pd.read_parquet(REPO / "data" / "cache" / "note_index.parquet")
+        note_sub = note_index[note_index.stay_id.isin(probe)]
+        _, has_note, note_age, nkeys = assemble_note_features(
+            c[["stay_id", "hour"]], note_index, z["embeddings"], z["note_ids"])
+
+        nviol = nchecked = 0
+        for sid in probe:
+            avail = note_sub[note_sub.stay_id == sid].sort_values("note_hour")
+            rows = nkeys[nkeys.stay_id == sid]
+            for pos, hr in zip(rows.index, rows["hour"]):
+                nchecked += 1
+                prior = avail[avail.note_hour < hr]          # STRICTLY before t
+                expected_has = (len(prior) > 0
+                                and (hr - prior.note_hour.iloc[-1]) <= NOTE_STALENESS)
+                if bool(has_note[pos] > 0) != bool(expected_has):
+                    nviol += 1
+                    continue
+                if expected_has:
+                    want_age = hr - prior.note_hour.iloc[-1]
+                    if not np.isclose(note_age[pos], want_age, atol=1e-6):
+                        nviol += 1                          # not the MOST RECENT
+        check("notes at hour t == most recent note AVAILABLE before t "
+              f"(<= {NOTE_STALENESS}h)", nviol == 0,
+              f"{nchecked:,} cells, {nviol} violations")
+
+        # a note landing exactly at hour t must never be used
+        same_hour = 0
+        for sid in probe:
+            avail = note_sub[note_sub.stay_id == sid]
+            rows = nkeys[nkeys.stay_id == sid]
+            for pos, hr in zip(rows.index, rows["hour"]):
+                exact = avail[np.isclose(avail.note_hour, hr)]
+                if len(exact) and has_note[pos] > 0 and np.isclose(note_age[pos], 0.0):
+                    same_hour += 1
+        check("no note is used in its own availability hour", same_hour == 0,
+              f"{same_hour} same-hour uses")
+
     # the orchestrator must not be able to bypass the agents
     before = orch._sequences(sub)
     scrambled = sub.copy()

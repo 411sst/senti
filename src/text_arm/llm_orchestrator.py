@@ -83,23 +83,33 @@ def parse_risk(text):
 
 
 class OllamaRunner:
-    """Thin wrapper over the local `ollama run` CLI (sequential, one model)."""
+    """Thin wrapper over the local Ollama HTTP API (sequential, one model).
 
-    def __init__(self, model=DEFAULT_MODEL, timeout=120, temperature=0.0):
+    ``system`` and ``num_predict`` default to the risk-fusion task above. The
+    explainability layer reuses this runner with its own system prompt and a
+    longer generation budget, so there is exactly one place that knows how to
+    talk to the local model.
+    """
+
+    def __init__(self, model=DEFAULT_MODEL, timeout=120, temperature=0.0,
+                 system=SYSTEM_PROMPT, num_predict=8):
         self.model = model
         self.timeout = timeout
         self.temperature = temperature
+        self.system = system
+        self.num_predict = num_predict
 
     def generate(self, prompt):
         """Return the model's raw reply for one prompt."""
         payload = json.dumps({
             "model": self.model,
             "prompt": prompt,
-            "system": SYSTEM_PROMPT,
+            "system": self.system,
             "stream": False,
             # temperature 0 for reproducibility: the ablation should not turn on
             # sampling luck.
-            "options": {"temperature": self.temperature, "num_predict": 8,
+            "options": {"temperature": self.temperature,
+                        "num_predict": self.num_predict,
                         "top_p": 1.0, "seed": 42},
         })
         result = subprocess.run(
