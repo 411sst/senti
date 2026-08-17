@@ -43,7 +43,14 @@ def main():
     done = {}
     if OUT.exists():
         z = np.load(OUT, allow_pickle=True)
-        done = {str(n): z["embeddings"][i] for i, n in enumerate(z["note_ids"])}
+        # Pull both arrays out ONCE. Indexing z["embeddings"] inside the
+        # comprehension re-decompresses the whole compressed array on every
+        # iteration -- with 90k notes cached that is ~25 TB of redundant
+        # decompression and a fresh 277 MB allocation each time, which hangs the
+        # resume and gets the process OOM-killed. It went unnoticed because the
+        # first run started from an empty cache and never took this branch.
+        cached_ids, cached_matrix = z["note_ids"], z["embeddings"]
+        done = {str(n): cached_matrix[i] for i, n in enumerate(cached_ids)}
         print(f"[resume] {len(done):,} already encoded")
 
     todo = df[~df.note_id.astype(str).isin(done)].copy()

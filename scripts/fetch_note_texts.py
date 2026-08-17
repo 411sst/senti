@@ -1,6 +1,7 @@
 """Fetch the radiology note texts our cohort can actually see.
 
-    python scripts/fetch_note_texts.py
+    python scripts/fetch_note_texts.py                    # most-recent note only
+    python scripts/fetch_note_texts.py --mode window      # every note in the window
 
 Only ~90k of the 2.3M radiology reports are ever selected as "the most recent
 note available before hour t, within 72h" for some cohort patient-hour. Encoding
@@ -16,6 +17,7 @@ available, not when the study was performed. The median gap is 136 minutes, so
 using charttime would leak an impression 2+ hours before any clinician saw it.
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -33,8 +35,7 @@ OUT = REPO / "data" / "cache" / "note_texts.parquet"
 STALENESS_HOURS = 72
 
 
-def needed_note_ids():
-    """note_ids selected as the most recent available note for some cohort hour."""
+def _load():
     notes = pd.read_parquet(INDEX)
     cohort = pd.read_parquet(COHORT)[["stay_id", "hour"]]
     cohort["stay_id"] = cohort.stay_id.astype("int64")
@@ -42,6 +43,12 @@ def needed_note_ids():
     notes["stay_id"] = notes.stay_id.astype("int64")
     notes["note_hour"] = notes.note_hour.astype("float64")
 
+    return cohort, notes
+
+
+def needed_note_ids():
+    """note_ids selected as the most recent available note for some cohort hour."""
+    cohort, notes = _load()
     merged = pd.merge_asof(
         cohort.sort_values("hour").reset_index(drop=True),
         notes[["stay_id", "note_hour", "note_id"]]
@@ -54,12 +61,44 @@ def needed_note_ids():
     return sorted(usable.note_id.unique())
 
 
+def window_note_ids(window=STALENESS_HOURS):
+    """Every note reachable by a cohort hour within ``window`` hours BEFORE it.
+
+    The most-recent-only set above is a strict subset of this one. The rich
+    notes agent aggregates over the whole window, so it needs all of them --
+    but only ~37k more than the most-recent set, because the same report is the
+    most recent one for many consecutive hours.
+
+    ``age > 0`` is the same strictly-before-t rule ``merge_asof`` enforces with
+    ``allow_exact_matches=False``: a report filed exactly at hour t is not yet
+    available at hour t.
+    """
+    cohort, notes = _load()
+    pairs = cohort.merge(notes[["stay_id", "note_hour", "note_id"]], on="stay_id")
+    age = pairs["hour"] - pairs["note_hour"]
+    reachable = pairs[(age > 0) & (age <= window)]
+    return sorted(reachable.note_id.unique())
+
+
 def main():
-    ids = needed_note_ids()
-    print(f"[resolve] {len(ids):,} distinct notes are reachable by some patient-hour")
-    if OUT.exists():
-        have = set(pd.read_parquet(OUT).note_id)
-        if set(ids) <= have:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=["recent", "window"], default="recent")
+    ap.add_argument("--window", type=float, default=STALENESS_HOURS)
+    args = ap.parse_args()
+
+    ids = (needed_note_ids() if args.mode == "recent"
+           else window_note_ids(args.window))
+    label = ("most recent before t" if args.mode == "recent"
+             else f"anywhere in the {args.window:g}h window before t")
+    print(f"[resolve] {len(ids):,} distinct notes are reachable by some "
+          f"patient-hour ({label})")
+
+    existing = pd.read_parquet(OUT) if OUT.exists() else None
+    if existing is not None:
+        have = set(existing.note_id.astype(str))
+        ids = [i for i in ids if str(i) not in have]
+        print(f"[resolve] {len(have):,} already cached, {len(ids):,} to fetch")
+        if not ids:
             print(f"[skip] {OUT} already covers them")
             return
 
@@ -78,6 +117,10 @@ def main():
 
     df = client.query(sql, job_config=job).result().to_dataframe(
         create_bqstorage_client=True)
+    if existing is not None:
+        # append rather than overwrite: the window set is a superset of the
+        # most-recent set, and re-downloading what we already have is waste
+        df = pd.concat([existing, df], ignore_index=True).drop_duplicates("note_id")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT, index=False)
     chars = df.text.str.len()
