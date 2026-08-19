@@ -37,6 +37,15 @@ from news2 import (
 RAW_PATH = "data/cache/mimic_raw_hourly.parquet"
 OUT_PATH = "data/cache/mimic_cohort_hourly.parquet"
 
+# Stabilization window (hours). Must match --stab-hours in
+# scripts/fetch_mimic_cohort.py. Predictions start at this hour; the raw
+# extract additionally carries hours [0, STAB_HOURS) as HISTORY rows
+# (is_history = 1) so that after the strictly-before-t shift the first
+# prediction row already holds real carried-forward context. History rows are
+# dropped in :func:`build` after feature construction -- they are never
+# prediction opportunities and never reach the exported cohort.
+STAB_HOURS = 6
+
 PATIENT_ID = "patient_id"
 STAY_ID = "stay_id"
 HOUR = "hour"
@@ -295,6 +304,14 @@ def build(raw_path=RAW_PATH, out_path=OUT_PATH, val_size=0.15, test_size=0.15,
     feat["news2"] = news2.astype(np.int16)
     feat["is_alert"] = alert
     feat["on_oxygen"] = on_oxygen
+
+    # History rows [0, STAB_HOURS) exist so the ffill+shift above could carry
+    # their observations INTO the first prediction hour; they are not
+    # prediction rows themselves and leave the table here. Raw extracts from
+    # before the h6 root-cause fix have no is_history column and no history
+    # rows, so there is nothing to drop.
+    if "is_history" in feat.columns:
+        feat = feat[pd.to_numeric(feat["is_history"]) == 0].reset_index(drop=True)
 
     # Patient-level three-way split: train / val (calibration) / test.
     # A patient's rows -- and therefore all of their ICU stays -- land in

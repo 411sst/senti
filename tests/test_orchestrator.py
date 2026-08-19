@@ -205,8 +205,12 @@ def test_orchestrator_satisfies_the_agent_interface():
 def test_shipped_configs_are_what_the_ablation_selected():
     from orchestrator.fusion import DEFAULT_CONFIG, ORCHESTRATOR_CONFIGS
     assert DEFAULT_CONFIG == "primary"
-    assert ORCHESTRATOR_CONFIGS["primary"] == ("vitals_tcn", "news2", "labs", "notes")
+    # Primary == core-3, selected on VAL (modality_ablation --split val):
+    # notes and ECG are retained-but-benched until they clear the rejoin bar
+    # (positive val fusion contribution, CI clear of zero).
+    assert ORCHESTRATOR_CONFIGS["primary"] == ("vitals_tcn", "news2", "labs")
     assert ORCHESTRATOR_CONFIGS["core-3"] == ("vitals_tcn", "news2", "labs")
+    assert ORCHESTRATOR_CONFIGS["core-3+notes"] == ("vitals_tcn", "news2", "labs", "notes")
     assert ORCHESTRATOR_CONFIGS["all-5"] == (
         "vitals_tcn", "news2", "labs", "ecg", "notes")
     # ECG significantly hurt the fusion, so it must not be in the primary path.
@@ -227,13 +231,15 @@ def test_resolve_config_uses_primary_when_everything_is_cached(tmp_path):
     assert agents == ORCHESTRATOR_CONFIGS["primary"]
 
 
-def test_resolve_config_degrades_to_core3_when_notes_are_missing(tmp_path):
-    """The realistic deployment case: a site without a notes pipeline."""
+def test_resolve_config_needs_no_benched_modalities(tmp_path):
+    """A site with only the core three agents runs the PRIMARY config outright:
+    since the val-based selection benched notes and ECG, primary == core-3 and
+    there is nothing left to degrade to."""
     from orchestrator.fusion import resolve_config
     _touch_agents(tmp_path, ("vitals_tcn", "news2", "labs"))
     name, agents = resolve_config(emb_dir=tmp_path)
-    assert name == "core-3"
-    assert "notes" not in agents
+    assert name == "primary"
+    assert "notes" not in agents and "ecg" not in agents
 
 
 def test_degradation_never_adds_a_modality_the_caller_did_not_ask_for(tmp_path):

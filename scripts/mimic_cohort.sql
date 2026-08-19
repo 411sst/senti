@@ -62,10 +62,17 @@ cohort AS (
   WHERE event_h_raw = 1e9 OR event_h_raw > @stab_hours
 ),
 -- ---- hourly grid (capped at 14 days to bound size) -----------------------
+-- Starts at hour 0, not @stab_hours: hours [0, @stab_hours) are emitted as
+-- HISTORY rows (is_history = 1) so that after the strictly-before-t shift in
+-- Python the first prediction hour carries real carried-forward context --
+-- the same reason the labs extract opens its window 24h before admission.
+-- History rows are never prediction rows: src/mimic_cohort.py drops them
+-- after feature construction. Censoring needs no history clause because the
+-- cohort is event-free through @stab_hours by definition.
 grid AS (
   SELECT c.stay_id, c.subject_id, c.event_h, c.death_h, c.vent_h, c.vaso_h, h AS hour
   FROM cohort c,
-  UNNEST(GENERATE_ARRAY(@stab_hours, LEAST(CAST(FLOOR(c.los*24) AS INT64), 336))) AS h
+  UNNEST(GENERATE_ARRAY(0, LEAST(CAST(FLOOR(c.los*24) AS INT64), 336))) AS h
   WHERE c.event_h IS NULL OR h < c.event_h   -- censor at the first event
 ),
 -- ---- hourly observation bins --------------------------------------------
@@ -113,6 +120,7 @@ fio AS (
   GROUP BY 1, 2
 )
 SELECT g.stay_id, g.subject_id, g.hour,
+       CAST(g.hour < @stab_hours AS INT64) AS is_history,
        v.heart_rate, v.resp_rate, v.spo2, v.sbp, v.temperature,
        gc.gcs, gc.gcs_verbal, gc.gcs_motor, gc.gcs_eyes, gc.gcs_unable,
        o.o2_flow, o.o2_device, f.fio2,

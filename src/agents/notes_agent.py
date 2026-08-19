@@ -34,54 +34,18 @@ from agents.base import KEY_COLUMNS, Agent
 from agents.note_encoder import EMBED_DIM
 from config import SEED
 from metrics import auprc
+# The assembler lives in the torch-free modality_features module so the fair
+# GBM baselines can use it next to XGBoost (torch and XGBoost cannot share a
+# process on macOS -- see tests/conftest.py). Re-exported here unchanged, under
+# this module's historical names.
+from modality_features import (  # noqa: F401  (re-exported public names)
+    NOTE_EMBED_CACHE as EMBED_CACHE,
+    NOTE_INDEX_PATH as NOTE_INDEX,
+    NOTE_STALENESS_HOURS as STALENESS_HOURS,
+    assemble_note_features,
+)
 
 LABEL = "label_24h"
-EMBED_CACHE = "data/cache/note_embeddings.npz"
-NOTE_INDEX = "data/cache/note_index.parquet"
-STALENESS_HOURS = 72
-
-
-def assemble_note_features(cohort, note_index, embeddings, note_ids,
-                           staleness=STALENESS_HOURS):
-    """Per patient-hour: the most recent note AVAILABLE strictly before t.
-
-    ``allow_exact_matches=False`` excludes a note that became available exactly
-    at hour ``t``; ``direction="backward"`` looks only into the past. Anything
-    older than ``staleness`` is dropped, so a week-old report is treated as no
-    information rather than as current.
-
-    Returns ``(embeddings (N, 768), has_note (N,), age (N,), keys)`` in
-    ``(stay_id, hour)`` order.
-    """
-    lookup = {str(n): i for i, n in enumerate(note_ids)}
-
-    left = cohort[["stay_id", "hour"]].copy()
-    left["stay_id"] = left.stay_id.astype("int64")
-    left["hour"] = left.hour.astype("float64")
-    right = note_index[["stay_id", "note_hour", "note_id"]].copy()
-    right["stay_id"] = right.stay_id.astype("int64")
-    right["note_hour"] = right.note_hour.astype("float64")
-
-    merged = pd.merge_asof(
-        left.sort_values("hour").reset_index(drop=True),
-        right.sort_values("note_hour").reset_index(drop=True),
-        left_on="hour", right_on="note_hour", by="stay_id",
-        direction="backward", allow_exact_matches=False,
-    ).sort_values(["stay_id", "hour"]).reset_index(drop=True)
-
-    age = (merged["hour"] - merged["note_hour"]).to_numpy(dtype=float)
-    usable = merged["note_id"].notna().to_numpy() & (age <= staleness)
-
-    out = np.zeros((len(merged), EMBED_DIM), dtype=np.float32)
-    has = np.zeros(len(merged), dtype=np.float32)
-    for i in np.flatnonzero(usable):
-        idx = lookup.get(str(merged["note_id"].iloc[i]))
-        if idx is None:
-            continue                      # note not encoded -> treat as absent
-        out[i] = embeddings[idx]
-        has[i] = 1.0
-    age = np.where(has > 0, age, 0.0)
-    return out, has, age.astype(np.float32), merged[["stay_id", "hour"]].astype("int64")
 
 
 def presence_only_auprc(y, has_note):

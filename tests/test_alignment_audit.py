@@ -235,3 +235,20 @@ def test_label_is_not_shifted_by_one_hour():
     assert got == [0, 1, 1]                    # correct: window opens at hour 6
     assert got != [1, 1, 1]                    # would mean (h-1, h+23] or wider
     assert got != [0, 0, 1]                    # would mean (h+1, h+25]
+
+
+def test_contamination_terms_respect_word_boundaries():
+    """'ett' must match the tube, not 'better' (the audit's false-positive bug)."""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "audit_note_contamination",
+        Path(__file__).resolve().parent.parent / "scripts" / "audit_note_contamination.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    pattern = mod.compile_terms(["ett", "on pressors"])
+    assert pattern.search("ETT in good position")
+    assert pattern.search("patient started on pressors overnight")
+    assert not pattern.search("feeling much better today")
+    assert not pattern.search("the patient settled")

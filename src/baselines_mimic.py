@@ -21,11 +21,27 @@ from sklearn.isotonic import IsotonicRegression
 
 from config import SEED
 from metrics import auprc, ece, lead_time
-from mimic_cohort import EVENT_TYPES, OUT_PATH, VITALS
+from mimic_cohort import EVENT_TYPES, OUT_PATH, STAB_HOURS, VITALS
 
 LABEL = "label_24h"
 STAY_ID = "stay_id"
 HOUR = "hour"
+
+
+def alertable_mask(df):
+    """Rows eligible to raise an alert: every prediction hour, since the h6 fix.
+
+    Historical note: the hourly grid once started AT the stabilization
+    boundary, so the strictly-before-t shift left every stay's first row
+    (h6) with no observed data at all -- NEWS2 pinned to 0 while a learned
+    model could still fire on its base-rate prior, a free head start that had
+    to be masked out of all alerting evaluation (the old "warm-up rule").
+    The extract now emits hours [0, STAB_HOURS) as history rows, so h6
+    carries six hours of real carried-forward context and competes on data
+    like every other hour. The function remains as the single seam where an
+    eligibility rule would live if a future grid change needed one.
+    """
+    return np.ones(len(df), dtype=bool)
 
 # Raw inputs only -- NEWS2 itself is the competing baseline, never a GBM feature.
 GBM_FEATURES = (
@@ -67,9 +83,13 @@ def _stay_series(df, scores):
 
     Uses ``event_h`` (the true hour of the first deterioration event) rather
     than inferring it from the label, so lead times are exact.
+
+    Applies :func:`alertable_mask` (all hours, since the h6 root-cause fix),
+    kept as the one seam where an eligibility rule would apply.
     """
     tmp = df[[STAY_ID, HOUR, "event_h"]].copy()
     tmp["score"] = np.asarray(scores)
+    tmp = tmp[alertable_mask(tmp)]
     risk, events, times = [], [], []
     for _, g in tmp.groupby(STAY_ID, sort=False):
         g = g.sort_values(HOUR)
@@ -113,10 +133,13 @@ def paired_first_alarm(test, s_news2, s_gbm, thr_news2, thr_gbm):
     Both models are evaluated at thresholds chosen to flag the same volume of
     hours (see :func:`run`), so this measures ranking, not alert appetite.
     Includes a two-sided sign test over the discordant pairs.
+
+    Applies :func:`alertable_mask` (all hours, since the h6 root-cause fix).
     """
     tmp = test[[STAY_ID, HOUR, "event_h"]].copy()
     tmp["n2"] = np.asarray(s_news2)
     tmp["gb"] = np.asarray(s_gbm)
+    tmp = tmp[alertable_mask(tmp)]
 
     diffs = []
     for _, g in tmp.groupby(STAY_ID, sort=False):
@@ -197,13 +220,15 @@ def run(path=OUT_PATH, seed=SEED, alert_rates=ALERT_RATES):
         }
 
     # --- lead-time sweep at matched alert budgets -------------------------
+    alertable = alertable_mask(test)
     series = {name: _stay_series(test, s) for name, s in scores.items()}
     for rate in alert_rates:
         for name, s in scores.items():
-            thr = float(np.quantile(s, 1.0 - rate))
+            sa = s[alertable]
+            thr = float(np.quantile(sa, 1.0 - rate))
             r = lead_time(*series[name][:2], thr, times=series[name][2])
             r.update(budget=f"{rate*100:.0f}%", model=name,
-                     actual_rate=float((s >= thr).mean()),
+                     actual_rate=float((sa >= thr).mean()),
                      false_alarm_stay_rate=_false_alarm_stay_rate(series[name], thr))
             results["sweep"].append(r)
 
@@ -213,14 +238,15 @@ def run(path=OUT_PATH, seed=SEED, alert_rates=ALERT_RATES):
     # alerts and "win" on earliness for free. So GBM is matched to NEWS2's
     # ACHIEVED rate at each budget, making the comparison volume-fair.
     results["paired"] = []
+    news2_a, gbm_a = news2_test[alertable], gbm_test[alertable]
     for rate in (0.01, 0.02, 0.05):
-        thr_news2 = float(np.quantile(news2_test, 1.0 - rate))
-        matched_rate = float((news2_test >= thr_news2).mean())
-        thr_gbm = float(np.quantile(gbm_test, 1.0 - matched_rate))
+        thr_news2 = float(np.quantile(news2_a, 1.0 - rate))
+        matched_rate = float((news2_a >= thr_news2).mean())
+        thr_gbm = float(np.quantile(gbm_a, 1.0 - matched_rate))
         row = paired_first_alarm(test, news2_test, gbm_test, thr_news2, thr_gbm)
         row.update(
             budget=f"{rate*100:.0f}%", matched_rate=matched_rate,
-            gbm_rate=float((gbm_test >= thr_gbm).mean()),
+            gbm_rate=float((gbm_a >= thr_gbm).mean()),
             falarm_news2=_false_alarm_stay_rate(series["NEWS2"], thr_news2),
             falarm_gbm=_false_alarm_stay_rate(series["GBM"], thr_gbm),
         )
@@ -233,6 +259,8 @@ def run(path=OUT_PATH, seed=SEED, alert_rates=ALERT_RATES):
 def _print_report(r):
     s = r["summary"]
     print(f"\nMIMIC-IV in-ICU deterioration (24h horizon), 6h stabilization")
+    print(f"  hours [0, {STAB_HOURS}) enter as LOCF history, so hour {STAB_HOURS} "
+          f"predicts from real data and every hour is alertable")
     print(f"  train {s['n_train_hours']:,}h | val {s['n_val_hours']:,}h (calibration) "
           f"| test {s['n_test_hours']:,}h")
     print(f"  test: {s['n_test_stays']:,} ICU stays, {s['n_test_patients']:,} patients, "

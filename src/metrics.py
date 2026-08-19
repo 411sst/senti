@@ -62,6 +62,25 @@ def auroc(y_true, y_scores):
     return float(roc_auc_score(y_true, y_scores))
 
 
+def _validated_probs(y_probs):
+    """Probabilities must live in [0, 1] -- anything else is a caller bug.
+
+    The old behaviour silently dropped out-of-range values from every bin while
+    still counting them in the denominator, which once made a NEWS2 score of
+    0-20 produce a small-looking "ECE" with 79% of rows contributing nothing.
+    Failing loudly is the fix.
+    """
+    p = np.asarray(y_probs, dtype=float)
+    if p.size and (np.isnan(p).any() or p.min() < 0.0 or p.max() > 1.0):
+        raise ValueError(
+            "calibration metrics need probabilities in [0, 1]; got values in "
+            f"[{np.nanmin(p) if p.size else float('nan'):.4g}, "
+            f"{np.nanmax(p) if p.size else float('nan'):.4g}]"
+            + (" with NaNs" if np.isnan(p).any() else "")
+        )
+    return p
+
+
 def ece(y_true, y_probs, n_bins=10):
     """Expected Calibration Error (binary).
 
@@ -86,7 +105,7 @@ def ece(y_true, y_probs, n_bins=10):
         Expected Calibration Error in [0, 1]; lower is better.
     """
     y_true = np.asarray(y_true, dtype=float)
-    y_probs = np.asarray(y_probs, dtype=float)
+    y_probs = _validated_probs(y_probs)
     n = y_true.shape[0]
     if n == 0:
         return 0.0
@@ -108,6 +127,84 @@ def ece(y_true, y_probs, n_bins=10):
         frequency = y_true[mask].mean()
         total += (count / n) * abs(confidence - frequency)
     return float(total)
+
+
+def ece_adaptive(y_true, y_probs, n_bins=15):
+    """Equal-mass-binned ECE -- the honest version at low prevalence.
+
+    Equal-WIDTH bins are nearly unfalsifiable when 4.7% prevalence pushes ~90%
+    of predictions into the lowest bin: one bin dominates the weighted average
+    and within-bin miscalibration averages away. Here the bins are quantiles of
+    the score distribution instead, so every bin carries comparable weight and
+    the low-risk region -- where alerting thresholds actually live -- is
+    examined at full resolution. Duplicate quantile edges (isotonic scores tie
+    heavily) are merged rather than left as empty bins.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_probs = _validated_probs(y_probs)
+    if y_true.shape[0] == 0:
+        return 0.0
+
+    edges = np.unique(np.quantile(y_probs, np.linspace(0.0, 1.0, n_bins + 1)))
+    assign = np.searchsorted(edges[1:-1], y_probs, side="right")
+    total = 0.0
+    for b in np.unique(assign):
+        mask = assign == b
+        total += (mask.mean()) * abs(y_probs[mask].mean() - y_true[mask].mean())
+    return float(total)
+
+
+def calibration_slope_intercept(y_true, y_probs, eps=1e-6):
+    """Cox recalibration: logistic fit of the outcome on logit(predicted risk).
+
+    The clinical-statistics standard for "weak calibration" (Van Calster et
+    al.): slope 1 means risk spread is right (slope < 1 = overfitted/too
+    extreme, > 1 = too timid); intercept 0 (given slope) means the overall
+    level is right. Probabilities are clipped away from {0, 1} so isotonic's
+    exact zeros stay finite in logit space.
+
+    Returns ``(slope, intercept)``.
+    """
+    from sklearn.linear_model import LogisticRegression
+
+    y_true = np.asarray(y_true, dtype=float)
+    p = np.clip(_validated_probs(y_probs), eps, 1.0 - eps)
+    logit = np.log(p / (1.0 - p)).reshape(-1, 1)
+    fit = LogisticRegression(C=np.inf, solver="lbfgs", max_iter=1000)
+    fit.fit(logit, y_true)
+    return float(fit.coef_[0, 0]), float(fit.intercept_[0])
+
+
+def ici(y_true, y_probs, frac=0.1):
+    """Integrated Calibration Index: mean |smoothed observed rate - predicted|.
+
+    Austin & Steyerberg define ICI against a loess-smoothed calibration curve;
+    statsmodels is not a dependency here, so the curve is estimated with the
+    nearest equivalent: a Gaussian kernel smoother over the RANK of the
+    prediction (equal-mass, like loess's span), with ``frac`` of the sample as
+    the kernel's ~2-sigma width. Averaging |curve - prediction| over the
+    observations weights the index by the score density, exactly as ICI
+    prescribes.
+    """
+    from scipy.signal import fftconvolve
+
+    y_true = np.asarray(y_true, dtype=float)
+    p = _validated_probs(y_probs)
+    n = y_true.shape[0]
+    if n == 0:
+        return 0.0
+
+    order = np.argsort(p, kind="stable")
+    y_sorted, p_sorted = y_true[order], p[order]
+
+    sigma = max(1.0, frac * n / 2.0)
+    half = int(3 * sigma)
+    kernel = np.exp(-0.5 * (np.arange(-half, half + 1) / sigma) ** 2)
+    kernel /= kernel.sum()
+
+    padded = np.concatenate([y_sorted[half:0:-1], y_sorted, y_sorted[-2:-half - 2:-1]])
+    smoothed = fftconvolve(padded, kernel, mode="valid")
+    return float(np.mean(np.abs(smoothed - p_sorted)))
 
 
 def lead_time(risk_scores, event_times, threshold, times=None):

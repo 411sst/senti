@@ -103,17 +103,22 @@ def _fmt(value, digits=0):
     return f"{value:.{digits}f}"
 
 
-def vitals_summary(current, past, risk):
+def vitals_summary(current, past, risk, include_ranges=True):
     """One sentence about the vitals trajectory.
 
     ``current`` and ``past`` are the before-t feature rows at hour ``t`` and
     hour ``t - TREND_LAG_HOURS``; both are LOCF'd, strictly-before-t values.
+
+    ``include_ranges`` controls the "(78->92 over 4h)" detail on a moving heart
+    rate. The LLM arm keeps it (default); the encoded-text channel experiment
+    drops it, because the before->now cross-product explodes the number of
+    distinct sentences without adding information beyond the trend word.
     """
     parts = []
     for col in ("heart_rate", "spo2", "resp_rate", "sbp"):
         now, before = current.get(col), (past.get(col) if past is not None else None)
         trend = trend_word(now, before, VITAL_ABS_THRESHOLD[col])
-        if col == "heart_rate" and trend in ("rising", "falling"):
+        if include_ranges and col == "heart_rate" and trend in ("rising", "falling"):
             parts.append(f"{VITAL_WORDS[col]} {trend} "
                          f"({_fmt(before)}->{_fmt(now)} over {TREND_LAG_HOURS}h)")
         else:
@@ -151,7 +156,7 @@ def news2_summary(score, components, risk):
 
 
 def build_summaries(cohort, lab_features, news2_latent, risks,
-                    trend_lag=TREND_LAG_HOURS):
+                    trend_lag=TREND_LAG_HOURS, include_ranges=True):
     """Build all three agents' summaries for every cohort row.
 
     Parameters
@@ -191,7 +196,8 @@ def build_summaries(cohort, lab_features, news2_latent, risks,
         j = shifted_idx[i]
         vit_past = vit_now[j] if j >= 0 else None
         lab_past = lab_now[j] if j >= 0 else None
-        vit_txt.append(vitals_summary(vit_now[i], vit_past, risks["vitals_tcn"][i]))
+        vit_txt.append(vitals_summary(vit_now[i], vit_past, risks["vitals_tcn"][i],
+                                      include_ranges=include_ranges))
         lab_txt.append(labs_summary(lab_now[i], lab_past, risks["labs"][i]))
         n2_txt.append(news2_summary(news2_scores[i], news2_latent[i], risks["news2"][i]))
 

@@ -42,27 +42,30 @@ LABEL = "label_24h"
 EMB_DIR = "data/cache/embeddings"
 
 # --- Shipped agent configurations ------------------------------------------
-# Chosen by scripts/modality_ablation.py, which trained the orchestrator on each
-# subset with everything else held identical (test: 361,229 patient-hours):
+# Chosen by scripts/modality_ablation.py --split val (VAL selection -- the test
+# split plays no part in this decision). On the corrected cohort (h6 history
+# fix), val: 378,763 patient-hours, patient-clustered paired bootstrap:
 #
-#   config           AUPRC   AUROC   vs core-3 (paired stay bootstrap)
-#   core-3 + notes   0.234   0.788   +0.0029 AUPRC [-0.0011, +0.0065]  <- PRIMARY
-#   core-3           0.231   0.784   (reference)
-#   all-5            0.216   0.783   -0.0146 AUPRC [-0.0225, -0.0068]
-#   core-3 + ECG     0.217   0.780   -0.0139 AUPRC [-0.0211, -0.0066]
+#   config           val AUPRC   vs core-3 (95% CI)              P(>0)
+#   core-3           0.230       (reference)                      --    <- PRIMARY
+#   core-3 + notes   0.226       -0.0038 [-0.0081, +0.0007]        6%
+#   core-3 + ECG     0.219       -0.0101 [-0.0181, -0.0029]        0%
+#   all-5            0.218       -0.0111 [-0.0188, -0.0035]        0%
 #
-# ECG is excluded from the primary config because adding it *significantly hurts*
-# (CI clear of zero) -- consistent with its standalone result (AUROC 0.607 on
-# covered hours, beaten by NEWS2). The attention head does downweight it to 0.04
-# against a 0.20 uniform baseline, but downweighting mitigates the damage rather
-# than removing it.
-#
-# notes is included on a lean, not a certainty: its gain over core-3 does not
-# reach significance (P(>0)=93% on AUPRC). core-3 remains a fully defensible
-# fallback and is the configuration that carries the audited headline result.
+# notes and ECG are RETAINED modalities, evaluated and currently benched, not
+# removed: their agents, caches, and configs stay maintained, and either
+# rejoins the primary the moment it clears the bar -- a POSITIVE fusion
+# contribution over the current primary on VAL with the 95% CI clear of zero.
+# Today neither does: notes trends negative on val AUPRC despite drawing ~0.24
+# attention weight, and ECG significantly hurts (consistent with its standalone
+# AUROC 0.607 on covered hours; attention downweights it to ~0.04 but that only
+# mitigates the damage). Improving both agents is future work -- better note
+# encodings (header-stripped, contamination-excluded) and an ECG encoder that
+# survives its coverage bias are the obvious directions.
 ORCHESTRATOR_CONFIGS = {
-    "primary": ("vitals_tcn", "news2", "labs", "notes"),
+    "primary": ("vitals_tcn", "news2", "labs"),
     "core-3": ("vitals_tcn", "news2", "labs"),
+    "core-3+notes": ("vitals_tcn", "news2", "labs", "notes"),
     "all-5": ("vitals_tcn", "news2", "labs", "ecg", "notes"),
 }
 DEFAULT_CONFIG = "primary"

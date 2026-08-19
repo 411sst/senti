@@ -26,6 +26,7 @@ import numpy as np  # noqa: E402
 from baselines_mimic import (  # noqa: E402
     _false_alarm_stay_rate,
     _stay_series,
+    alertable_mask,
     paired_first_alarm,
 )
 from baselines_mimic import load_splits  # noqa: E402
@@ -105,26 +106,30 @@ def main():
         print(f"    {name:<14}{w:>7.3f}")
 
     # ---- lead-time sweep vs NEWS2 ---------------------------------------
+    # Warm-up rule: budgets, thresholds and alarm scans all run over alertable
+    # hours only (see baselines_mimic.alertable_mask); _stay_series and
+    # paired_first_alarm apply the same mask to the scans.
     news2 = test_sorted["news2"].to_numpy(dtype=float)
+    alertable = alertable_mask(test_sorted)
     series = {"ORCH": _stay_series(test_sorted, fused_raw),
               "NEWS2": _stay_series(test_sorted, news2)}
     scores = {"ORCH": fused_raw, "NEWS2": news2}
 
-    print("\n  Lead-time at matched alert budgets (test):")
+    print("\n  Lead-time at matched alert budgets (test; warm-up hour excluded):")
     sweep_hdr = (f"  {'budget':>7}  {'model':<6}{'actual':>8}{'caught':>8}"
                  f"{'falarm':>8}{'n':>7}    lead p25/p50/p75 (h)")
     print(sweep_hdr)
     print("  " + "-" * (len(sweep_hdr) - 2))
     for rate in (0.01, 0.02, 0.05):
         for name in ("NEWS2", "ORCH"):
-            s = scores[name]
-            thr = float(np.quantile(s, 1.0 - rate))
+            sa = scores[name][alertable]
+            thr = float(np.quantile(sa, 1.0 - rate))
             r = lead_time(*series[name][:2], thr, times=series[name][2])
             band = ("n/a" if r["n_caught"] == 0 else
                     f"{r['lead_p25']:>4.0f} /{r['median_lead_time']:>4.0f} /"
                     f"{r['lead_p75']:>4.0f}")
             print(f"  {f'{rate*100:.0f}%':>7}  {name:<6}"
-                  f"{100*float((s >= thr).mean()):>7.1f}%"
+                  f"{100*float((sa >= thr).mean()):>7.1f}%"
                   f"{r['caught_in_time_rate']:>8.2f}"
                   f"{_false_alarm_stay_rate(series[name], thr):>8.2f}"
                   f"{r['n_caught']:>7}    {band}")
@@ -139,9 +144,9 @@ def main():
     print(p_hdr)
     print("  " + "-" * (len(p_hdr) - 2))
     for rate in (0.01, 0.02, 0.05):
-        thr_n2 = float(np.quantile(news2, 1.0 - rate))
-        matched = float((news2 >= thr_n2).mean())
-        thr_or = float(np.quantile(fused_raw, 1.0 - matched))
+        thr_n2 = float(np.quantile(news2[alertable], 1.0 - rate))
+        matched = float((news2[alertable] >= thr_n2).mean())
+        thr_or = float(np.quantile(fused_raw[alertable], 1.0 - matched))
         # paired_first_alarm names its columns for the NEWS2-vs-GBM comparison;
         # here the "gbm" slot is the orchestrator.
         r = paired_first_alarm(test_sorted, news2, fused_raw, thr_n2, thr_or)

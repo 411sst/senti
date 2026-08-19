@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from metrics import auprc, auroc, ece, lead_time
+from metrics import (auprc, auroc, calibration_slope_intercept, ece,
+                     ece_adaptive, ici, lead_time)
 
 
 # --- AUPRC -----------------------------------------------------------------
@@ -174,3 +175,72 @@ class TestLeadTime:
         assert result["caught_in_time_rate"] == 0.0
         assert result["n_caught"] == 0
         assert result["n_events"] == 2
+
+
+# --- Input validation (regression: NEWS2 0-20 scores once slipped through) ---
+
+def test_ece_rejects_out_of_range_scores():
+    y = np.array([0.0, 1.0, 0.0])
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        ece(y, np.array([0.0, 7.0, 20.0]))          # a raw NEWS2 score
+    with pytest.raises(ValueError):
+        ece(y, np.array([-0.1, 0.5, 0.5]))
+    with pytest.raises(ValueError, match="NaN"):
+        ece(y, np.array([0.1, np.nan, 0.5]))
+
+
+def test_ece_adaptive_rejects_out_of_range_scores():
+    with pytest.raises(ValueError):
+        ece_adaptive(np.array([0.0, 1.0]), np.array([0.5, 1.5]))
+
+
+# --- Adaptive (equal-mass) ECE ------------------------------------------------
+
+def test_ece_adaptive_perfectly_calibrated_two_groups():
+    # 100 rows at p=0.1 with 10% positives, 100 at p=0.8 with 80% positives.
+    y = np.array([1] * 10 + [0] * 90 + [1] * 80 + [0] * 20, dtype=float)
+    p = np.array([0.1] * 100 + [0.8] * 100)
+    assert ece_adaptive(y, p, n_bins=4) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_ece_adaptive_sees_miscalibration_equal_width_hides():
+    # Everything predicted in [0, 0.1): equal-width ECE lumps it into one bin
+    # where over- and under-confidence cancel; equal-mass bins keep them apart.
+    y = np.array([0] * 500 + [1] * 500, dtype=float)
+    p = np.array([0.05] * 500 + [0.055] * 500)       # both wrong, opposite ways
+    assert ece(y, p, n_bins=10) == pytest.approx(abs(0.0525 - 0.5), abs=1e-3)
+    assert ece_adaptive(y, p, n_bins=2) == pytest.approx(
+        0.5 * 0.05 + 0.5 * (1 - 0.055), abs=1e-6)
+
+
+# --- Calibration slope / intercept ---------------------------------------------
+
+def test_calibration_slope_recovers_the_generating_model():
+    rng = np.random.default_rng(42)
+    logit = rng.normal(-3.0, 1.5, 60_000)
+    p = 1.0 / (1.0 + np.exp(-logit))
+    y = (rng.random(p.shape) < p).astype(float)
+    slope, intercept = calibration_slope_intercept(y, p)
+    assert slope == pytest.approx(1.0, abs=0.05)
+    assert intercept == pytest.approx(0.0, abs=0.15)
+
+
+def test_calibration_slope_flags_overconfident_scores():
+    rng = np.random.default_rng(7)
+    logit = rng.normal(-3.0, 1.5, 60_000)
+    p_true = 1.0 / (1.0 + np.exp(-logit))
+    y = (rng.random(p_true.shape) < p_true).astype(float)
+    p_overconfident = 1.0 / (1.0 + np.exp(-2.0 * logit))   # doubled spread
+    slope, _ = calibration_slope_intercept(y, p_overconfident)
+    assert slope == pytest.approx(0.5, abs=0.05)
+
+
+# --- ICI --------------------------------------------------------------------------
+
+def test_ici_near_zero_when_calibrated_and_catches_a_shift():
+    rng = np.random.default_rng(3)
+    p = rng.uniform(0.05, 0.95, 40_000)
+    y = (rng.random(p.shape) < p).astype(float)
+    assert ici(y, p) < 0.02
+    shifted = np.clip(p + 0.10, 0.0, 1.0)
+    assert ici(y, shifted) == pytest.approx(0.10, abs=0.03)

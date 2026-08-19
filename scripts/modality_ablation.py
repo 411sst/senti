@@ -1,10 +1,13 @@
 """Modality ablation: which agents actually earn their place in the fusion?
 
-    python scripts/modality_ablation.py
+    python scripts/modality_ablation.py [--split val|test]
 
 Trains the orchestrator on four agent subsets, everything else held identical
 (same cached latents, same three-way split, same isotonic-on-val calibration,
-death_weight=1, same evaluation harness):
+death_weight=1, same evaluation harness). **Configuration selection happens on
+VAL (the default split)** -- the shipped config was once chosen from this
+script's test-split numbers, which is test-set model selection; score on test
+only to report a single already-chosen configuration:
 
     core-3          vitals-TCN + NEWS2 + labs      -- the verified result
     core-3 + ECG    does a near-null modality help or hurt?
@@ -58,13 +61,16 @@ CONFIGS = {
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs", type=int, default=8)
+    ap.add_argument("--split", choices=("val", "test"), default="val",
+                    help="split every config is scored on; selection must use val")
     args = ap.parse_args()
 
     splits = load_splits()
-    train, val, test = splits["train"], splits["val"], splits["test"]
-    test_sorted = test.sort_values(["stay_id", "hour"]).reset_index(drop=True)
-    y = test_sorted[LABEL].to_numpy(dtype=float)
-    news2 = test_sorted["news2"].to_numpy(dtype=float)
+    train, val = splits["train"], splits["val"]
+    eval_df = splits[args.split]
+    eval_sorted = eval_df.sort_values(["stay_id", "hour"]).reset_index(drop=True)
+    y = eval_sorted[LABEL].to_numpy(dtype=float)
+    news2 = eval_sorted["news2"].to_numpy(dtype=float)
     types = list(EVENT_TYPES)
 
     runs = {}
@@ -73,22 +79,25 @@ def main():
         bank = AgentBank.load(agent_names=agents)
         orch = Orchestrator(bank=bank, max_epochs=args.epochs, verbose=False)
         orch.fit(train, val)
-        raw, cal = orch.raw_risk(test), orch.emit(test).risk
-        _, attn = orch.attention_weights(test)
+        raw, cal = orch.raw_risk(eval_df), orch.emit(eval_df).risk
+        _, attn = orch.attention_weights(eval_df)
         runs[name] = {"agents": agents, "raw": raw, "cal": cal,
                       "attn": dict(zip(agents, attn.mean(axis=0)))}
         print(f"[fit] {name:<16} {len(agents)} agents  {time.time()-t0:.0f}s")
 
     # ---- headline table -------------------------------------------------
     print(f"\n{'=' * 104}")
-    print(f"MODALITY ABLATION -- test: {len(y):,} patient-hours, "
-          f"{test_sorted.stay_id.nunique():,} stays, prevalence {100*y.mean():.2f}%")
+    print(f"MODALITY ABLATION -- {args.split}: {len(y):,} patient-hours, "
+          f"{eval_sorted.stay_id.nunique():,} stays, prevalence {100*y.mean():.2f}%")
+    if args.split == "val":
+        print("(selection split: val AUPRC raw picks the shipped config; "
+              "cal columns are in-sample on val and shown as context only)")
     print("=" * 104)
     hdr = (f"  {'config':<16}{'AUPRC raw':>11}{'AUPRC cal':>11}{'AUROC':>8}"
            f"{'ECE raw':>9}{'ECE cal':>9}   " + "".join(f"{t:>9}" for t in types))
     print(hdr); print("  " + "-" * (len(hdr) - 2))
     for name, r in runs.items():
-        per_type = {t: auprc(test_sorted[f"{LABEL}_{t}"].to_numpy(), r["raw"])
+        per_type = {t: auprc(eval_sorted[f"{LABEL}_{t}"].to_numpy(), r["raw"])
                     for t in types}
         print(f"  {name:<16}{auprc(y, r['raw']):>11.3f}{auprc(y, r['cal']):>11.3f}"
               f"{auroc(y, r['raw']):>8.3f}{ece(y, r['raw']):>9.4f}"
@@ -116,14 +125,14 @@ def main():
           f"{'ORCH<':>7}{'N2<':>6}{'tie':>6}{'ORCHwin':>9}{'sign_p':>11}"
           f"{'fa_N2':>7}{'fa_OR':>7}")
     print(ph); print("  " + "-" * (len(ph) - 2))
-    n2_series = _stay_series(test_sorted, news2)
+    n2_series = _stay_series(eval_sorted, news2)
     for name, r in runs.items():
-        series = _stay_series(test_sorted, r["raw"])
+        series = _stay_series(eval_sorted, r["raw"])
         for rate in (0.01, 0.05):
             thr_n2 = float(np.quantile(news2, 1.0 - rate))
             matched = float((news2 >= thr_n2).mean())
             thr_or = float(np.quantile(r["raw"], 1.0 - matched))
-            pr = paired_first_alarm(test_sorted, news2, r["raw"], thr_n2, thr_or)
+            pr = paired_first_alarm(eval_sorted, news2, r["raw"], thr_n2, thr_or)
             if pr["n_paired"] == 0:
                 continue
             print(f"  {name:<16}{f'{rate*100:.0f}%':>8}{100*matched:>7.1f}%"
@@ -134,13 +143,16 @@ def main():
                   f"{_false_alarm_stay_rate(series, thr_or):>7.2f}")
 
     # ---- is any difference between configs beyond noise? ----------------
+    # Clustered by PATIENT (stays from one patient are not independent), with
+    # the project seed.
     print(f"\n{'=' * 104}")
-    print("PAIRED bootstrap vs core-3 (stay-level resample, 1000 reps)")
+    print("PAIRED bootstrap vs core-3 (patient-level resample, 1000 reps)")
     print("=" * 104)
-    rng = np.random.default_rng(0)
-    stays = test_sorted["stay_id"].to_numpy()
-    uniq = np.unique(stays)
-    idx = {s: np.flatnonzero(stays == s) for s in uniq}
+    from config import SEED
+    rng = np.random.default_rng(SEED)
+    patients = eval_sorted["patient_id"].to_numpy()
+    uniq = np.unique(patients)
+    idx = {s: np.flatnonzero(patients == s) for s in uniq}
     base = runs["core-3"]["raw"]
     for name in ("core-3 + ECG", "core-3 + notes", "all-5"):
         d_pr, d_roc = [], []

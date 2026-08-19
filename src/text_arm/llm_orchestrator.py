@@ -68,6 +68,10 @@ def build_prompt(window):
 def parse_risk(text):
     """Extract a 0-1 probability from the model's reply.
 
+    The prompt asks for an integer percent, but models sometimes answer with a
+    decimal probability ("0.9"). A reply carrying a decimal point and lying in
+    [0, 1] is therefore read as a probability, not a percent -- the old code
+    read "0.9" as 0.9% (0.009), silently deflating every such risk 100-fold.
     Returns ``nan`` when the model does not produce a usable number, so those
     rows can be counted and reported rather than silently imputed.
     """
@@ -76,10 +80,13 @@ def parse_risk(text):
     match = _NUMBER.search(text.strip())
     if not match:
         return float("nan")
-    value = float(match.group())
+    raw = match.group()
+    value = float(raw)
+    if "." in raw and 0.0 <= value <= 1.0:
+        return value                     # decimal probability, e.g. "0.9"
     if value < 0 or value > 100:
         return float("nan")
-    return value / 100.0
+    return value / 100.0                 # integer/large value: percent
 
 
 class OllamaRunner:
@@ -131,12 +138,20 @@ class RiskCache:
 
     Written after every single generation so a timeout or crash loses at most
     one call.
+
+    ``fingerprint`` guards against silent staleness: a cache produced under one
+    (model, window, prompt) combination must not be reused under another. The
+    fingerprint is stored as a meta line; reopening with a DIFFERENT stored one
+    raises. A legacy cache with no meta line is adopted with a loud warning --
+    it predates the guard, so its provenance is genuinely unknown.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, fingerprint=None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fingerprint = fingerprint
         self.entries = {}
+        stored = None
         if self.path.exists():
             with self.path.open() as fh:
                 for line in fh:
@@ -147,7 +162,26 @@ class RiskCache:
                         rec = json.loads(line)
                     except json.JSONDecodeError:
                         continue          # tolerate a partial final line
+                    if "__fingerprint__" in rec:
+                        stored = rec["__fingerprint__"]
+                        continue
                     self.entries[(int(rec["stay_id"]), int(rec["hour"]))] = rec
+            if fingerprint is not None:
+                if stored is not None and stored != fingerprint:
+                    raise ValueError(
+                        f"{self.path} was generated under a different "
+                        f"(model, window, prompt) fingerprint: cached={stored!r}, "
+                        f"requested={fingerprint!r}. Use a new cache path."
+                    )
+                if stored is None:
+                    print(f"[cache] WARNING: {self.path} predates cache "
+                          f"fingerprinting ({len(self.entries):,} rows of "
+                          f"unknown provenance); adopting the current one")
+                    with self.path.open("a") as fh:
+                        fh.write(json.dumps({"__fingerprint__": fingerprint}) + "\n")
+        elif fingerprint is not None:
+            with self.path.open("a") as fh:
+                fh.write(json.dumps({"__fingerprint__": fingerprint}) + "\n")
 
     def __contains__(self, key):
         return key in self.entries
@@ -191,15 +225,25 @@ def windows_for(summaries, window_hours=WINDOW_HOURS):
             yield int(stay_id), int(hour), records[lo:i + 1]
 
 
+def cache_fingerprint(model, window_hours, system=SYSTEM_PROMPT):
+    """What a risk cache's contents depend on, hashed for the meta line."""
+    import hashlib
+    return {"model": model, "window_hours": int(window_hours),
+            "system_sha": hashlib.sha256(system.encode()).hexdigest()[:12]}
+
+
 def generate_risks(summaries, cache_path, model=DEFAULT_MODEL,
                    window_hours=WINDOW_HOURS, limit=None, progress_every=25,
                    runner=None):
     """Generate (or resume) fused risks for every row of ``summaries``.
 
     Returns the :class:`RiskCache`. Already-cached rows are skipped, so calling
-    this twice costs nothing the second time.
+    this twice costs nothing the second time. The cache is fingerprinted by
+    (model, window, system prompt): resuming under different settings raises
+    instead of silently mixing generations.
     """
-    cache = RiskCache(cache_path)
+    cache = RiskCache(cache_path,
+                      fingerprint=cache_fingerprint(model, window_hours))
     runner = runner or OllamaRunner(model=model)
 
     todo = [(s, h, w) for s, h, w in windows_for(summaries, window_hours)

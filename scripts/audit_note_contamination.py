@@ -99,7 +99,15 @@ LEAD_LABELS = ["0-3h", "3-6h", "6-12h", "12-24h", "24-48h", ">48h"]
 
 
 def compile_terms(terms):
-    return re.compile("|".join(re.escape(t) for t in terms), re.IGNORECASE)
+    """Case-insensitive alternation with WORD BOUNDARIES on each term.
+
+    Without the boundaries, short terms fire inside ordinary words -- "ett"
+    matched "better" and "settled", inflating every vent-term count. ``\\b``
+    anchors to the term's own edges, so multi-word phrases keep matching as
+    phrases.
+    """
+    return re.compile(
+        "|".join(rf"\b{re.escape(t)}\b" for t in terms), re.IGNORECASE)
 
 
 def stay_events(cohort):

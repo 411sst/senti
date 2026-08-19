@@ -235,3 +235,52 @@ def test_event_type_is_none_when_no_event():
     f = add_event_labels(raw)
     assert pd.isna(f["event_type"].iloc[0])
     assert f["label_24h_vent"].iloc[0] == 0
+
+
+# --- h6 root-cause fix: history rows feed the first prediction hour ---------
+
+def test_build_uses_history_rows_then_drops_them(tmp_path):
+    """Hours [0, STAB_HOURS) must supply LOCF context to hour 6 via the
+    strictly-before-t shift, and must not appear in the exported cohort."""
+    from mimic_cohort import STAB_HOURS, build
+
+    rows = []
+    for patient in range(1, 11):                    # enough patients to split
+        stay = 100 + patient
+        for hour in range(0, STAB_HOURS + 3):       # history 0-5 + predictions 6-8
+            rows.append({
+                "subject_id": patient, "stay_id": stay, "hour": hour,
+                "is_history": int(hour < STAB_HOURS),
+                # heart rate charted ONLY at hour 5 (the last history hour)
+                "heart_rate": 77.0 if hour == 5 else np.nan,
+                "label_24h": 0,
+            })
+    raw = _raw_frame(rows)
+    raw_path = tmp_path / "raw.parquet"
+    raw.to_parquet(raw_path, index=False)
+
+    out = build(raw_path=str(raw_path), out_path=str(tmp_path / "cohort.parquet"))
+
+    assert (out["hour"] >= STAB_HOURS).all()        # history rows are gone
+    h6 = out[out["hour"] == STAB_HOURS]
+    assert (h6["heart_rate"] == 77.0).all()         # ...but their data arrived
+    assert (h6["heart_rate_hrs_since"] == 1).all()  # charted one hour before t=6
+    # NEWS2 at h6 is scored from that carried value, not pinned by missingness:
+    # HR 77 scores 0, so the score is a real 0 from data -- assert the carried
+    # channel is populated rather than absent.
+    assert not h6["heart_rate"].isna().any()
+
+
+def test_build_without_history_column_is_backward_compatible(tmp_path):
+    """Old raw extracts (grid starting at STAB_HOURS) must still build."""
+    from mimic_cohort import STAB_HOURS, build
+
+    rows = [{"subject_id": p, "stay_id": 100 + p, "hour": h, "label_24h": 0,
+             "heart_rate": 80.0}
+            for p in range(1, 11) for h in range(STAB_HOURS, STAB_HOURS + 3)]
+    raw = _raw_frame(rows)
+    raw_path = tmp_path / "raw.parquet"
+    raw.to_parquet(raw_path, index=False)
+
+    out = build(raw_path=str(raw_path), out_path=str(tmp_path / "cohort.parquet"))
+    assert len(out) == len(raw)

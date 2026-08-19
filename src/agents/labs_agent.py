@@ -30,76 +30,19 @@ import torch.nn.functional as F
 
 from agents.base import KEY_COLUMNS, Agent
 from config import SEED
+# The feature builder lives in the torch-free modality_features module so the
+# fair GBM baselines can use it next to XGBoost (torch and XGBoost cannot share
+# a process on macOS -- see tests/conftest.py). Re-exported here unchanged.
+from modality_features import (  # noqa: F401  (re-exported public names)
+    LAB_COLUMNS,
+    LAB_LOOKBACK_HOURS,
+    LAB_MAX_STALENESS_HOURS,
+    LABS_PATH,
+    build_lab_features,
+    load_labs,
+)
 
 LABEL = "label_24h"
-LABS_PATH = "data/cache/mimic_labs_hourly.parquet"
-
-# The 24-analyte panel, in the order the extract produces them.
-LAB_COLUMNS = [
-    "lab_creatinine", "lab_bun", "lab_sodium", "lab_potassium", "lab_chloride",
-    "lab_bicarbonate", "lab_anion_gap", "lab_glucose", "lab_calcium",
-    "lab_magnesium", "lab_phosphate", "lab_hematocrit", "lab_hemoglobin",
-    "lab_wbc", "lab_platelets", "lab_rdw", "lab_alt", "lab_ast",
-    "lab_bilirubin", "lab_albumin", "lab_inr", "lab_ptt", "lab_lactate",
-    "lab_ph",
-]
-
-# How long a lab result stays informative. Chemistry and haematology are drawn
-# roughly daily in the ICU, so a 24h bound keeps the usual cadence while
-# stopping a week-old creatinine from being read as the current one -- the same
-# staleness discipline applied to vitals in mimic_cohort.py.
-LAB_MAX_STALENESS_HOURS = 24
-
-# Labs are drawn from 24h before ICU admission (ED bloods are real history).
-LAB_LOOKBACK_HOURS = 24
-
-
-def load_labs(path=LABS_PATH):
-    return pd.read_parquet(path)
-
-
-def build_lab_features(cohort, labs, max_staleness=LAB_MAX_STALENESS_HOURS):
-    """Leakage-safe lab features aligned to the cohort's (stay_id, hour) rows.
-
-    Builds a dense hourly grid per stay running from ``-LAB_LOOKBACK_HOURS`` to
-    the stay's last prediction hour, forward-fills each analyte along it, shifts
-    one hour so the present is excluded, drops values older than
-    ``max_staleness``, and finally selects the cohort's rows.
-
-    The grid has to extend before hour 0 because the cohort starts at hour 6 and
-    a lab drawn in the ED must still be visible there.
-
-    Returns a frame with one row per cohort row: the carried lab values plus a
-    ``<lab>_hrs_since`` staleness channel for each.
-    """
-    cohort_keys = cohort[["stay_id", "hour"]].drop_duplicates()
-    span = cohort_keys.groupby("stay_id")["hour"].max().reset_index(name="max_hour")
-
-    # Dense grid: one row per (stay, hour) from -lookback to the stay's end.
-    grid = span.assign(
-        hour=[np.arange(-LAB_LOOKBACK_HOURS, int(m) + 1) for m in span["max_hour"]]
-    ).explode("hour")[["stay_id", "hour"]]
-    grid["hour"] = grid["hour"].astype(int)
-
-    labs = labs[labs["hour"].between(-LAB_LOOKBACK_HOURS, int(span["max_hour"].max()))]
-    merged = grid.merge(labs, on=["stay_id", "hour"], how="left")
-    merged = merged.sort_values(["stay_id", "hour"]).reset_index(drop=True)
-
-    stay, hour = merged["stay_id"], merged["hour"]
-    out = merged[["stay_id", "hour"]].copy()
-    for col in LAB_COLUMNS:
-        observed = merged[col] if col in merged else pd.Series(np.nan, index=merged.index)
-        value = observed.groupby(stay, sort=False).ffill()
-        value = value.groupby(stay, sort=False).shift(1)          # strictly before t
-        last = hour.where(observed.notna()).groupby(stay, sort=False).ffill()
-        last = last.groupby(stay, sort=False).shift(1)
-        staleness = hour - last
-        out[col] = value.where(staleness <= max_staleness).to_numpy()
-        out[f"{col}_hrs_since"] = staleness.where(staleness <= max_staleness).to_numpy()
-
-    # Keep only the cohort's prediction hours, in cohort key order.
-    return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
-                      .sort_values(["stay_id", "hour"]).reset_index(drop=True)
 
 
 FEATURE_COLUMNS = LAB_COLUMNS + [f"{c}_hrs_since" for c in LAB_COLUMNS]

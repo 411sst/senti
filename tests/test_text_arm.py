@@ -261,3 +261,35 @@ def test_generate_records_unparsed_replies_without_crashing(tmp_path):
                            progress_every=0)
     assert len(cache) == 2
     assert np.isnan(cache.risks_for([(1, 6), (1, 7)])).all()
+
+
+# --- Regression: decimal-probability replies (the "0.9" bug) -----------------
+
+@pytest.mark.parametrize("reply, expected", [
+    ("0.9", 0.9), ("0.05", 0.05), ("risk: 0.35", 0.35), ("1.0", 1.0),
+    ("42", 0.42),                      # integers stay percent
+])
+def test_parse_risk_decimal_probabilities(reply, expected):
+    assert parse_risk(reply) == pytest.approx(expected)
+
+
+# --- Cache fingerprinting ------------------------------------------------------
+
+def test_cache_rejects_a_different_fingerprint(tmp_path):
+    path = tmp_path / "r.jsonl"
+    cache = RiskCache(path, fingerprint={"model": "a", "window_hours": 4})
+    cache.add(1, 6, 0.3, "30")
+    RiskCache(path, fingerprint={"model": "a", "window_hours": 4})   # same: fine
+    with pytest.raises(ValueError, match="different"):
+        RiskCache(path, fingerprint={"model": "b", "window_hours": 4})
+
+
+def test_cache_adopts_legacy_files_with_a_warning(tmp_path, capsys):
+    path = tmp_path / "r.jsonl"
+    RiskCache(path).add(1, 6, 0.3, "30")             # legacy: no meta line
+    cache = RiskCache(path, fingerprint={"model": "a", "window_hours": 4})
+    assert (1, 6) in cache
+    assert "unknown provenance" in capsys.readouterr().out
+    # and the adopted fingerprint is now enforced
+    with pytest.raises(ValueError):
+        RiskCache(path, fingerprint={"model": "b", "window_hours": 4})

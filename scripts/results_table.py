@@ -68,9 +68,12 @@ def main():
     results = {}   # name -> (raw_scores, calibrated_scores) on test_sorted rows
 
     # --- NEWS2 (deterministic, no training) ------------------------------
+    # raw_probability (score/20) rather than the 0-20 raw_risk: the "raw" slot
+    # feeds ece(), which rejects values outside [0, 1]. The rescaling is
+    # monotone, so the AUPRC/AUROC columns are identical either way.
     t0 = time.time()
     news2 = News2Agent().fit(train, val)
-    results["NEWS2"] = (news2.raw_risk(test), news2.emit(test).risk)
+    results["NEWS2"] = (news2.raw_probability(test), news2.emit(test).risk)
     print(f"[fit] NEWS2 {time.time() - t0:.0f}s")
 
     # --- GBM baseline ----------------------------------------------------
