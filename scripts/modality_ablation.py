@@ -49,10 +49,18 @@ from orchestrator.fusion import AgentBank, Orchestrator  # noqa: E402
 
 LABEL = "label_24h"
 CORE = ("vitals_tcn", "news2", "labs")
+EMB_DIR = REPO / "data" / "cache" / "embeddings"
 
 CONFIGS = {
     "core-3": CORE,
-    "core-3 + ECG": CORE + ("ecg",),
+    "core-3 + ECG": CORE + ("ecg",),                    # V1 frozen ECG-FM
+    "core-3 + resnet": CORE + ("ecg_resnet",),          # V2 trained ResNet
+    "core-3 + meas": CORE + ("ecg_meas",),              # V4 machine measurements
+    "core-3 + meas_disk": CORE + ("ecg_meas_disk",),    # V4 disk-matched control
+    "core-3 + resnet_pre": CORE + ("ecg_resnet_pre",),  # V5a pretrained ResNet
+    "core-3 + mamba": CORE + ("ecg_mamba",),            # V5b pretrained Mamba
+    "core-3 + founder": CORE + ("ecgfounder",),         # V6 frozen ECGFounder
+    "core-3 + film": CORE + ("ecg_resnet_film",),       # V3 ResNet + FiLM(age)
     "core-3 + notes": CORE + ("notes",),
     "all-5": CORE + ("ecg", "notes"),
 }
@@ -75,6 +83,13 @@ def main():
 
     runs = {}
     for name, agents in CONFIGS.items():
+        # Only run configs whose agent caches all exist, so this is usable before
+        # V1/notes are cached (e.g. core-3 vs core-3 + resnet alone).
+        missing = sorted({a for a in agents for s in ("train", "val", args.split)
+                          if not (EMB_DIR / f"{a}_{s}.npz").exists()})
+        if missing:
+            print(f"[skip] {name:<16} (no cache: {', '.join(missing)})")
+            continue
         t0 = time.time()
         bank = AgentBank.load(agent_names=agents)
         orch = Orchestrator(bank=bank, max_epochs=args.epochs, verbose=False)
@@ -107,15 +122,16 @@ def main():
 
     # ---- attention: does the fusion downweight the weak agents? ---------
     print(f"\n  Mean attention over agents (does the fusion ignore what is useless?):")
-    all_names = list(CONFIGS["all-5"])
-    print(f"    {'config':<16}" + "".join(f"{a:>13}" for a in all_names))
+    all_names = []                                    # union of agents actually run
+    for r in runs.values():
+        for a in r["agents"]:
+            if a not in all_names:
+                all_names.append(a)
+    print(f"    {'config':<16}" + "".join(f"{a:>15}" for a in all_names))
     for name, r in runs.items():
-        row = "".join(f"{r['attn'].get(a, float('nan')):>13.3f}"
-                      if a in r["attn"] else f"{'--':>13}" for a in all_names)
+        row = "".join(f"{r['attn'].get(a, float('nan')):>15.3f}"
+                      if a in r["attn"] else f"{'--':>15}" for a in all_names)
         print(f"    {name:<16}{row}")
-    print(f"    {'(uniform)':<16}"
-          + "".join(f"{1/len(CONFIGS['all-5']):>13.3f}" for _ in all_names)
-          + "   <- what 'no preference' would look like at 5 agents")
 
     # ---- does the lead-time headline survive? ---------------------------
     print(f"\n{'=' * 104}")
@@ -154,7 +170,7 @@ def main():
     uniq = np.unique(patients)
     idx = {s: np.flatnonzero(patients == s) for s in uniq}
     base = runs["core-3"]["raw"]
-    for name in ("core-3 + ECG", "core-3 + notes", "all-5"):
+    for name in [n for n in runs if n != "core-3"]:
         d_pr, d_roc = [], []
         for _ in range(1000):
             pick = rng.choice(uniq, len(uniq), replace=True)

@@ -21,8 +21,12 @@ dist/
 
 # Virtual environments
 .venv/
+.venv-ecgfm/
 venv/
 env/
+
+# Run logs (training/fetch output; regenerable, occasionally large)
+logs/
 
 # Testing / tooling caches
 .pytest_cache/

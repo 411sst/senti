@@ -79,7 +79,7 @@ def assemble_ecg_features(cohort, ecg_index, embeddings, study_ids,
     age = (merged["hour"] - merged["ecg_hour"]).to_numpy(dtype=float)
     usable = merged["study_id"].notna().to_numpy() & (age <= staleness)
 
-    out = np.zeros((len(merged), EMBED_DIM), dtype=np.float32)
+    out = np.zeros((len(merged), embeddings.shape[1]), dtype=np.float32)
     has = np.zeros(len(merged), dtype=np.float32)
     for i in np.flatnonzero(usable):
         idx = lookup.get(int(merged["study_id"].iloc[i]))
@@ -190,8 +190,9 @@ class EcgAgent(Agent):
         X0, has0, _, _ = assemble_ecg_features(train_df, index, emb, study_ids,
                                                staleness=self.staleness)
         covered = X0[has0 > 0]
-        mean = covered.mean(axis=0) if len(covered) else np.zeros(EMBED_DIM)
-        std = covered.std(axis=0) if len(covered) else np.ones(EMBED_DIM)
+        dim = emb.shape[1]                     # width of whatever cache is loaded
+        mean = covered.mean(axis=0) if len(covered) else np.zeros(dim)
+        std = covered.std(axis=0) if len(covered) else np.ones(dim)
         self.stats = (mean.astype(np.float32), np.where(std > 1e-6, std, 1.0).astype(np.float32))
 
         Xtr, htr, atr, ktr = self._features(train_df)
@@ -199,7 +200,7 @@ class EcgAgent(Agent):
         Xva, hva, ava, kva = self._features(val_df)
         yva = self._labels(val_df, kva)
 
-        self.net = EcgHead(**self.hparams).to(self.device)
+        self.net = EcgHead(embed_dim=dim, **self.hparams).to(self.device)
         if self.verbose:
             n = sum(p.numel() for p in self.net.parameters())
             print(f"[{self.name}] {n:,} head params (encoder frozen); "

@@ -43,7 +43,10 @@ def main():
         print("[done] cache is current")
         return
 
-    model = load_encoder()
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = load_encoder(device=device)
+    print(f"[model] encoder on {device}")
     t0, unreadable = time.time(), 0
     for i in range(0, len(todo), BATCH):
         batch = todo[i:i + BATCH]
@@ -56,7 +59,7 @@ def main():
             signals.append(sig)
             ids.append(int(rec.name))
         if signals:
-            for sid, vec in zip(ids, embed_batch(model, signals)):
+            for sid, vec in zip(ids, embed_batch(model, signals, device=device)):
                 done[sid] = vec
         if (i // BATCH) % 10 == 0:
             n = i + len(batch)

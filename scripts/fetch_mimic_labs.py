@@ -9,11 +9,20 @@ Usage:
 """
 
 import argparse
+import os
 from pathlib import Path
 
 from google.cloud import bigquery
 
-PROJECT = "sentinel-503510"
+# Billing/quota project for the query (it reads the shared physionet-data
+# tables but bytes scanned are billed here). Defaults to the team project;
+# set GOOGLE_CLOUD_PROJECT to bill your own project instead.
+PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT") or "sentinel-503510"
+
+# The BigQuery Storage API gives a much faster to_dataframe() but requires a
+# billing-enabled project. On a no-billing / sandbox project it is unavailable,
+# so set SENTINEL_BQ_STORAGE=0 to fall back to the (slower) REST download.
+USE_BQSTORAGE = os.environ.get("SENTINEL_BQ_STORAGE", "1") != "0"
 REPO = Path(__file__).resolve().parent.parent
 SQL_PATH = REPO / "scripts" / "mimic_labs.sql"
 OUT_PATH = REPO / "data" / "cache" / "mimic_labs_hourly.parquet"
@@ -34,7 +43,7 @@ def main():
         dry_run=True, use_query_cache=False))
     print(f"[dry-run] would scan {dry.total_bytes_processed / 1e9:.2f} GB")
 
-    df = client.query(sql).result().to_dataframe(create_bqstorage_client=True)
+    df = client.query(sql).result().to_dataframe(create_bqstorage_client=USE_BQSTORAGE)
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT_PATH, index=False)
     print(f"[done] {len(df):,} rows x {df.shape[1]} cols -> {OUT_PATH} "
