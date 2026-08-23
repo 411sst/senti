@@ -67,6 +67,11 @@ ORCHESTRATOR_CONFIGS = {
     "core-3": ("vitals_tcn", "news2", "labs"),
     "core-3+notes": ("vitals_tcn", "news2", "labs", "notes"),
     "all-5": ("vitals_tcn", "news2", "labs", "ecg", "notes"),
+    # ECG machine-measurements agent: the one ECG variant that cleared the
+    # fusion bar (results_ecg.md: val ΔAUPRC +0.0049 mean over seeds {42,1,2},
+    # sign-consistent 3/3). Experiment config for the fusion/LatentCast work;
+    # promoting it to PRIMARY is a separate team decision.
+    "core-3+meas": ("vitals_tcn", "news2", "labs", "ecg_meas"),
 }
 DEFAULT_CONFIG = "primary"
 
@@ -455,3 +460,61 @@ class Orchestrator(Agent):
         _, _, weights, keys = self._forward(sequences, want_extras=True)
         order = np.lexsort((keys[:, 1], keys[:, 0]))
         return (pd.DataFrame(keys[order], columns=KEY_COLUMNS), weights[order])
+
+    # -- persistence -------------------------------------------------------
+    def save_checkpoint(self, path):
+        """Trained net + isotonic calibrator + rebuild metadata, one file.
+
+        Emission caches have historically been the orchestrator's shipping
+        artifact, but frozen-head experiments (scoring a MODIFIED bank through
+        a fixed trained net) need the fitted object itself back -- and CPU
+        refits drift with thread count (see channel_arms.py), so "retrain with
+        the same seed" does not reproduce the same net.
+        """
+        if self.net is None:
+            raise RuntimeError("orchestrator is not fitted -- call fit() first")
+        from pathlib import Path
+        bank = self._ensure_bank()
+        payload = {
+            "state_dict": self.net.state_dict(),
+            "hparams": dict(self.hparams),
+            "agent_names": list(bank.agent_names),
+            "latent_dims": {k: int(v) for k, v in bank.latent_dims.items()},
+            "seed": self.seed,
+            "death_weight": self.death_weight,
+            "select_on": self.select_on,
+            "calibrator": self.calibrator,
+        }
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(payload, path)
+        return path
+
+    @classmethod
+    def load_checkpoint(cls, path, bank):
+        """Rebuild a fitted orchestrator around ``bank`` from a checkpoint.
+
+        ``bank`` must carry the same agents and latent dims the checkpoint was
+        trained on (verified); its CONTENTS may differ -- that is the point for
+        frozen-head substitution experiments (see explain/faithfulness.py).
+        """
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        if list(bank.agent_names) != list(payload["agent_names"]):
+            raise ValueError(
+                f"bank agents {bank.agent_names} != checkpoint agents "
+                f"{payload['agent_names']}")
+        dims = {k: int(v) for k, v in bank.latent_dims.items()}
+        if dims != payload["latent_dims"]:
+            raise ValueError(
+                f"bank latent dims {dims} != checkpoint dims "
+                f"{payload['latent_dims']}")
+        orch = cls(bank=bank, seed=payload["seed"], verbose=False,
+                   death_weight=payload.get("death_weight", 1.0),
+                   select_on=payload.get("select_on", "composite"),
+                   **payload["hparams"])
+        orch.net = LatentFusionNet(bank.latent_dims, bank.agent_names,
+                                   **payload["hparams"]).to(orch.device)
+        orch.net.load_state_dict(payload["state_dict"])
+        orch.net.eval()
+        orch.calibrator = payload["calibrator"]
+        return orch

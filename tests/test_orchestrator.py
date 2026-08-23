@@ -189,6 +189,36 @@ def test_attention_weights_are_reported_per_row():
     np.testing.assert_allclose(weights.sum(axis=1), 1.0, atol=1e-5)
 
 
+def test_checkpoint_roundtrip_reproduces_scores(tmp_path):
+    """save/load_checkpoint restore the exact net AND calibrator.
+
+    Frozen-head experiments depend on this: a reloaded orchestrator must score
+    a bank identically to the fitted original, raw and calibrated.
+    """
+    orch, _, val = _fitted()
+    path = orch.save_checkpoint(tmp_path / "orch.pt")
+    loaded = Orchestrator.load_checkpoint(path, orch.bank)
+    np.testing.assert_allclose(loaded.raw_risk(val), orch.raw_risk(val),
+                               atol=1e-6)
+    np.testing.assert_allclose(loaded.emit(val).risk, orch.emit(val).risk,
+                               atol=1e-6)
+
+
+def test_checkpoint_rejects_mismatched_bank(tmp_path):
+    orch, _, _ = _fitted()
+    path = orch.save_checkpoint(tmp_path / "orch.pt")
+    wrong_dims = AgentBank(orch.bank.keys, orch.bank.matrix[:, :-1],
+                           {"a1": 4, "a2": 2}, AGENTS)
+    with pytest.raises(ValueError, match="dims"):
+        Orchestrator.load_checkpoint(path, wrong_dims)
+
+
+def test_checkpoint_before_fit_raises(tmp_path):
+    orch = Orchestrator(bank=_bank({1: [6, 7]}), verbose=False)
+    with pytest.raises(RuntimeError, match="not fitted"):
+        orch.save_checkpoint(tmp_path / "orch.pt")
+
+
 def test_emit_before_fit_raises():
     orch = Orchestrator(bank=_bank({1: [6, 7]}), verbose=False)
     with pytest.raises(RuntimeError):

@@ -156,6 +156,10 @@ def build_design(split_df, labs, note_pack):
     Returns ``(X, y, keys)`` where ``keys`` carries stay_id/hour/patient_id in
     the same sorted (stay_id, hour) row order as ``X`` -- the order every score
     array in this module lives in.
+
+    ``note_pack=None`` skips the note block (the note_* columns are simply
+    absent), for clones without the note-embedding caches; only FAIR+NOTES
+    needs them.
     """
     ordered = split_df.sort_values(["stay_id", "hour"]).reset_index(drop=True)
     blocks = {c: ordered[c].to_numpy(np.float32) for c in GBM_FEATURES}
@@ -169,15 +173,16 @@ def build_design(split_df, labs, note_pack):
     blocks.update(vitals_trajectory_features(ordered))
     blocks.update(lab_delta_features(lab_feats))
 
-    projected, ids, index, _ = note_pack
-    emb, has, age, nkeys = assemble_note_features(
-        ordered[["stay_id", "hour"]], index, projected, ids)
-    if not (nkeys["stay_id"].to_numpy() == ordered["stay_id"].to_numpy()).all():
-        raise ValueError("note features misaligned with cohort rows")
-    for k in range(emb.shape[1]):
-        blocks[f"note_pc{k}"] = emb[:, k]
-    blocks["note_has"] = has
-    blocks["note_age"] = age
+    if note_pack is not None:
+        projected, ids, index, _ = note_pack
+        emb, has, age, nkeys = assemble_note_features(
+            ordered[["stay_id", "hour"]], index, projected, ids)
+        if not (nkeys["stay_id"].to_numpy() == ordered["stay_id"].to_numpy()).all():
+            raise ValueError("note features misaligned with cohort rows")
+        for k in range(emb.shape[1]):
+            blocks[f"note_pc{k}"] = emb[:, k]
+        blocks["note_has"] = has
+        blocks["note_age"] = age
 
     X = pd.DataFrame(blocks)
     y = ordered[LABEL].to_numpy(dtype=float)
@@ -198,17 +203,23 @@ def variant_columns(n_note_components=NOTE_COMPONENTS):
 
 # --- Tuning (val only -- test is never touched here) -------------------------
 
-def tune_gbm(X_tr, y_tr, X_va, y_va, seed=SEED, quick=False, verbose=True):
+def tune_gbm(X_tr, y_tr, X_va, y_va, seed=SEED, quick=False, verbose=True,
+             device=None):
     """Small val-tuned grid with early stopping; returns (model, record).
 
     Deliberately modest -- depth x class-weight, fixed conservative shrinkage --
     per the project's small-models rule. ``scale_pos_weight`` gets the two
     settings that matter at 4.7% prevalence: none, and fully rebalanced.
+
+    ``device="cuda"`` moves tree construction to the GPU (hist method is
+    identical in expectation; scores drift at float tolerance vs CPU, which is
+    why regenerated caches are re-measured rather than compared bit-for-bit).
     """
     import xgboost as xgb
 
     pos_weight = float((y_tr == 0).sum()) / max(1.0, float((y_tr == 1).sum()))
     depths = (6,) if quick else (4, 6, 8)
+    extra = {"device": device} if device else {}
     best_model, best = None, None
     for depth in depths:
         for spw in (1.0, pos_weight):
@@ -217,7 +228,7 @@ def tune_gbm(X_tr, y_tr, X_va, y_va, seed=SEED, quick=False, verbose=True):
                 min_child_weight=10, subsample=0.8, colsample_bytree=0.8,
                 scale_pos_weight=spw, random_state=seed, n_jobs=-1,
                 tree_method="hist", eval_metric="aucpr",
-                early_stopping_rounds=50,
+                early_stopping_rounds=50, **extra,
             )
             model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)
             score = auprc(y_va, model.predict_proba(X_va)[:, 1])
@@ -299,16 +310,19 @@ def load_orchestrator_scores(keys, path=ORCH_TEST_NPZ):
 
 # --- Report --------------------------------------------------------------------
 
-def run(reps=1000, quick=False, out_cache=SCORE_CACHE):
+def run(reps=1000, quick=False, out_cache=SCORE_CACHE,
+        variants=("FAIR", "FAIR+TRAJ", "FAIR+NOTES"), device=None):
     splits = load_splits()
     train, val, test = splits["train"], splits["val"], splits["test"]
     labs = load_labs()
 
-    print("[notes] fitting PCA on train-split notes only...")
-    note_pack = fit_note_pca(train["stay_id"].unique(),
-                             seed=SEED)
-    print(f"[notes] {NOTE_COMPONENTS} components explain "
-          f"{100 * note_pack[3]:.1f}% of embedding variance")
+    note_pack = None
+    if "FAIR+NOTES" in variants:
+        print("[notes] fitting PCA on train-split notes only...")
+        note_pack = fit_note_pca(train["stay_id"].unique(),
+                                 seed=SEED)
+        print(f"[notes] {NOTE_COMPONENTS} components explain "
+              f"{100 * note_pack[3]:.1f}% of embedding variance")
 
     print("[features] building design matrices (train/val/test)...")
     X_tr, y_tr, _ = build_design(train, labs, note_pack)
@@ -326,16 +340,19 @@ def run(reps=1000, quick=False, out_cache=SCORE_CACHE):
     scores["GBM13"] = legacy.predict_proba(
         test_ordered[list(GBM_FEATURES)])[:, 1].astype(float)
 
-    records, calibrated = {}, {}
+    records, calibrated, raw_val = {}, {}, {}
     for name, cols in variant_columns().items():
+        if name not in variants:
+            continue
         print(f"[{name}] tuning on val ({len(cols)} features)...")
         model, record = tune_gbm(X_tr[cols], y_tr, X_va[cols], y_va,
-                                 quick=quick)
-        raw_va = model.predict_proba(X_va[cols])[:, 1]
+                                 quick=quick, device=device)
+        raw_va = model.predict_proba(X_va[cols])[:, 1].astype(float)
         raw_te = model.predict_proba(X_te[cols])[:, 1].astype(float)
         iso = IsotonicRegression(out_of_bounds="clip").fit(raw_va, y_va)
         scores[name] = raw_te
         calibrated[name] = iso.transform(raw_te).astype(float)
+        raw_val[name] = raw_va
         record["n_features"] = len(cols)
         records[name] = record
 
@@ -345,7 +362,8 @@ def run(reps=1000, quick=False, out_cache=SCORE_CACHE):
 
     _print_report(y_te, test_ordered, scores, calibrated, records, boots)
     _save_cache(out_cache, keys_te, y_te, scores, calibrated, records,
-                boots, reps, note_pack[3])
+                boots, reps, note_pack[3] if note_pack else float("nan"),
+                raw_val=raw_val)
     return scores, boots
 
 
@@ -361,6 +379,8 @@ def _print_report(y, test_ordered, scores, calibrated, records, boots):
     print(hdr)
     print("  " + "-" * (len(hdr) - 2))
     for name in ("ORCH", "FAIR+NOTES", "FAIR+TRAJ", "FAIR", "GBM13", "NEWS2"):
+        if name not in scores:
+            continue
         s = scores[name]
         b = boots[name]
         e = (ece(y, calibrated[name]) if name in calibrated else float("nan"))
@@ -374,6 +394,8 @@ def _print_report(y, test_ordered, scores, calibrated, records, boots):
 
     print("\n  Paired AUPRC deltas (ORCH minus model; positive = orchestrator ahead):")
     for name in ("FAIR+NOTES", "FAIR+TRAJ", "FAIR", "GBM13"):
+        if name not in scores:
+            continue
         lo, hi = boots[name]["delta_auprc_vs_ref"]
         point = auprc(y, scores["ORCH"]) - auprc(y, scores[name])
         verdict = ("orchestrator ahead" if lo > 0
@@ -381,7 +403,8 @@ def _print_report(y, test_ordered, scores, calibrated, records, boots):
         print(f"    vs {name:<12} {point:+.4f}  [{lo:+.4f}, {hi:+.4f}]  {verdict}")
 
     gap_old = auprc(y, scores["ORCH"]) - auprc(y, scores["GBM13"])
-    best_fair = max(("FAIR", "FAIR+TRAJ", "FAIR+NOTES"),
+    best_fair = max((n for n in ("FAIR", "FAIR+TRAJ", "FAIR+NOTES")
+                     if n in scores),
                     key=lambda n: auprc(y, scores[n]))
     gap_new = auprc(y, scores["ORCH"]) - auprc(y, scores[best_fair])
     if gap_new > 0:
@@ -442,8 +465,14 @@ def run_from_cache(reps=1000, cache_path=SCORE_CACHE):
 
 
 def _save_cache(path, keys, y, scores, calibrated, records, boots, reps,
-                pca_explained):
-    """Scores + provenance, so the bootstrap/report can re-run without retraining."""
+                pca_explained, raw_val=None):
+    """Scores + provenance, so the bootstrap/report can re-run without retraining.
+
+    ``raw_val`` (variant -> val raw scores) is cached as ``rawval_<name>`` while
+    the tuned models are still in hand -- threshold freezing and score fusion
+    need val scores, and caching them here retires the refit path in
+    ``fair_capability.fair_scores``.
+    """
     meta = {"seed": SEED, "reps": reps, "pca_explained": pca_explained,
             "records": records,
             "boots": boots}
@@ -458,6 +487,8 @@ def _save_cache(path, keys, y, scores, calibrated, records, boots, reps,
         payload[f"raw_{name}"] = s
     for name, s in calibrated.items():
         payload[f"cal_{name}"] = s
+    for name, s in (raw_val or {}).items():
+        payload[f"rawval_{name}"] = s
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **payload)
     print(f"\n[cache] scores + bootstrap results -> {path}")
@@ -472,8 +503,15 @@ if __name__ == "__main__":
     ap.add_argument("--from-cache", action="store_true",
                     help="reuse cached fair scores; refresh only the ORCH "
                          "column and the bootstrap")
+    ap.add_argument("--variants", default="FAIR,FAIR+TRAJ,FAIR+NOTES",
+                    help="comma list of variants to train (skip FAIR+NOTES on "
+                         "clones without the note-embedding caches)")
+    ap.add_argument("--device", default="cpu", choices=("cpu", "cuda"),
+                    help="XGBoost tree-construction device")
     args = ap.parse_args()
     if args.from_cache:
         run_from_cache(reps=args.reps)
     else:
-        run(reps=args.reps, quick=args.quick)
+        run(reps=args.reps, quick=args.quick,
+            variants=tuple(v.strip() for v in args.variants.split(",") if v.strip()),
+            device=None if args.device == "cpu" else args.device)

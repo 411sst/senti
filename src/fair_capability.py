@@ -164,41 +164,48 @@ def calibration_with_cis(y, scores_by_model, patient_ids, reps=500, seed=SEED):
 
 # --- Score plumbing ---------------------------------------------------------------
 
-def load_orch(split_frame, split_name):
-    """Canonical orchestrator scores for a split, alignment-checked."""
-    z = np.load(ORCH_NPZ[split_name])
+def load_orch(split_frame, split_name, paths=ORCH_NPZ):
+    """Orchestrator scores for a split, alignment-checked.
+
+    ``paths`` swaps in a non-canonical emission cache (e.g. a per-seed
+    core-3+meas run) without touching the canonical constant.
+    """
+    z = np.load(paths[split_name])
     ordered = split_frame.sort_values(["stay_id", "hour"])
     if not ((z["stay_id"] == ordered["stay_id"].to_numpy()).all()
             and (z["hour"] == ordered["hour"].to_numpy()).all()):
-        raise ValueError(f"{ORCH_NPZ[split_name]} does not align with the "
+        raise ValueError(f"{paths[split_name]} does not align with the "
                          f"{split_name} split")
     return z["risk"].astype(float)
 
 
-def fair_scores(splits, cache_path=SCORE_CACHE):
-    """FAIR+NOTES scores: test from the cache, val by refitting the recorded winner.
+def fair_scores(splits, cache_path=SCORE_CACHE, variant=FAIR):
+    """Fair-GBM scores for one variant: test from the cache, val cached or refit.
 
-    ``baselines_fair.py`` cached only test scores. The val scores (needed to
-    freeze thresholds) are produced by refitting the tuned configuration through
-    the same code path and seed, verified against the cached test scores, and
-    written back into the cache so the refit never runs twice.
+    Newer ``baselines_fair.py`` runs cache val scores directly (``rawval_*``);
+    older caches only held test scores, in which case the val scores are
+    produced by refitting the tuned configuration through the same code path
+    and seed, verified against the cached test scores, and written back into
+    the cache so the refit never runs twice.
     """
     z = dict(np.load(cache_path, allow_pickle=True))
     meta = json.loads(str(z["meta_json"]))
-    if f"rawval_{FAIR}" in z:
-        return z[f"rawval_{FAIR}"].astype(float), z[f"raw_{FAIR}"].astype(float), \
-            z[f"cal_{FAIR}"].astype(float)
+    if f"rawval_{variant}" in z:
+        return z[f"rawval_{variant}"].astype(float), \
+            z[f"raw_{variant}"].astype(float), \
+            z[f"cal_{variant}"].astype(float)
 
     train, val = splits["train"], splits["val"]
-    print("[fair] rebuilding design matrices to emit val scores...")
-    note_pack = fit_note_pca(train["stay_id"].unique(), seed=SEED)
+    print(f"[fair] rebuilding design matrices to emit {variant} val scores...")
+    note_pack = (fit_note_pca(train["stay_id"].unique(), seed=SEED)
+                 if variant == "FAIR+NOTES" else None)
     labs = load_labs()
     X_tr, y_tr, _ = build_design(train, labs, note_pack)
     X_va, y_va, _ = build_design(val, labs, note_pack)
     X_te, _, _ = build_design(splits["test"], labs, note_pack)
 
-    cols = variant_columns()[FAIR]
-    rec = meta["records"][FAIR]
+    cols = variant_columns()[variant]
+    rec = meta["records"][variant]
     print(f"[fair] refitting recorded winner {rec} ...")
     import xgboost as xgb
     model = xgb.XGBClassifier(
@@ -210,21 +217,22 @@ def fair_scores(splits, cache_path=SCORE_CACHE):
     model.fit(X_tr[cols], y_tr, eval_set=[(X_va[cols], y_va)], verbose=False)
 
     raw_te = model.predict_proba(X_te[cols])[:, 1].astype(float)
-    drift = float(np.abs(raw_te - z[f"raw_{FAIR}"]).max())
+    drift = float(np.abs(raw_te - z[f"raw_{variant}"]).max())
     if drift > 1e-6:
         print(f"[fair] WARNING: refit test scores differ from cache "
               f"(max |diff| {drift:.2e}); keeping the cached canonical scores")
     raw_va = model.predict_proba(X_va[cols])[:, 1].astype(float)
 
-    z[f"rawval_{FAIR}"] = raw_va
+    z[f"rawval_{variant}"] = raw_va
     np.savez_compressed(cache_path, **z)
     print(f"[fair] val scores cached back into {cache_path}")
-    return raw_va, z[f"raw_{FAIR}"].astype(float), z[f"cal_{FAIR}"].astype(float)
+    return raw_va, z[f"raw_{variant}"].astype(float), \
+        z[f"cal_{variant}"].astype(float)
 
 
 # --- Report ---------------------------------------------------------------------
 
-def run(reps=2000, cal_reps=500):
+def run(reps=2000, cal_reps=500, fair=FAIR):
     splits = load_splits()
     val, test = splits["val"], splits["test"]
     val_ordered = val.sort_values(["stay_id", "hour"]).reset_index(drop=True)
@@ -236,7 +244,7 @@ def run(reps=2000, cal_reps=500):
     alertable_test = alertable_mask(test_ordered)
 
     orch_val, orch_test = load_orch(val, "val"), load_orch(test, "test")
-    fair_val, fair_test_raw, fair_test_cal = fair_scores(splits)
+    fair_val, fair_test_raw, fair_test_cal = fair_scores(splits, variant=fair)
 
     stay_to_patient = dict(zip(test_ordered["stay_id"], test_ordered["patient_id"]))
     y_test = test_ordered[LABEL].to_numpy(dtype=float)
@@ -253,7 +261,7 @@ def run(reps=2000, cal_reps=500):
     print("  " + "-" * (len(hdr) - 2))
     for budget in BUDGETS:
         for name, s_val, s_test in (("ORCH", orch_val, orch_test),
-                                    (FAIR, fair_val, fair_test_raw)):
+                                    (fair, fair_val, fair_test_raw)):
             thr_n2, thr_m, _ = frozen_thresholds(news2_val, s_val,
                                                  alertable_val, budget)
             diffs = paired_first_alarm_diffs(test_ordered, news2_test, s_test,
@@ -274,7 +282,7 @@ def run(reps=2000, cal_reps=500):
     print(f"\nCALIBRATION on test (isotonic-on-val scores; {cal_reps}-rep "
           f"patient-clustered CIs)\ntargets: ECE-em 0, slope 1, intercept 0, ICI 0\n")
     cal = calibration_with_cis(
-        y_test, {"ORCH": orch_test, FAIR: fair_test_cal},
+        y_test, {"ORCH": orch_test, fair: fair_test_cal},
         test_ordered["patient_id"].to_numpy(), reps=cal_reps)
     hdr = (f"  {'model':<11}" + "".join(f"{m:>10}  {'95% CI':<18}"
            for m in ("ECE-em", "slope", "intercept", "ICI")))
@@ -295,5 +303,9 @@ if __name__ == "__main__":
                     help="bootstrap resamples for the lead-time CIs")
     ap.add_argument("--cal-reps", type=int, default=500,
                     help="bootstrap resamples for the calibration CIs")
+    ap.add_argument("--fair", default=FAIR,
+                    choices=("FAIR", "FAIR+TRAJ", "FAIR+NOTES"),
+                    help="which fair-GBM variant to race (FAIR+TRAJ on clones "
+                         "without the note caches)")
     args = ap.parse_args()
-    run(reps=args.reps, cal_reps=args.cal_reps)
+    run(reps=args.reps, cal_reps=args.cal_reps, fair=args.fair)
