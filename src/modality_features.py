@@ -297,3 +297,120 @@ def build_fluid_features(cohort, fluids):
         (cum_in - cum_out).to_numpy(dtype=float) / 1000.0, -20, 20)
     return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
         .sort_values(["stay_id", "hour"]).reset_index(drop=True)
+
+
+# --- Respiratory support ------------------------------------------------------
+
+RESP_PATH = "data/cache/mimic_resp_hourly.parquet"
+
+# Escalation ladder (bedside-observable spontaneous support only). Artificial
+# airways (ETT/trach and their circuit pieces) are NOT a rung: those patients
+# are already ventilated -- a new vent-onset event cannot occur -- so they get
+# a separate state flag instead. Unmapped strings -> NaN (LOCF carries the
+# previous state; census printed by the builder).
+RESP_LEVEL_MAP = {
+    "None": 0,
+    "Nasal cannula": 1, "Oxymizer": 1,
+    "Venti mask": 2, "Medium conc mask": 2, "Face tent": 2,
+    "Aerosol-cool": 2, "High flow neb": 2, "Ultrasonic neb": 2,
+    "Vapomist": 2, "Other": 2,
+    "Non-rebreather": 3,
+    "High flow nasal cannula": 4,
+    "CPAP mask": 5, "Bipap mask": 5,
+}
+RESP_AIRWAY = {"Endotracheal tube", "Tracheostomy tube", "Trach mask",
+               "T-piece"}
+RESP_STALENESS_HOURS = 24
+
+RESP_FEATURES = [
+    "resp_level", "resp_airway", "resp_level_max_6h", "resp_level_max_24h",
+    "resp_escalated_6h", "resp_escalated_24h",
+    "resp_o2_flow", "resp_flow_delta_6h",
+    "resp_fio2", "resp_fio2_delta_6h",
+    "resp_seen", "resp_hrs_since_record",
+]
+
+
+def load_resp(path=RESP_PATH):
+    return pd.read_parquet(path)
+
+
+def build_resp_features(cohort, resp, max_level=5, verbose=False):
+    """Leakage-safe respiratory-support features per cohort row.
+
+    State channels (level/airway/flow/FiO2) follow the LAB pattern -- LOCF
+    within stay, shift(1) so hour t sees records strictly before t, staleness
+    bound -- because support is a STATE, not a count. ``max_level`` caps the
+    ladder (4 = the cap-at-HFNC sensitivity variant that drops the near-label
+    NIV rung).
+    """
+    resp = resp.copy()
+    # MIMIC device strings carry trailing whitespace ('Bipap mask ',
+    # 'CPAP mask ') -- without the strip, the NIV rung silently vanishes
+    # (caught when resp and resp_cap4 emitted identical scores).
+    device = resp["o2_device"].astype("string").str.strip()
+    level = device.map(RESP_LEVEL_MAP)
+    airway = device.isin(RESP_AIRWAY)
+    if verbose:
+        unmapped = resp.loc[level.isna() & ~airway
+                            & resp["o2_device"].notna(), "o2_device"]
+        print(f"[resp] unmapped device strings: {len(unmapped):,} rows "
+              f"({unmapped.value_counts().head(5).to_dict()})")
+    resp["level"] = np.where(airway, np.nan, level.clip(upper=max_level))
+    resp["airway"] = np.where(resp["o2_device"].notna(),
+                              airway.astype(float), np.nan)
+
+    cohort_keys = cohort[["stay_id", "hour"]].drop_duplicates()
+    span = cohort_keys.groupby("stay_id")["hour"].max().reset_index(name="max_hour")
+    grid = span.assign(
+        hour=[np.arange(-CADENCE_LOOKBACK_HOURS, int(m) + 1)
+              for m in span["max_hour"]]
+    ).explode("hour")[["stay_id", "hour"]]
+    grid["hour"] = grid["hour"].astype(int)
+    resp = resp[resp["hour"].between(-CADENCE_LOOKBACK_HOURS,
+                                     int(span["max_hour"].max()))]
+    merged = grid.merge(
+        resp[["stay_id", "hour", "level", "airway", "o2_flow", "fio2"]],
+        on=["stay_id", "hour"], how="left")
+    merged = merged.sort_values(["stay_id", "hour"]).reset_index(drop=True)
+    stay, hour = merged["stay_id"], merged["hour"]
+
+    def locf(col, fill, staleness_cap=RESP_STALENESS_HOURS):
+        observed = merged[col]
+        value = observed.groupby(stay, sort=False).ffill()
+        value = value.groupby(stay, sort=False).shift(1)
+        last = hour.where(observed.notna()).groupby(stay, sort=False).ffill()
+        last = last.groupby(stay, sort=False).shift(1)
+        stale = hour - last
+        return (value.where(stale <= staleness_cap).fillna(fill),
+                stale.clip(upper=staleness_cap).fillna(staleness_cap))
+
+    lev, lev_stale = locf("level", 0.0)
+    awy, _ = locf("airway", 0.0)
+    flow, _ = locf("o2_flow", 0.0)
+    fio2, _ = locf("fio2", 21.0)
+
+    out = merged[["stay_id", "hour"]].copy()
+    out["resp_level"] = lev.to_numpy(dtype=float)
+    out["resp_airway"] = awy.to_numpy(dtype=float)
+    by = lev.groupby(stay, sort=False)
+    out["resp_level_max_6h"] = by.rolling(6, min_periods=1).max() \
+        .droplevel(0).sort_index().to_numpy(dtype=float)
+    out["resp_level_max_24h"] = by.rolling(24, min_periods=1).max() \
+        .droplevel(0).sort_index().to_numpy(dtype=float)
+    out["resp_escalated_6h"] = ((lev - by.shift(6)) > 0).to_numpy(dtype=float)
+    out["resp_escalated_24h"] = ((lev - lev.groupby(stay, sort=False)
+                                  .shift(24)) > 0).to_numpy(dtype=float)
+    out["resp_o2_flow"] = flow.to_numpy(dtype=float)
+    out["resp_flow_delta_6h"] = (flow - flow.groupby(stay, sort=False)
+                                 .shift(6)).fillna(0.0).to_numpy(dtype=float)
+    out["resp_fio2"] = fio2.to_numpy(dtype=float)
+    out["resp_fio2_delta_6h"] = (fio2 - fio2.groupby(stay, sort=False)
+                                 .shift(6)).fillna(0.0).to_numpy(dtype=float)
+    seen = merged["level"].notna() | merged["airway"].notna()
+    out["resp_seen"] = seen.groupby(stay, sort=False).cummax() \
+        .groupby(stay, sort=False).shift(1).fillna(False) \
+        .to_numpy(dtype=float)
+    out["resp_hrs_since_record"] = lev_stale.to_numpy(dtype=float)
+    return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
+        .sort_values(["stay_id", "hour"]).reset_index(drop=True)

@@ -113,6 +113,68 @@ def test_net_balance_sign():
     assert feats.loc[20, "cum_net"] > 0
 
 
+# --- Respiratory support -----------------------------------------------------
+
+def _resp_events(rows):
+    base = {"o2_device": None, "o2_flow": np.nan, "fio2": np.nan}
+    return pd.DataFrame([{**base, **r} for r in rows])
+
+
+def test_resp_ladder_locf_shift_and_escalation():
+    from modality_features import RESP_FEATURES, build_resp_features
+    cohort = _cohort({1: 20})
+    ev = _resp_events([
+        {"stay_id": 1, "hour": 8, "o2_device": "Nasal cannula",
+         "o2_flow": 2.0},
+        {"stay_id": 1, "hour": 14, "o2_device": "High flow nasal cannula",
+         "o2_flow": 40.0, "fio2": 60.0},
+    ])
+    feats = build_resp_features(cohort, ev).set_index("hour")
+    assert feats.loc[8, "resp_level"] == 0.0          # own bucket invisible
+    assert feats.loc[9, "resp_level"] == 1.0          # NC visible at h+1
+    assert feats.loc[14, "resp_level"] == 1.0
+    assert feats.loc[15, "resp_level"] == 4.0         # HFNC
+    assert feats.loc[15, "resp_escalated_6h"] == 1.0
+    assert feats.loc[15, "resp_fio2"] == 60.0
+    assert feats.loc[9, "resp_fio2"] == 21.0          # default room air
+    assert np.isfinite(feats[RESP_FEATURES].to_numpy(dtype=float)).all()
+
+
+def test_resp_airway_is_a_state_not_a_rung():
+    from modality_features import build_resp_features
+    cohort = _cohort({1: 16})
+    ev = _resp_events([
+        {"stay_id": 1, "hour": 7, "o2_device": "Endotracheal tube"},
+    ])
+    feats = build_resp_features(cohort, ev).set_index("hour")
+    assert feats.loc[8, "resp_airway"] == 1.0
+    assert feats.loc[8, "resp_level"] == 0.0          # not on the ladder
+    assert feats.loc[8, "resp_seen"] == 1.0
+
+
+def test_resp_device_strings_with_trailing_whitespace_still_map():
+    """MIMIC ships 'Bipap mask ' / 'CPAP mask ' WITH trailing spaces; the
+    unstripped map silently dropped the whole NIV rung (caught because resp
+    and resp_cap4 emitted byte-identical scores)."""
+    from modality_features import build_resp_features
+    cohort = _cohort({1: 12})
+    ev = _resp_events([{"stay_id": 1, "hour": 7, "o2_device": "Bipap mask "}])
+    feats = build_resp_features(cohort, ev).set_index("hour")
+    assert feats.loc[8, "resp_level"] == 5.0
+
+
+def test_resp_cap_variant_drops_the_niv_rung():
+    from modality_features import build_resp_features
+    cohort = _cohort({1: 16})
+    ev = _resp_events([
+        {"stay_id": 1, "hour": 7, "o2_device": "Bipap mask"},
+    ])
+    full = build_resp_features(cohort, ev).set_index("hour")
+    capped = build_resp_features(cohort, ev, max_level=4).set_index("hour")
+    assert full.loc[8, "resp_level"] == 5.0
+    assert capped.loc[8, "resp_level"] == 4.0
+
+
 # --- Agents end-to-end -------------------------------------------------------
 
 def test_agents_fit_and_emit_on_synthetic_sources():

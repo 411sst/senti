@@ -31,10 +31,14 @@ from modality_features import (  # noqa: F401  (re-exported public names)
     CADENCE_PATH,
     FLUID_FEATURES,
     FLUIDS_PATH,
+    RESP_FEATURES,
+    RESP_PATH,
     build_cadence_features,
     build_fluid_features,
+    build_resp_features,
     load_cadence,
     load_fluids,
+    load_resp,
 )
 
 LABEL = "label_24h"
@@ -203,3 +207,24 @@ class FluidAgent(TabularMLPAgent):
         if self.source is None:
             self.source = load_fluids()
         return build_fluid_features(df, self.source)
+
+
+class RespAgent(TabularMLPAgent):
+    """Respiratory-support trajectory. NEAR-LABEL: ships with the
+    ``max_level=4`` cap-at-HFNC sensitivity variant (drops the NIV rung one
+    step from the vent label) and is reported per event component."""
+
+    name = "resp"
+    FEATURES = RESP_FEATURES
+
+    def __init__(self, max_level=5, **kwargs):
+        super().__init__(**kwargs)
+        self.max_level = max_level
+        if max_level < 5:
+            self.name = f"resp_cap{max_level}"
+
+    def _feature_frame(self, df):
+        if self.source is None:
+            self.source = load_resp()
+        return build_resp_features(df, self.source,
+                                   max_level=self.max_level)

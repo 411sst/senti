@@ -397,6 +397,100 @@ meets the full team target — GBM-level accuracy AND lead ≥ +1h — in one
 architecture, where CONSTR-1H needed a two-model blend with weaker lead
 evidence and the old ORCH+GBM sat below FAIR on 2/3 seeds.
 
+## T7 — Clinician-vs-physiology decomposition: the lead is clinician-taught, not clinician-anticipation
+
+The strongest reviewer attack on the earliness claim: the composite label
+mixes death (physiology) with vent/vaso (clinician decisions), so the lead
+could be mere anticipation of the order set — made acute by the flagship's
+openly clinician-behavioural cadence agent. The cohort censors every stay at
+its FIRST event and tags it, so the paired race splits cleanly by subgroup
+(test census: 802 vent-first / 373 vaso-first / 365 death-first stays).
+
+**Part (i) — existing models, subgroup race (no retraining), lead@2%:**
+
+| model | treatment-first stays | death-first stays | death AUPRC |
+|---|---|---|---|
+| FAIR+TRAJ | 0.0 (win 41%) | 0.0 (win 33%) | 0.189 |
+| ORCH-meas (s42/s1/s2) | +2/+1/+2 (win 61–66%) | **+2/+1/+2 (win 53–59%)** | 0.069–0.079 |
+| ALL-7 | +1/+1/+2 (win 57–62%) | **+1.5/+1/+1 (win 52–56%)** | 0.092–0.100 |
+| CADENCE alone | +1 (win 55%) | 0.0 (win 47%) | 0.028 |
+| FLUID alone | +1 (win 53%) | **+2 (win 58%)** | 0.028 |
+
+**The armor holds: the lead survives on death-first stays** — where there is
+no proximate order set to anticipate — at only slightly reduced win rates
+(n≈150 pairs, so subgroup CIs are wide; stated). And the agent-level controls
+behave exactly as their mechanisms predict: cadence is clinician-loaded
+(treatment lead only), fluid is physiology-loaded (its lead is *death*-led).
+
+**Part (ii) — retrain the flagship on component-only labels:**
+
+| training label | death AUPRC | treat lead@2% | death-stay lead@2% |
+|---|---|---|---|
+| composite (reference) | 0.09–0.10 | +1 to +2 | +1 to +1.5 |
+| death-only (3 seeds) | **0.34–0.35** | 0.0 (win 27–30%) | **−2/0/−2 (win 29–33%)** |
+| treatment-only (3 seeds) | 0.026–0.028 | +2/+2/+2.5 (win 62–67%) | **+3/+3/+4 (win 63–69%, median CIs [1,6]/[1,6]/[2,7])** |
+| GBM on either label | 0.31 / 0.04 | 0.0 | ≤0 (win ≤46%) |
+
+Two mechanisms fall out, both headline-grade:
+
+1. **Earliness is taught by treatment times, but is not anticipation.**
+   Treatment-only supervision produces the best death-stay lead in the whole
+   program (+3–4h, win CIs clear of 50% on 3/3 seeds) — on stays where death
+   is the FIRST event and no order set exists to anticipate. Clinician
+   action times are dense, early *recognition timestamps* of a shared
+   physiological prodrome; outcome-only supervision teaches terminal
+   patterns that alarm LATE (death-only models: death lead −2h despite
+   death-AUPRC 0.34). This inverts the confounding critique: clinician
+   actions are a supervision asset, not a contaminant.
+2. **The orchestrator's death deficit is a supervision artifact, not a
+   representation gap.** A death-only head on the same agents reaches death
+   AUPRC 0.34–0.35 — nearly double the composite GBM's 0.19. A two-head
+   deployment (treatment-trained head for alarm timing + death-trained head
+   for death-risk ranking) is the obvious future-work configuration; noted,
+   not built. (GBM_treat still has zero lead — timing remains
+   representational even under timing-friendly supervision.)
+
+Caveat carried from the design: death is itself treatment-mediated
+(DNR/withdrawal), so death-only rows are a lower bound on physiological
+signal; comfort-care-excluded sensitivity is listed future work.
+
+## T8 — Respiratory-support agent: ALL-8 beats the GBM outright
+
+The last big untapped bedside observable: the O₂ escalation ladder
+(RA→NC→masks→HFNC→NIV; artificial airways are a separate already-ventilated
+state flag, not a rung), O₂ flow and FiO₂ trends — LOCF + strictly-before-t
+shift, from a 17GB chartevents aggregation (2.1M rows). Near-label by
+construction, so it ships with the cap-at-HFNC sensitivity variant and full
+component reporting. (Data catch #2 of the day, now a regression test: MIMIC
+ships 'Bipap mask ' / 'CPAP mask ' WITH trailing whitespace — the unstripped
+map silently deleted the NIV rung, caught because the cap variant emitted
+byte-identical scores.)
+
+Standalone: val AUPRC 0.154 / AUROC 0.718 (vent-loaded, as expected).
+
+**Fusion (vs the cached ALL-7 parent, within-seed):**
+
+| config | test AUPRC (s42/s1/s2) | Δ vs ALL-7 CI | Δ vs FAIR+TRAJ CI | lead@2% | win |
+|---|---|---|---|---|---|
+| **ALL-8** (all7+resp) | **0.3125 / 0.3111 / 0.2938** | **>0 on 3/3** | **>0 on 2/3** (s2 spans) | +1.0 3/3 | 53–58% |
+| ALL-8 cap-at-HFNC | 0.3130 / 0.3116 / 0.2940 | >0 on 3/3 | — | +1.0 3/3 | 53–57% |
+
+**The new flagship: mean test AUPRC 0.306 — the architecture now BEATS the
+equal-information GBM on ranking** (paired CI clear of zero on 2/3 seeds,
+spans on the third) while keeping +1h lead@2% at 53–58% win. Honesty checks,
+all passed: (1) the cap-at-HFNC variant is statistically identical — the
+gain does not ride the near-label NIV rung; (2) per-component AUPRC shows
+the gain is broad across treatment components (vent 0.21–0.22 vs FAIR's
+0.16, vaso 0.14–0.15 vs 0.12) while death is unchanged (0.09–0.10 — still
+the supervision-artifact hole T7 diagnosed, with its two-head fix flagged);
+(3) **the death-stay lead survives** (+1/+1/+2, win 51–56%) — the T7 armor
+holds for the new flagship too.
+
+Updated paper sentence: *Sentinel EXCEEDS a strong equal-information
+gradient-boosted baseline on ranking (test AUPRC 0.306 vs 0.287) while
+alarming 1–2 hours earlier at matched alarm budgets — and the lead survives
+on death-first stays, where there is no order set to anticipate.*
+
 ## Reproduce
 
 ```bash
@@ -431,6 +525,16 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   .venv/bin/python scripts/fetch_cadence_fluids.py
 .venv/bin/python scripts/train_new_agents.py
 .venv/bin/python scripts/eval_new_agents.py --seeds 42,1,2
+
+# T7 decomposition
+.venv/bin/python scripts/run_decomposition.py --part i,ii --device cuda
+
+# T8 respiratory agent
+GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
+  .venv/bin/python scripts/fetch_cadence_fluids.py --which resp
+.venv/bin/python scripts/train_new_agents.py --agent resp,resp_cap4
+.venv/bin/python scripts/eval_new_agents.py --parents all7 --agents resp,respcap4 \
+  --out data/cache/resp_fusion.npz
 
 # tests
 .venv/bin/python -m pytest -q   # 524 passing

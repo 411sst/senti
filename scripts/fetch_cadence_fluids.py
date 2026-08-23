@@ -25,6 +25,8 @@ EXTRACTS = {
                 REPO / "data" / "cache" / "mimic_cadence_hourly.parquet"),
     "fluids": (REPO / "scripts" / "mimic_fluids.sql",
                REPO / "data" / "cache" / "mimic_fluids_hourly.parquet"),
+    "resp": (REPO / "scripts" / "mimic_resp.sql",
+             REPO / "data" / "cache" / "mimic_resp_hourly.parquet"),
 }
 
 

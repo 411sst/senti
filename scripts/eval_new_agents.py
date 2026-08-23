@@ -34,11 +34,15 @@ OUT_CACHE = REPO / "data" / "cache" / "new_agents_fusion.npz"
 PARENTS = {
     "meas": ("vitals_tcn", "news2", "labs", "ecg_meas"),
     "gbm": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm"),
+    "all7": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm",
+             "cadence", "fluid"),
 }
 ADDITIONS = {
     "cadence": ("cadence",),
     "fluid": ("fluid",),
     "both": ("cadence", "fluid"),
+    "resp": ("resp",),
+    "respcap4": ("resp_cap4",),
 }
 
 
@@ -48,6 +52,13 @@ def parent_scores(name, ctx):
         from fusion_common import load_orch_seeds
         seeds, sc, _ = load_orch_seeds(ctx.val_ordered, ctx.test_ordered)
         return {s: (sc[s]["val"], sc[s]["test"]) for s in seeds}
+    if name == "all7":
+        z = np.load(REPO / "data" / "cache" / "new_agents_fusion.npz",
+                    allow_pickle=True)
+        meta = json.loads(str(z["meta_json"]))
+        return {s: (z[f"val_gbm+both_s{s}"].astype(float),
+                    z[f"test_gbm+both_s{s}"].astype(float))
+                for s in meta["seeds"]}
     z = np.load(REPO / "data" / "cache" / "orch_gbm_agent.npz",
                 allow_pickle=True)
     meta = json.loads(str(z["meta_json"]))
@@ -63,7 +74,11 @@ def main():
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--reps", type=int, default=2000)
     ap.add_argument("--auprc-reps", type=int, default=1000)
+    ap.add_argument("--out", default=str(OUT_CACHE),
+                    help="output npz (set a NEW path when the parent's own "
+                         "cache is this script's previous output)")
     args = ap.parse_args()
+    out_cache = Path(args.out)
     seeds = [int(s) for s in args.seeds.split(",")]
 
     from baselines_mimic import load_splits
@@ -114,8 +129,8 @@ def main():
 
     payload["meta_json"] = np.array(json.dumps(_jsonable(
         {"seeds": seeds, "reps": args.reps, "results": results})))
-    np.savez_compressed(OUT_CACHE, **payload)
-    print(f"[cache] -> {OUT_CACHE}")
+    np.savez_compressed(out_cache, **payload)
+    print(f"[cache] -> {out_cache}")
 
 
 def _jsonable(obj):

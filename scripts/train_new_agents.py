@@ -46,12 +46,18 @@ def main():
     ap.add_argument("--epochs", type=int, default=12)
     args = ap.parse_args()
 
-    from agents.tabular_agent import CadenceAgent, FluidAgent
+    from agents.tabular_agent import CadenceAgent, FluidAgent, RespAgent
+
     from baselines_mimic import load_splits
 
     splits = load_splits()
     train, val, test = splits["train"], splits["val"], splits["test"]
-    classes = {"cadence": CadenceAgent, "fluid": FluidAgent}
+    classes = {
+        "cadence": CadenceAgent,
+        "fluid": FluidAgent,
+        "resp": RespAgent,
+        "resp_cap4": lambda **kw: RespAgent(max_level=4, **kw),
+    }
 
     for which in args.agent.split(","):
         cls = classes[which.strip()]
