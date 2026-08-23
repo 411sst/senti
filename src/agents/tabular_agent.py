@@ -76,8 +76,8 @@ class TabularMLPAgent(Agent):
         raise NotImplementedError
 
     # -- features ----------------------------------------------------------
-    def _features(self, df):
-        feats = self._feature_frame(df)
+    def _matrix(self, feats):
+        """Standardized (N, F) matrix + keys from an already-built frame."""
         parts = []
         for col in self.FEATURES:
             v = feats[col].to_numpy(dtype=float)
@@ -86,8 +86,17 @@ class TabularMLPAgent(Agent):
         return (np.stack(parts, axis=1).astype(np.float32),
                 feats[["stay_id", "hour"]])
 
-    def _fit_normalizer(self, df):
-        feats = self._feature_frame(df)
+    def _features(self, df):
+        return self._matrix(self._feature_frame(df))
+
+    def _fit_normalizer(self, feats):
+        """TRAIN statistics only. Takes the built frame so ``_fit_model``
+        does not pay for the (2.5M-row) feature build twice.
+
+        The std floor is 1e-2, not epsilon: several channels are near-constant
+        for most stays (e.g. imaging orders), and dividing by ~0 turns a rare
+        event into a five-figure z-score.
+        """
         self.stats = {}
         for col in self.FEATURES:
             v = feats[col].to_numpy(dtype=float)
@@ -102,9 +111,10 @@ class TabularMLPAgent(Agent):
 
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
-        self._fit_normalizer(train_df)               # TRAIN statistics only
+        train_frame = self._feature_frame(train_df)
+        self._fit_normalizer(train_frame)            # TRAIN statistics only
 
-        X_train, keys_train = self._features(train_df)
+        X_train, keys_train = self._matrix(train_frame)
         y_train = self._labels_in_key_order(train_df, keys_train)
         X_val, keys_val = self._features(val_df)
         y_val = self._labels_in_key_order(val_df, keys_val)

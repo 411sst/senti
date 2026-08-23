@@ -82,6 +82,21 @@ def _fluid_events(rows):
     return pd.DataFrame([{**base, **r} for r in rows])
 
 
+def test_duplicate_extract_keys_are_rejected_not_silently_fanned_out():
+    """A duplicated (stay_id, hour) would left-join into EXTRA rows and
+    misalign every feature against the labels -- the builders must refuse."""
+    from modality_features import build_cadence_features, build_fluid_features
+    cohort = _cohort({1: 12})
+    dup_c = _events([{"stay_id": 1, "hour": 8, "n_lab_draws": 1},
+                     {"stay_id": 1, "hour": 8, "n_lab_draws": 2}])
+    with pytest.raises(ValueError, match="duplicate"):
+        build_cadence_features(cohort, dup_c)
+    dup_f = _fluid_events([{"stay_id": 1, "hour": 8, "urine_ml": 10.0},
+                           {"stay_id": 1, "hour": 8, "urine_ml": 20.0}])
+    with pytest.raises(ValueError, match="duplicate"):
+        build_fluid_features(cohort, dup_f)
+
+
 def test_oliguria_requires_records_not_just_low_volume():
     cohort = _cohort({1: 24, 2: 24})
     ev = _fluid_events(
@@ -102,11 +117,11 @@ def test_oliguria_requires_records_not_just_low_volume():
 
 def test_net_balance_sign():
     cohort = _cohort({1: 24})
+    # ONE row per (stay, hour): the extracts aggregate hourly, and the
+    # builders now reject duplicate keys (they would fan out the join).
     ev = _fluid_events(
-        [{"stay_id": 1, "hour": h, "in_ml": 500.0, "n_in_records": 1}
-         for h in range(6, 16)]
-        + [{"stay_id": 1, "hour": h, "urine_ml": 30.0, "n_urine_records": 1}
-           for h in range(6, 16)]
+        [{"stay_id": 1, "hour": h, "in_ml": 500.0, "n_in_records": 1,
+          "urine_ml": 30.0, "n_urine_records": 1} for h in range(6, 16)]
     )
     feats = build_fluid_features(cohort, ev).set_index("hour")
     assert feats.loc[20, "net_24h"] > 0                  # 5000 in vs 300 out

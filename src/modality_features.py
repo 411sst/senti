@@ -164,7 +164,23 @@ def load_cadence(path=CADENCE_PATH):
     return pd.read_parquet(path)
 
 
-def _dense_shifted_grid(cohort, events, columns, lookback):
+def assert_one_row_per_key(events, name):
+    """Every hourly extract must hold at most ONE row per (stay_id, hour).
+
+    The builders left-join the extract onto a dense grid, so a duplicated key
+    silently EXPANDS the result past the cohort's row count and misaligns
+    every downstream feature against the labels. The SQL aggregates by
+    (stay_id, hour), so this is a guard against a future extract edit (a
+    dropped GROUP BY, a FULL OUTER JOIN gaining a fan-out) rather than a
+    condition seen today.
+    """
+    dup = int(events.duplicated(["stay_id", "hour"]).sum())
+    if dup:
+        raise ValueError(f"{name} extract has {dup} duplicate (stay_id, hour) "
+                         f"rows -- the hourly aggregation is broken")
+
+
+def _dense_shifted_grid(cohort, events, columns, lookback, name="extract"):
     """Dense per-stay hourly grid of event columns, zero-filled and shifted.
 
     Counts differ from lab VALUES: an hour with no rows genuinely means zero
@@ -172,6 +188,7 @@ def _dense_shifted_grid(cohort, events, columns, lookback):
     carrying forward. The one-hour shift makes the row at hour ``t`` see
     buckets ``<= t-1`` only -- strictly before t, as everywhere else.
     """
+    assert_one_row_per_key(events, name)
     cohort_keys = cohort[["stay_id", "hour"]].drop_duplicates()
     span = cohort_keys.groupby("stay_id")["hour"].max().reset_index(name="max_hour")
     grid = span.assign(
@@ -212,7 +229,8 @@ def build_cadence_features(cohort, cadence):
     patient RISING", which is the precursor construct, not the level.
     """
     merged, cohort_keys = _dense_shifted_grid(
-        cohort, cadence, CADENCE_CHANNELS, CADENCE_LOOKBACK_HOURS)
+        cohort, cadence, CADENCE_CHANNELS, CADENCE_LOOKBACK_HOURS,
+        name="cadence")
     out = merged[["stay_id", "hour"]].copy()
     for c in CADENCE_CHANNELS:
         s6 = _rolling_sum(merged, c, 6)
@@ -256,7 +274,8 @@ def build_fluid_features(cohort, fluids):
     from "no catheter".
     """
     merged, cohort_keys = _dense_shifted_grid(
-        cohort, fluids, FLUID_CHANNELS, CADENCE_LOOKBACK_HOURS)
+        cohort, fluids, FLUID_CHANNELS, CADENCE_LOOKBACK_HOURS,
+        name="fluids")
     # The GU-irrigant correction (227488 enters negatively) can leave an
     # HOURLY bucket net-negative -- an accounting artifact, not physiology
     # (log1p would NaN on it). Volumes are floored at zero per bucket.
@@ -344,6 +363,7 @@ def build_resp_features(cohort, resp, max_level=5, verbose=False):
     ladder (4 = the cap-at-HFNC sensitivity variant that drops the near-label
     NIV rung).
     """
+    assert_one_row_per_key(resp, "resp")
     resp = resp.copy()
     # MIMIC device strings carry trailing whitespace ('Bipap mask ',
     # 'CPAP mask ') -- without the strip, the NIV rung silently vanishes
@@ -407,9 +427,9 @@ def build_resp_features(cohort, resp, max_level=5, verbose=False):
     out["resp_fio2"] = fio2.to_numpy(dtype=float)
     out["resp_fio2_delta_6h"] = (fio2 - fio2.groupby(stay, sort=False)
                                  .shift(6)).fillna(0.0).to_numpy(dtype=float)
-    seen = merged["level"].notna() | merged["airway"].notna()
+    seen = (merged["level"].notna() | merged["airway"].notna()).astype(float)
     out["resp_seen"] = seen.groupby(stay, sort=False).cummax() \
-        .groupby(stay, sort=False).shift(1).fillna(False) \
+        .groupby(stay, sort=False).shift(1).fillna(0.0) \
         .to_numpy(dtype=float)
     out["resp_hrs_since_record"] = lev_stale.to_numpy(dtype=float)
     return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \

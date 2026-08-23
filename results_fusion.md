@@ -36,11 +36,12 @@ report only ranking metrics, distillation papers never report lead time.
    project's new best ranking score: test AUPRC 0.291 > 0.287, paired CI
    clear of zero 3/3 seeds. The earliness-constrained stack Pareto-improves
    the orchestrator (0.262 at the full +1.7h@2%).
-5. **The team target is met, by the all-7 flagship** (T6):
-   **ORCH+GBM+cadence+fluid** — mean test AUPRC 0.2821, statistically
-   GBM-tied on 3/3 seeds, with +1–2h lead@2% at 55–60% win. It supersedes
-   the earlier deliverables (CONSTR-1H: tied but weaker lead, two-model
-   blend; plain ORCH+GBM: below FAIR on 2/3 seeds).
+5. **The final flagship is two-head ALL-8** (T9): mean test AUPRC **0.3076**
+   — above the equal-information GBM's 0.287 with the paired CI clear of
+   zero on **3/3 seeds** — at **+1.5h mean lead@2% (58% win)**, with the
+   death component restored to parity (0.184 vs the GBM's 0.189) and a
+   death-specific head that ranks death at **0.344, 1.8× the GBM**. It
+   supersedes ALL-8 (T8), all-7 (T6), ORCH+GBM and CONSTR-1H (T1/T4).
 6. **Lead at fixed alarm volume is zero-sum** (T5): even a spike-preserving
    exceedance ensemble OR-ed with the parent reproduces the parent
    cell-for-cell — the parent's crossings already fill the budget, and
@@ -491,6 +492,79 @@ gradient-boosted baseline on ranking (test AUPRC 0.306 vs 0.287) while
 alarming 1–2 hours earlier at matched alarm budgets — and the lead survives
 on death-first stays, where there is no order set to anticipate.*
 
+## T9 — The two-head fix: the death deficit closes, and the lead improves
+
+T7 diagnosed the orchestrator's long-standing death deficit as a
+**supervision artifact**: the composite head is a compromise between two
+incompatible optima (treatment supervision teaches timing, death
+supervision teaches death ranking). T9 stops compromising — two heads on the
+identical ALL-8 bank, composed for deployment:
+
+```
+T-head   ALL-8 orchestrator trained + early-stopped on vent-or-vaso
+D-head   ALL-8 orchestrator trained + early-stopped on label_24h_death
+score    noisy-OR of the V_fit-calibrated heads: 1 - (1-cT)(1-cD)
+```
+
+Noisy-OR is the probabilistic composite of "any event in 24h" under
+component independence — it recovers the composite label's semantics rather
+than blending two scores by a fitted weight, so it adds no free parameters
+beyond each head's own isotonic.
+
+| seed | composite AUPRC | vs ALL-8 | vs FAIR+TRAJ | death AUPRC | D-head death | lead@2% | win | death-stay lead |
+|---|---|---|---|---|---|---|---|---|
+| 42 | 0.3141 | spans 0 | **[+0.0157, +0.0386]** | 0.182 | 0.351 | +1.0 | 57% | +1.0 (51%) |
+| 1 | 0.3069 | spans 0 | **[+0.0085, +0.0311]** | 0.181 | 0.338 | +2.0 | 59% | +2.0 (56%) |
+| 2 | 0.3017 | spans 0 | **[+0.0034, +0.0255]** | 0.188 | 0.343 | +1.5 | 58% | +1.0 (52%) |
+| **mean** | **0.3076** | equal | **ABOVE 3/3** | **0.184** | **0.344** | **+1.5** | **58%** | **+1.3** |
+
+**The fix lands on every axis it was designed for, and costs nothing:**
+
+1. **The death deficit is closed.** Component death AUPRC goes 0.096 → 0.184
+   — parity with the fair GBM's 0.189, from a model that also alarms 1–2h
+   earlier. The D-head *alone* reaches 0.344 death AUPRC, **1.8× the GBM's
+   0.189**: the representation was never the problem, the supervision was.
+2. **Ranking improves against the bar.** Two-head beats FAIR+TRAJ with the
+   paired CI clear of zero on **3/3 seeds** — ALL-8 managed 2/3.
+3. **The lead improves too.** +1.5h mean at 58% win, versus ALL-8's +1.0h at
+   53–58%; the death-stay lead (T7's armor) holds at +1.3h mean.
+4. Composite AUPRC is statistically indistinguishable from ALL-8 (CIs span
+   zero on 3/3) — the death-ranking and timing gains are free.
+
+**Two-head ALL-8 is the final flagship.** Deployment cost is one extra
+forward pass over the same cached bank; both heads share the agents, and the
+D-head's death score is independently useful (it is the best death-risk
+ranker in the program, by a wide margin).
+
+## Architecture audit (post-T8 sweep)
+
+A full pass over every component the program added, plus the pipeline it
+plugs into. Findings and fixes:
+
+| # | finding | severity | fix |
+|---|---|---|---|
+| 1 | Builders left-join the hourly extracts onto a dense grid; a duplicated `(stay_id, hour)` would **fan the join out past the cohort row count** and misalign every feature against the labels — nothing enforced uniqueness. Production extracts are clean (0 duplicates in all three), so this was latent, not active. | high (silent corruption) | `assert_one_row_per_key()` called by all three builders; regression test. It immediately caught a real duplicate-key bug in an existing test fixture. |
+| 2 | Flagship configs were **unreachable from the shipping path**: `available_agents()` only scans agents named in `ORCHESTRATOR_CONFIGS`, so cadence/fluid/resp/gbm were invisible to `resolve_config` and `ship_orchestrator.py`. | high (ships the wrong model) | Added `core-3+meas+gbm`, `all-7`, `all-8`; `PRIMARY` deliberately unchanged (see below). |
+| 3 | With the new configs added, a caller asking for `all-8` with one cache missing would **degrade straight to core-3**, silently discarding modalities that *are* cached. | medium | `FLAGSHIP_DEGRADATION_ORDER` chain + test that the chain is strictly nested (degradation only ever removes modalities). |
+| 4 | `resp_seen` built on an object-dtype `fillna`, which pandas deprecates (silent behaviour change on upgrade). | low | Cast to float before the groupby chain. |
+| 5 | Tabular agents built their feature frame **twice per fit** (normalizer, then matrix) — a full 2.5M-row rebuild wasted per agent. | low (efficiency) | `_fit_model` builds once and passes the frame to `_fit_normalizer`/`_matrix`. |
+
+Verified clean, no action needed: leakage perturbation test on all three new
+builders (rewrite the future → rows ≤ t unchanged, later rows respond); zero
+unmapped respiratory device strings after the whitespace fix; the GBM
+pseudo-agent's OOF train scores match the val distribution (mean 0.048 both
+— no in-sample sharpness); all eight agent caches emit on identical keys
+with valid risk ranges; `scripts/audit_alignment.py` reports AUDIT CLEAN
+(label timing, censoring, no leakage); every module and script imports and
+parses; suite green.
+
+**The one deliberate non-change:** `DEFAULT_CONFIG` still points at core-3.
+Promoting all-8 changes what every default `AgentBank.load()` returns — and
+with it the cached comparator column in `baselines_fair.py` that the entire
+published results corpus is paired against. The evidence for the flip is in
+T8; the flip itself is a team decision, and the configs are now in place to
+execute it in one line.
+
 ## Reproduce
 
 ```bash
@@ -535,6 +609,9 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 .venv/bin/python scripts/train_new_agents.py --agent resp,resp_cap4
 .venv/bin/python scripts/eval_new_agents.py --parents all7 --agents resp,respcap4 \
   --out data/cache/resp_fusion.npz
+
+# T9 two-head fix (the final flagship)
+.venv/bin/python scripts/two_head.py --seeds 42,1,2
 
 # tests
 .venv/bin/python -m pytest -q   # 524 passing

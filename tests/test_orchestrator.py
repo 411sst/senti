@@ -295,6 +295,25 @@ def test_resolve_config_raises_when_even_core3_is_incomplete(tmp_path):
         resolve_config(emb_dir=tmp_path)
 
 
+def test_flagship_chain_is_strictly_nested():
+    """Degradation must only ever REMOVE modalities: every entry's agents are
+    a subset of the entry before it."""
+    from orchestrator.fusion import (FLAGSHIP_DEGRADATION_ORDER,
+                                     ORCHESTRATOR_CONFIGS)
+    chain = [set(ORCHESTRATOR_CONFIGS[c]) for c in FLAGSHIP_DEGRADATION_ORDER]
+    for bigger, smaller in zip(chain, chain[1:]):
+        assert smaller < bigger
+
+
+def test_flagship_degrades_through_the_chain_not_straight_to_core3(tmp_path):
+    """all-8 with resp uncached must land on all-7, keeping cadence/fluid."""
+    from orchestrator.fusion import ORCHESTRATOR_CONFIGS, resolve_config
+    _touch_agents(tmp_path, ORCHESTRATOR_CONFIGS["all-7"])
+    name, agents = resolve_config("all-8", emb_dir=tmp_path)
+    assert name == "all-7"
+    assert "cadence" in agents and "fluid" in agents and "resp" not in agents
+
+
 def test_unknown_config_name_is_rejected():
     from orchestrator.fusion import config_agents
     with pytest.raises(KeyError):

@@ -69,16 +69,34 @@ ORCHESTRATOR_CONFIGS = {
     "all-5": ("vitals_tcn", "news2", "labs", "ecg", "notes"),
     # ECG machine-measurements agent: the one ECG variant that cleared the
     # fusion bar (results_ecg.md: val ΔAUPRC +0.0049 mean over seeds {42,1,2},
-    # sign-consistent 3/3). Experiment config for the fusion/LatentCast work;
-    # promoting it to PRIMARY is a separate team decision.
+    # sign-consistent 3/3).
     "core-3+meas": ("vitals_tcn", "news2", "labs", "ecg_meas"),
+    # The fusion-program configurations (results_fusion.md T4/T6/T8). Each
+    # cleared the same bar on VAL with the 95% CI clear of zero, within seed,
+    # over seeds {42, 1, 2}:
+    #   +gbm      the fair GBM as a pseudo-agent (OOF train scores)  T4
+    #   all-7     + cadence (clinician behaviour) + fluid (renal)    T6
+    #   all-8     + respiratory support -> test AUPRC 0.306, ABOVE   T8
+    #             the equal-information GBM, at +1h lead@2%
+    # PRIMARY still points at core-3: promoting all-8 changes what every
+    # default AgentBank.load() returns (and with it the cached comparisons
+    # the whole results corpus is paired against), so the flip is a team
+    # decision -- the evidence for it is in results_fusion.md T8.
+    "core-3+meas+gbm": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm"),
+    "all-7": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm", "cadence",
+              "fluid"),
+    "all-8": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm", "cadence",
+              "fluid", "resp"),
 }
 DEFAULT_CONFIG = "primary"
 
 # Order tried when agents are missing at run time (graceful degradation). Only
 # ever moves to a SMALLER agent set -- never silently adds a modality the caller
-# did not ask for.
+# did not ask for, so each entry's agents are a subset of the one before.
 DEGRADATION_ORDER = ("primary", "core-3")
+# The degradation chain a caller asking for the flagship walks down.
+FLAGSHIP_DEGRADATION_ORDER = ("all-8", "all-7", "core-3+meas+gbm",
+                              "core-3+meas", "core-3")
 
 # Back-compat for callers that imported the old name.
 DEFAULT_AGENTS = ORCHESTRATOR_CONFIGS[DEFAULT_CONFIG]
@@ -110,7 +128,12 @@ def resolve_config(preferred=DEFAULT_CONFIG, emb_dir=EMB_DIR):
     sources that a given site may not have.
     """
     have = available_agents(emb_dir)
-    candidates = [preferred] + [c for c in DEGRADATION_ORDER if c != preferred]
+    # A caller asking for a flagship config degrades down the flagship chain
+    # (each entry a strict subset of the one before) rather than dropping
+    # straight to core-3 and silently discarding modalities that ARE cached.
+    chain = (FLAGSHIP_DEGRADATION_ORDER
+             if preferred in FLAGSHIP_DEGRADATION_ORDER else DEGRADATION_ORDER)
+    candidates = [preferred] + [c for c in chain if c != preferred]
     for name in candidates:
         agents = ORCHESTRATOR_CONFIGS[name]
         if set(agents) <= have:
