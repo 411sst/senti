@@ -36,17 +36,20 @@ report only ranking metrics, distillation papers never report lead time.
    project's new best ranking score: test AUPRC 0.291 > 0.287, paired CI
    clear of zero 3/3 seeds. The earliness-constrained stack Pareto-improves
    the orchestrator (0.262 at the full +1.7h@2%).
-5. **The team-target deliverables** (GBM-level accuracy, lead ≥ +1h@2%):
-   **CONSTR-1H** (0.283, GBM-tied 3/3, +1h 3/3, win 51–54%) and
-   **ORCH+GBM** — the GBM as a fifth agent inside the orchestrator — 0.277
-   (+0.030 over the parent ✓3/3) with the more robust lead (+1h at 2% *and*
-   5%, win 55–57%, sign-p ≤ 1e-15). Lead-first recommendation: ORCH+GBM.
+5. **The team target is met, by the all-7 flagship** (T6):
+   **ORCH+GBM+cadence+fluid** — mean test AUPRC 0.2821, statistically
+   GBM-tied on 3/3 seeds, with +1–2h lead@2% at 55–60% win. It supersedes
+   the earlier deliverables (CONSTR-1H: tied but weaker lead, two-model
+   blend; plain ORCH+GBM: below FAIR on 2/3 seeds).
 6. **Lead at fixed alarm volume is zero-sum** (T5): even a spike-preserving
    exceedance ensemble OR-ed with the parent reproduces the parent
    cell-for-cell — the parent's crossings already fill the budget, and
    prediction-only alarms get cut by the volume-matched threshold. The
    +2h@1–2% is this representation family's frontier ceiling; more lead
    requires more early signal in the representation, not a better trigger.
+   **T6 then confirms the converse**: adding genuinely new early signal
+   (clinician cadence, renal trajectory) moves the frontier OUTWARD — the
+   first experiment in the program to raise accuracy without spending lead.
 7. **Two methodology catches** now baked into the harness: isotonic
    calibration is only weakly monotone (a plateau on the threshold silently
    inflates alarm volume ~2×; fixed by rank-tiebreak strictification), and
@@ -344,6 +347,56 @@ architecture family's frontier; exceeding it requires a representation with
 more early signal (better encoders, new modalities — e.g. the ECG-CPC /
 S4-waveform directions in results_ecg.md), not a cleverer trigger.
 
+## T6 — New modalities: cadence + fluids move the frontier outward
+
+T5 ended with "more lead requires more early signal in the representation".
+Two new agents supply exactly that (user-picked from the modality survey):
+
+- **CadenceAgent** — clinician behaviour as a modality: hourly counts of lab
+  draws, charting rows/items, orders by type, culture collections (BigQuery
+  `labevents`/`chartevents`/`poe`/`microbiologyevents`, binned by ACTION time
+  — the act of ordering is observable when it happens, unlike lab values —
+  plus a strictly-before-t shift; construct RCT-validated by CONCERN, Nature
+  Medicine 2025). 32 features incl. 6h-vs-24h "acceleration" ratios.
+- **FluidAgent** — urine output + fluid balance (`outputevents`/`inputevents`,
+  mimic-code urine concept, irrigant-corrected and floored per bucket):
+  oliguria flags that require charted records, balance and cumulative-net —
+  aimed at the death-component deficit. 13 features.
+
+**Standalone**: cadence val AUPRC 0.148 / AUROC 0.711 — a timestamps-only
+model that beats NEWS2 (0.114/0.683), with near-zero death AUPRC (0.026),
+exactly the clinician-loaded profile the CONCERN construct predicts. Fluid
+alone 0.096/0.646.
+
+**Fusion (each cell vs its cached parent, within-seed, seeds {42,1,2}):**
+
+| config | test AUPRC (s42/s1/s2) | val Δ vs parent | test Δ CI > 0 | lead@2% | win@2% |
+|---|---|---|---|---|---|
+| meas + cadence | 0.2641/0.2653/0.2453 | + 3/3 | 2/3 | +1/+1/+2 | 55–60% |
+| meas + fluid | 0.2531/0.2596/0.2403 | + 2/3 | 1/3 | +2/+1/+1 | 57–61% |
+| meas + both | 0.2564/0.2673/0.2546 | + 3/3 | **3/3** | +2/+1/+1 | 56–61% |
+| gbm + cadence | 0.2781/0.2856/0.2787 | + 3/3 | 2/3 | +1 3/3 | 55–59% |
+| gbm + fluid | 0.2787/0.2843/0.2772 | + 3/3 | 2/3 | +1 3/3 | 53–58% |
+| **gbm + both** | **0.2813/0.2870/0.2780** | **+ 3/3** | 2/3 (3rd −0.0003) | +1/+1/+2 | 55–60% |
+
+**The first outward move of the frontier.** Every prior experiment traded one
+axis for the other; the cadence/fluid agents raise accuracy WITHOUT spending
+lead — win rates hold at 55–60% and the median stays +1 to +2h while AUPRC
+climbs. That is the signature of genuinely new early signal entering the
+representation, exactly what T5's zero-sum result said was required. The new
+flagship, **ORCH+GBM+cadence+fluid ("all-7")**, reaches mean test AUPRC
+**0.2821** — seed 1 touches 0.2870, at FAIR+TRAJ's 0.2872 — while keeping
++1–2h lead at 55–60% win.
+
+**Paired Δ vs FAIR+TRAJ, the flagship's verdict: statistically GBM-TIED on
+all three seeds** — [−0.0156, +0.0043] / [−0.0102, +0.0104] /
+[−0.0196, +0.0011] (gbm+cadence also ties 3/3; meas+both, without the GBM
+agent, stays clearly below). Combined with its +1–2h@2% lead at 55–60% win,
+**ORCH+GBM+cadence+fluid ("all-7") supersedes every prior deliverable**: it
+meets the full team target — GBM-level accuracy AND lead ≥ +1h — in one
+architecture, where CONSTR-1H needed a two-model blend with weaker lead
+evidence and the old ORCH+GBM sat below FAIR on 2/3 seeds.
+
 ## Reproduce
 
 ```bash
@@ -372,6 +425,12 @@ S4-waveform directions in results_ecg.md), not a cleverer trigger.
 for s in 1 2 3 4; do .venv/bin/python src/latentcast.py train --seed $s --device cuda; done
 for s in 42 1 2; do .venv/bin/python src/latentcast.py exceed --seeds $s \
   --out data/cache/latentcast_exceed_s$s.npz --device cuda; done
+
+# T6 new modalities
+GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
+  .venv/bin/python scripts/fetch_cadence_fluids.py
+.venv/bin/python scripts/train_new_agents.py
+.venv/bin/python scripts/eval_new_agents.py --seeds 42,1,2
 
 # tests
 .venv/bin/python -m pytest -q   # 524 passing

@@ -136,3 +136,164 @@ def assemble_note_features(cohort, note_index, embeddings, note_ids,
         has[i] = 1.0
     age = np.where(has > 0, age, 0.0)
     return out, has, age.astype(np.float32), merged[["stay_id", "hour"]].astype("int64")
+
+
+# --- Measurement cadence ------------------------------------------------------
+
+CADENCE_PATH = "data/cache/mimic_cadence_hourly.parquet"
+CADENCE_CHANNELS = [
+    "n_lab_draws", "n_lab_tests", "n_chart_rows", "n_chart_items",
+    "n_orders_med", "n_orders_lab", "n_orders_imaging", "n_orders_other",
+    "n_micro",
+]
+CADENCE_LOOKBACK_HOURS = 24
+# The three channels whose short-term acceleration is the "clinician worry"
+# signal (CONCERN's construct): lab draws, charting intensity, med orders.
+CADENCE_ACCEL_CHANNELS = ["n_lab_draws", "n_chart_rows", "n_orders_med"]
+
+CADENCE_FEATURES = (
+    [f"{c}_1h" for c in CADENCE_CHANNELS]
+    + [f"{c}_6h" for c in CADENCE_CHANNELS]
+    + [f"{c}_24h" for c in CADENCE_CHANNELS]
+    + [f"{c}_accel" for c in CADENCE_ACCEL_CHANNELS]
+    + ["hrs_since_lab_draw", "hrs_since_med_order"]
+)
+
+
+def load_cadence(path=CADENCE_PATH):
+    return pd.read_parquet(path)
+
+
+def _dense_shifted_grid(cohort, events, columns, lookback):
+    """Dense per-stay hourly grid of event columns, zero-filled and shifted.
+
+    Counts differ from lab VALUES: an hour with no rows genuinely means zero
+    events (observed silence), so missing buckets fill with 0 rather than
+    carrying forward. The one-hour shift makes the row at hour ``t`` see
+    buckets ``<= t-1`` only -- strictly before t, as everywhere else.
+    """
+    cohort_keys = cohort[["stay_id", "hour"]].drop_duplicates()
+    span = cohort_keys.groupby("stay_id")["hour"].max().reset_index(name="max_hour")
+    grid = span.assign(
+        hour=[np.arange(-lookback, int(m) + 1) for m in span["max_hour"]]
+    ).explode("hour")[["stay_id", "hour"]]
+    grid["hour"] = grid["hour"].astype(int)
+
+    events = events[events["hour"].between(-lookback, int(span["max_hour"].max()))]
+    merged = grid.merge(events, on=["stay_id", "hour"], how="left")
+    merged = merged.sort_values(["stay_id", "hour"]).reset_index(drop=True)
+    stay = merged["stay_id"]
+    for col in columns:
+        v = (merged[col] if col in merged
+             else pd.Series(0.0, index=merged.index)).astype(float).fillna(0.0)
+        merged[col] = v.groupby(stay, sort=False).shift(1).fillna(0.0)
+    return merged, cohort_keys
+
+
+def _rolling_sum(merged, col, window):
+    return merged[col].groupby(merged["stay_id"], sort=False) \
+        .rolling(window, min_periods=1).sum().droplevel(0).sort_index()
+
+
+def _hours_since_positive(merged, col, cap=24.0):
+    """Hours since the (already-shifted) channel was last non-zero; cap when
+    never seen -- 'no lab drawn in >=24h' is itself the signal."""
+    hour = merged["hour"]
+    last = hour.where(merged[col] > 0).groupby(
+        merged["stay_id"], sort=False).ffill()
+    return (hour - last).clip(upper=cap).fillna(cap)
+
+
+def build_cadence_features(cohort, cadence):
+    """Leakage-safe clinician-cadence features per cohort (stay_id, hour) row.
+
+    Counts are log1p'd (heavy right tails); the acceleration channels compare
+    the last 6h to the trailing-24h per-6h average -- "is attention to this
+    patient RISING", which is the precursor construct, not the level.
+    """
+    merged, cohort_keys = _dense_shifted_grid(
+        cohort, cadence, CADENCE_CHANNELS, CADENCE_LOOKBACK_HOURS)
+    out = merged[["stay_id", "hour"]].copy()
+    for c in CADENCE_CHANNELS:
+        s6 = _rolling_sum(merged, c, 6)
+        s24 = _rolling_sum(merged, c, 24)
+        out[f"{c}_1h"] = np.log1p(merged[c].to_numpy(dtype=float))
+        out[f"{c}_6h"] = np.log1p(s6.to_numpy(dtype=float))
+        out[f"{c}_24h"] = np.log1p(s24.to_numpy(dtype=float))
+        if c in CADENCE_ACCEL_CHANNELS:
+            out[f"{c}_accel"] = (s6 / (s24 / 4.0 + 1.0)).to_numpy(dtype=float)
+    out["hrs_since_lab_draw"] = _hours_since_positive(merged, "n_lab_draws")
+    out["hrs_since_med_order"] = _hours_since_positive(merged, "n_orders_med")
+    return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
+        .sort_values(["stay_id", "hour"]).reset_index(drop=True)
+
+
+# --- Urine output / fluid balance ---------------------------------------------
+
+FLUIDS_PATH = "data/cache/mimic_fluids_hourly.parquet"
+FLUID_CHANNELS = ["urine_ml", "n_urine_records", "other_out_ml", "in_ml",
+                  "n_in_records"]
+
+FLUID_FEATURES = [
+    "urine_1h", "urine_6h", "urine_12h", "urine_24h",
+    "oliguria_6h", "oliguria_12h",
+    "n_urine_records_24h", "hrs_since_urine_record", "has_urine_history",
+    "in_6h", "in_24h", "net_24h", "cum_net",
+]
+
+
+def load_fluids(path=FLUIDS_PATH):
+    return pd.read_parquet(path)
+
+
+def build_fluid_features(cohort, fluids):
+    """Leakage-safe urine/balance features per cohort (stay_id, hour) row.
+
+    An hour without a urine record is NOT zero production (charting is q1-4h
+    with a catheter, absent without one), so oliguria flags require at least
+    one record inside their window, and the record-cadence features
+    (n_records, hrs_since, has_history) let the model separate "dry patient"
+    from "no catheter".
+    """
+    merged, cohort_keys = _dense_shifted_grid(
+        cohort, fluids, FLUID_CHANNELS, CADENCE_LOOKBACK_HOURS)
+    # The GU-irrigant correction (227488 enters negatively) can leave an
+    # HOURLY bucket net-negative -- an accounting artifact, not physiology
+    # (log1p would NaN on it). Volumes are floored at zero per bucket.
+    for col in ("urine_ml", "other_out_ml", "in_ml"):
+        merged[col] = merged[col].clip(lower=0.0)
+    out = merged[["stay_id", "hour"]].copy()
+
+    u6 = _rolling_sum(merged, "urine_ml", 6)
+    u12 = _rolling_sum(merged, "urine_ml", 12)
+    u24 = _rolling_sum(merged, "urine_ml", 24)
+    r6 = _rolling_sum(merged, "n_urine_records", 6)
+    r12 = _rolling_sum(merged, "n_urine_records", 12)
+    r24 = _rolling_sum(merged, "n_urine_records", 24)
+    o24 = _rolling_sum(merged, "other_out_ml", 24)
+    i6 = _rolling_sum(merged, "in_ml", 6)
+    i24 = _rolling_sum(merged, "in_ml", 24)
+
+    out["urine_1h"] = np.log1p(merged["urine_ml"].to_numpy(dtype=float))
+    out["urine_6h"] = np.log1p(u6.to_numpy(dtype=float))
+    out["urine_12h"] = np.log1p(u12.to_numpy(dtype=float))
+    out["urine_24h"] = np.log1p(u24.to_numpy(dtype=float))
+    out["oliguria_6h"] = ((u6 < 180) & (r6 >= 1)).to_numpy(dtype=float)
+    out["oliguria_12h"] = ((u12 < 360) & (r12 >= 1)).to_numpy(dtype=float)
+    out["n_urine_records_24h"] = np.log1p(r24.to_numpy(dtype=float))
+    out["hrs_since_urine_record"] = _hours_since_positive(
+        merged, "n_urine_records")
+    seen = merged["n_urine_records"].groupby(
+        merged["stay_id"], sort=False).cummax()
+    out["has_urine_history"] = (seen > 0).to_numpy(dtype=float)
+    out["in_6h"] = np.log1p(i6.to_numpy(dtype=float))
+    out["in_24h"] = np.log1p(i24.to_numpy(dtype=float))
+    out["net_24h"] = np.clip(
+        (i24 - u24 - o24).to_numpy(dtype=float) / 1000.0, -10, 10)
+    cum_in = merged["in_ml"].groupby(merged["stay_id"], sort=False).cumsum()
+    cum_out = (merged["urine_ml"] + merged["other_out_ml"]).groupby(
+        merged["stay_id"], sort=False).cumsum()
+    out["cum_net"] = np.clip(
+        (cum_in - cum_out).to_numpy(dtype=float) / 1000.0, -20, 20)
+    return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
+        .sort_values(["stay_id", "hour"]).reset_index(drop=True)
