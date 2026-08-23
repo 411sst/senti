@@ -20,7 +20,10 @@ from latentcast import (
     bank_sequences,
     build_forecast_bank,
     collate_forecast,
+    exceedance_score,
+    or_score,
     shifted_label,
+    within_horizon_max,
 )
 from orchestrator.fusion import AgentBank, Orchestrator
 
@@ -146,6 +149,38 @@ def test_forecast_bank_keys_match_the_real_bank():
     # frozen head consumes it end to end
     hat = with_bank(orch, fbank).raw_risk(df)
     assert hat.shape == (len(df),)
+
+
+# --- Exceedance-ensemble scoring ---------------------------------------------
+
+def test_exceedance_votes_lattice_and_tiebreak_below_step():
+    members = [np.array([0.9, 0.1, 0.5]), np.array([0.8, 0.2, 0.4]),
+               np.array([0.1, 0.1, 0.6])]
+    score, votes, mean = exceedance_score(members, tau=0.45)
+    np.testing.assert_allclose(votes, [2 / 3, 0.0, 2 / 3])
+    assert (np.abs(score - votes) <= 1e-6).all()      # tiebreak << 1/E step
+    assert score[0] > score[2]                        # mean breaks the tie
+    np.testing.assert_allclose(mean, [0.6, 0.4 / 3, 0.5])
+
+
+def test_or_score_never_ranks_a_parent_alarm_below_threshold():
+    """Every parent crossing gets the lattice maximum (1.0 + tie), so no
+    exceedance threshold inside the vote range can drop a parent alarm --
+    the OR rung provably never alarms later than the parent."""
+    votes = np.array([0.0, 0.4, 1.0, 0.2])
+    mean_within = np.array([0.1, 0.5, 0.9, 0.3])
+    parent = np.array([0.9, 0.1, 0.1, 0.95])          # rows 0, 3 cross
+    s = or_score(votes, mean_within, parent, tau=0.5)
+    crossed = parent >= 0.5
+    assert (s[crossed] >= 1.0).all()
+    assert (s[~crossed] < 1.0 + 1e-5).all()
+    assert s[1] == pytest.approx(0.4 + 1e-6 * 0.5)
+
+
+def test_within_horizon_max_is_elementwise_over_selected_ks():
+    hats = {2: np.array([0.1, 0.9]), 4: np.array([0.5, 0.2]),
+            8: np.array([9.0, 9.0])}
+    np.testing.assert_allclose(within_horizon_max(hats, [2, 4]), [0.5, 0.9])
 
 
 # --- The shifted-label control guard ----------------------------------------

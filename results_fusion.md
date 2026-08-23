@@ -41,7 +41,13 @@ report only ranking metrics, distillation papers never report lead time.
    **ORCH+GBM** — the GBM as a fifth agent inside the orchestrator — 0.277
    (+0.030 over the parent ✓3/3) with the more robust lead (+1h at 2% *and*
    5%, win 55–57%, sign-p ≤ 1e-15). Lead-first recommendation: ORCH+GBM.
-6. **Two methodology catches** now baked into the harness: isotonic
+6. **Lead at fixed alarm volume is zero-sum** (T5): even a spike-preserving
+   exceedance ensemble OR-ed with the parent reproduces the parent
+   cell-for-cell — the parent's crossings already fill the budget, and
+   prediction-only alarms get cut by the volume-matched threshold. The
+   +2h@1–2% is this representation family's frontier ceiling; more lead
+   requires more early signal in the representation, not a better trigger.
+7. **Two methodology catches** now baked into the harness: isotonic
    calibration is only weakly monotone (a plateau on the threshold silently
    inflates alarm volume ~2×; fixed by rank-tiebreak strictification), and
    presence-guard constant columns explode z-scoring (std floor + clipping).
@@ -195,10 +201,8 @@ and forecasting raw vitals gives neither (NEWS2-level AUPRC, negative leads)
 — so the latent channel is still where the timing information lives; a mean
 forecaster is just the wrong way to cash it.
 
-Not run (documented follow-on): the exceedance-probability ensemble — alarm
-on P(risk_hat ≥ τ) over a forecaster ensemble, which preserves spike mass
-instead of averaging it away. That is the natural next attack on this
-negative, gated on team interest.
+The natural follow-up — the exceedance-probability ensemble, which preserves
+spike mass instead of averaging it away — was subsequently run: see T5.
 
 ## T2 — Distillation grid (4c): earliness is representational; distillation walks the frontier
 
@@ -309,6 +313,37 @@ does not exist in this design space — but the frontier now has three usable
 new points, and the architecture story ("earliness is representational") is
 demonstrated four independent ways.
 
+## T5 — Exceedance ensemble: at matched volume, lead is zero-sum
+
+The strongest remaining attack on extending the +2h: a 5-seed forecaster
+ensemble (val losses 0.1132–0.1139) voting on *"will the risk cross the
+parent's own volume-matched alarm threshold within the next K hours"*
+(max over horizons ≤ K — spike-preserving where the T3 mean forecast was
+spike-destroying), scored two ways at every budget and frozen-head seed:
+
+- **EXCEED-K** (predicted-to-cross alone): +1h median at 1–2% (win 51–57%),
+  AUPRC(ensemble-mean) ≈ 0.248–0.255 — the *same frontier point* plain
+  LatentCast k=2 found. K-invariant from 2 to 8 h: short-horizon forecasts
+  dominate the max (longer horizons regress harder to the mean), so the
+  extra windows add nothing.
+- **PARENT∨EXCEED** (alarm now OR predicted-to-alarm; provably never later
+  than the parent): **cell-for-cell identical to the parent** on every seed
+  and every budget — same n_pair (±0), same lead, same win rate, same
+  achieved volume. E.g. seed 42 @2%: +2.0h/61%/n434 both; seed 2 @1%:
+  +3.0h/64%/n244 both.
+
+**Why, mechanistically — the finding that closes the lead-extension
+question:** at a matched alert volume the parent's own crossings already
+fill the entire budget, so the volume-matched threshold on the OR score
+lands inside the parent-crossing level and cuts every prediction-only
+alarm. Adding earlier alarms at fixed volume requires *dropping* existing
+alarms (which is what EXCEED-alone does, and it costs win rate and AUPRC).
+**Lead at fixed alarm volume is zero-sum: an alarm rule can only re-order
+the budget the representation earns.** The +2h@1–2% is the ceiling of this
+architecture family's frontier; exceeding it requires a representation with
+more early signal (better encoders, new modalities — e.g. the ECG-CPC /
+S4-waveform directions in results_ecg.md), not a cleverer trigger.
+
 ## Reproduce
 
 ```bash
@@ -332,6 +367,11 @@ demonstrated four independent ways.
 .venv/bin/python scripts/orch_gbm_agent.py --seeds 42,1,2 --device cuda
 .venv/bin/python src/gbm_agents.py --variants risks,risktraj,latent,orch --seeds 42,1,2 --device cuda
 .venv/bin/python src/gbm_agents.py --variants orchonly --seeds 42,1,2 --device cuda
+
+# T5 exceedance ensemble
+for s in 1 2 3 4; do .venv/bin/python src/latentcast.py train --seed $s --device cuda; done
+for s in 42 1 2; do .venv/bin/python src/latentcast.py exceed --seeds $s \
+  --out data/cache/latentcast_exceed_s$s.npz --device cuda; done
 
 # tests
 .venv/bin/python -m pytest -q   # 524 passing

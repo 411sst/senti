@@ -62,6 +62,8 @@ import torch.nn as nn
 
 from baselines_mimic import load_splits
 from config import SEED
+from fair_capability import (frozen_thresholds, paired_first_alarm_diffs,
+                             summarize_paired)
 from fusion_common import FusionContext
 from metrics import auprc
 from mimic_cohort import VITALS, compute_news2
@@ -75,6 +77,13 @@ ORCH_CKPT = "models/orchestrator/meas_s{seed}.pt"
 EVAL_CACHE = "data/cache/latentcast_scores.npz"
 SHIFTED_CACHE = "data/cache/latentcast_shifted_gbm.npz"
 RAWNEWS2_CACHE = "data/cache/latentcast_rawnews2.npz"
+EXCEED_CACHE = "data/cache/latentcast_exceed.npz"
+ENSEMBLE_SEEDS = (42, 1, 2, 3, 4)
+
+
+def _ens_ckpt(seed):
+    return (CKPT_BANK if seed == 42
+            else f"models/latentcast/gru_bank_s{seed}.pt")
 
 
 # --- Model -------------------------------------------------------------------
@@ -505,6 +514,150 @@ def run_raw_news2(reps=2000, epochs=20, device=None,
     return out
 
 
+# --- Exceedance-probability ensemble (the lead-extension attack) -------------
+#
+# Plain LatentCast failed because the SmoothL1-optimal forecast is a
+# conditional MEAN: regression-to-the-mean smooths exactly the sharp risk
+# spikes that cross thresholds early. The exceedance design preserves spike
+# mass twice over: max over horizons <= K ("will it cross at any point in the
+# next K hours"), and a VOTE over independently-seeded forecasters (a spike
+# any member predicts still moves the score). tau is the PARENT's own
+# volume-matched alarm threshold, so "exceedance" means "predicted to alarm".
+
+def within_horizon_max(hats_by_k, ks):
+    """Elementwise max of the per-horizon forecast risks for horizons <= K."""
+    return np.max(np.stack([hats_by_k[k] for k in ks]), axis=0)
+
+
+def exceedance_score(within_members, tau):
+    """Vote fraction over ensemble members + a sub-vote-step tiebreak.
+
+    Votes live on a lattice of 1/E steps; the mean-forecast tiebreak (1e-6
+    scale, far below the 1/E step) makes the score strictly ordered inside
+    each vote level so quantile volume matching behaves (the isotonic-plateau
+    lesson from fusion_ladder applied here by construction).
+
+    Returns ``(score, votes, mean_within)`` so callers can compose without
+    un-mixing the tiebreak.
+    """
+    stack = np.stack(within_members)
+    votes = (stack >= tau).mean(axis=0)
+    mean_within = np.clip(stack.mean(axis=0), 0.0, 1.0)
+    return votes + 1e-6 * mean_within, votes, mean_within
+
+
+def or_score(votes, mean_within, parent_raw, tau):
+    """Alarm now OR predicted-to-alarm: never later than the parent.
+
+    The parent's own crossing counts as a full vote (1.0, the lattice
+    maximum), so at any threshold inside the vote range every parent alarm
+    fires and exceedance votes can only ADD earlier ones.
+    """
+    crossed = (parent_raw >= tau).astype(float)
+    tie = 1e-6 * np.clip(np.maximum(mean_within, parent_raw), 0.0, 1.0)
+    return np.maximum(votes, crossed) + tie
+
+
+def run_exceed(orch_seeds=(42, 1, 2), windows=(2, 4, 6, 8), reps=2000,
+               device=None, out_cache=EXCEED_CACHE):
+    """Score EXCEED-K and PARENT∨EXCEED-K through the paired harness."""
+    from explain.faithfulness import with_bank
+    from fusion_common import load_orch_seeds
+
+    device = torch.device(device or
+                          ("cuda" if torch.cuda.is_available() else "cpu"))
+    splits = load_splits()
+    ctx = FusionContext(splits)
+    bank = AgentBank.load(agent_names=config_agents("core-3+meas"))
+    _, parent, _ = load_orch_seeds(ctx.val_ordered, ctx.test_ordered)
+    ks_needed = sorted({k for K in windows for k in HORIZONS if k <= K})
+
+    missing = [e for e in ENSEMBLE_SEEDS if not Path(_ens_ckpt(e)).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"train the forecaster ensemble first (missing seeds {missing}): "
+            f"python src/latentcast.py train --seed <s>")
+
+    orchs = {s: Orchestrator.load_checkpoint(ORCH_CKPT.format(seed=s), bank)
+             for s in orch_seeds}
+    hats = {s: {e: {} for e in ENSEMBLE_SEEDS} for s in orch_seeds}
+    for e in ENSEMBLE_SEEDS:
+        model, stats, _ = load_forecaster(_ens_ckpt(e), device=device)
+        for k in ks_needed:
+            t0 = time.time()
+            fb = {name: build_forecast_bank(bank, df, model, stats, k, device)
+                  for name, df in (("val", splits["val"]),
+                                   ("test", splits["test"]))}
+            for s in orch_seeds:
+                hats[s][e][k] = {
+                    name: with_bank(orchs[s], fb[name]).raw_risk(df)
+                    for name, df in (("val", splits["val"]),
+                                     ("test", splits["test"]))}
+            print(f"[exceed] member {e} k={k} scored through "
+                  f"{len(orch_seeds)} frozen heads "
+                  f"({time.time() - t0:.0f}s)", flush=True)
+        del model
+
+    nf = ctx.news2_val[ctx.freeze_mask]
+    af = ctx.alertable_val[ctx.freeze_mask]
+    results, payload = {}, {
+        "stay_id_test": ctx.test_ordered["stay_id"].to_numpy(),
+        "hour_test": ctx.test_ordered["hour"].to_numpy(),
+    }
+    for s in orch_seeds:
+        results[s] = {}
+        for K in windows:
+            ks = [k for k in HORIZONS if k <= K]
+            within = {name: [within_horizon_max(
+                {k: hats[s][e][k][name] for k in ks}, ks)
+                for e in ENSEMBLE_SEEDS] for name in ("val", "test")}
+            mean_within_test = np.mean(np.stack(within["test"]), axis=0)
+            row = {"auprc_mean_within": float(auprc(ctx.y_test,
+                                                    mean_within_test)),
+                   "budgets": {}}
+            for budget in (0.01, 0.02, 0.05):
+                _, tau, _ = frozen_thresholds(
+                    nf, parent[s]["val"][ctx.freeze_mask], af, budget)
+                sc = {name: exceedance_score(within[name], tau)
+                      for name in ("val", "test")}
+                orr = {name: or_score(sc[name][1], sc[name][2],
+                                      parent[s][name], tau)
+                       for name in ("val", "test")}
+                cell = {}
+                for rung, sv, st in (
+                        ("EXCEED", sc["val"][0], sc["test"][0]),
+                        ("OR", orr["val"], orr["test"])):
+                    thr_n2, thr_m, _ = frozen_thresholds(
+                        nf, sv[ctx.freeze_mask], af, budget)
+                    diffs = paired_first_alarm_diffs(
+                        ctx.test_ordered, ctx.news2_test, st, thr_n2, thr_m)
+                    r = summarize_paired(diffs, ctx.stay_to_patient,
+                                         reps=reps)
+                    r["model_rate"] = float(
+                        (st[ctx.alertable_test] >= thr_m).mean())
+                    cell[rung] = r
+                row["budgets"][budget] = cell
+            results[s][K] = row
+            b2 = row["budgets"][0.02]
+            print(f"[seed {s}] K<={K}: AUPRC(mean-within) "
+                  f"{row['auprc_mean_within']:.4f} | @2% EXCEED lead "
+                  f"{b2['EXCEED']['median']:+.1f} (win "
+                  f"{100*b2['EXCEED']['win_rate']:.0f}%, n "
+                  f"{b2['EXCEED']['n_pair']}) | OR lead "
+                  f"{b2['OR']['median']:+.1f} (win "
+                  f"{100*b2['OR']['win_rate']:.0f}%, n {b2['OR']['n_pair']})",
+                  flush=True)
+
+    payload["meta_json"] = np.array(json.dumps(_jsonable(
+        {"orch_seeds": list(orch_seeds), "windows": list(windows),
+         "ensemble_seeds": list(ENSEMBLE_SEEDS), "reps": reps,
+         "results": results})))
+    Path(out_cache).parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out_cache, **payload)
+    print(f"[cache] -> {out_cache}")
+    return results
+
+
 def _jsonable(obj):
     if isinstance(obj, dict):
         return {str(k): _jsonable(v) for k, v in obj.items()}
@@ -518,20 +671,33 @@ def _jsonable(obj):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", choices=("train", "eval", "control-shifted-gbm",
-                                     "control-raw-news2"))
+                                     "control-raw-news2", "exceed"))
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--reps", type=int, default=2000)
-    ap.add_argument("--seeds", default="42,1,2")
+    ap.add_argument("--seeds", default="42,1,2",
+                    help="orchestrator (frozen-head) seeds")
+    ap.add_argument("--seed", type=int, default=SEED,
+                    help="train: forecaster seed (ensemble members)")
+    ap.add_argument("--windows", default="2,4,6,8",
+                    help="exceed: within-K horizon windows")
     ap.add_argument("--device", default=None,
                     help="cuda/cpu (default: cuda if available)")
+    ap.add_argument("--out", default=None,
+                    help="exceed: output npz override (parallel per-seed runs)")
     args = ap.parse_args()
     if args.mode == "train":
         train_forecaster(features="bank", epochs=args.epochs,
-                         device=args.device)
+                         device=args.device, seed=args.seed,
+                         ckpt_path=_ens_ckpt(args.seed))
     elif args.mode == "eval":
         run_eval(seeds=[int(s) for s in args.seeds.split(",")],
                  reps=args.reps, device=args.device)
     elif args.mode == "control-shifted-gbm":
         run_shifted_gbm(reps=args.reps, device=args.device or "cuda")
-    else:
+    elif args.mode == "control-raw-news2":
         run_raw_news2(reps=args.reps, epochs=args.epochs, device=args.device)
+    else:
+        run_exceed(orch_seeds=[int(s) for s in args.seeds.split(",")],
+                   windows=tuple(int(k) for k in args.windows.split(",")),
+                   reps=args.reps, device=args.device,
+                   out_cache=args.out or EXCEED_CACHE)
