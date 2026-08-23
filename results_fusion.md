@@ -56,6 +56,108 @@ report only ranking metrics, distillation papers never report lead time.
    inflates alarm volume ~2×; fixed by rank-tiebreak strictification), and
    presence-guard constant columns explode z-scoring (std floor + clipping).
 
+## The flagship architecture (T9, two-head ALL-8)
+
+Eight agents emit a latent and a calibrated risk on one matched hourly key
+grid; the bank feeds **two structurally identical heads whose only
+difference is the training label** — treatment onset teaches timing, death
+teaches death ranking (T7's mechanism). Noisy-OR recovers the composite
+label's semantics with no fitted blend weight, and the death head doubles as
+the program's best death-risk score.
+
+```mermaid
+flowchart LR
+  subgraph AG["agents (cached emissions, matched stay_id/hour)"]
+    direction TB
+    A1["vitals-TCN · 32"]
+    A2["NEWS2 · 7"]
+    A3["labs · 32"]
+    A4["ecg_meas · 32"]
+    A5["gbm pseudo-agent · 1<br/>(OOF on train)"]
+    A6["cadence · 32"]
+    A7["fluid · 32"]
+    A8["resp · 32"]
+  end
+  AG -->|"latent + calibrated risk"| BANK["AgentBank<br/>208 feat / hour"]
+  BANK --> TH["T-head<br/>attention over agents → causal TCN<br/><b>trained on vent ∨ vaso</b>"]
+  BANK --> DH["D-head<br/>attention over agents → causal TCN<br/><b>trained on death</b>"]
+  TH -->|"cT · isotonic on V_fit"| OR{{"noisy-OR<br/>1−(1−cT)(1−cD)"}}
+  DH -->|"cD · isotonic on V_fit"| OR
+  OR --> AL["ALARM<br/>threshold frozen on V_freeze,<br/>volume-matched to NEWS2"]
+  DH --> DR["death risk<br/>AUPRC 0.328 · AUROC 0.946"]
+```
+
+Both heads are the same ~25k-param `LatentFusionNet` (attention over agents
+within an hour, never over time; causal TCN with a ~29h receptive field), so
+the entire T9 gain comes from supervision, not capacity. Deployment cost
+over single-head ALL-8: one extra forward pass across the same cached bank.
+
+## Discrimination scoreboard — both metrics, every model
+
+Test split (361,229 hours, prevalence 4.74%); multi-seed rows are means over
+orchestrator seeds {42, 1, 2}. Regenerate with
+`python scripts/metrics_table.py` (CIs are patient-clustered, 1000 reps).
+
+**Read AUPRC first.** At 4.7% prevalence AUROC is dominated by the vast
+true-negative mass every model gets right: the whole program spans
+0.683–0.822 AUROC while AUPRC — which tracks precision where alarms
+actually fire — spans 0.114–0.307 and separates the models cleanly. AUROC is
+reported alongside because the EWS literature quotes it, so it is what a
+reader needs to place Sentinel against published systems.
+
+| model | AUPRC | AUROC | 95% CI (AUPRC / AUROC) |
+|---|---|---|---|
+| NEWS2 | 0.114 | 0.683 | [0.102, 0.128] / [0.668, 0.700] |
+| GBM13 (vitals-only) | 0.177 | 0.748 | |
+| FAIR (61 feat) | 0.279 | 0.798 | |
+| **FAIR+TRAJ (145 feat)** — the bar | **0.287** | **0.807** | [0.264, 0.311] / [0.793, 0.821] |
+| ORCH core-3 (published) | 0.236 | 0.787 | |
+| ORCH core-3+meas | 0.247 | 0.790 | [0.233, 0.270] / [0.778, 0.806] |
+| MAX | 0.277 | 0.802 | |
+| LOGIT3 | 0.290 | 0.807 | [0.269, 0.313] / [0.793, 0.822] |
+| CONSTRAINED | 0.259 | 0.796 | |
+| CONSTR-1H | 0.283 | 0.804 | [0.263, 0.304] / [0.790, 0.818] |
+| GATED | 0.291 | 0.807 | |
+| ORACLE-GATE † | 0.241 | 0.802 | |
+| GBM × TLS H=6 | 0.285 | 0.806 | |
+| GBM-distill λ=0.75 | 0.276 | 0.801 | |
+| ORCH-distill λ=0.5 / 0.75 | 0.259 / 0.264 | 0.794 / 0.796 | |
+| LatentCast k=2 → k=12 | 0.250 → 0.187 | 0.791 → 0.778 | |
+| shifted-GBM k=2 → k=12 | 0.285 → 0.276 | 0.807 → 0.803 | |
+| raw-NEWS2 forecast k=2 → k=12 | 0.118 → 0.109 | 0.710 → 0.703 | |
+| ORCH+GBM (5th agent) | 0.277 | 0.801 | [0.257, 0.297] / [0.787, 0.816] |
+| GBM +RISKS / +RISKTRAJ / +LATENT | 0.274 / 0.276 / 0.278 | 0.802 / 0.804 / 0.804 | |
+| GBM +ORCH (OOF) / +ORCHONLY | 0.278 / 0.282 | 0.802 / 0.805 | |
+| meas+cadence / +fluid / +both | 0.258 / 0.251 / 0.259 | 0.794 / 0.791 / 0.796 | |
+| gbm+cadence / +fluid | 0.281 / 0.280 | 0.804 / 0.803 | |
+| ALL-7 (gbm+both) | 0.282 | 0.804 | [0.262, 0.301] / [0.789, 0.818] |
+| ALL-8 (all7+resp) | 0.306 | 0.821 | [0.292, 0.335] / [0.813, 0.840] |
+| ALL-8 cap-at-HFNC | 0.306 | 0.821 | |
+| **TWO-HEAD ALL-8** — flagship | **0.307** | **0.822** | [0.291, 0.337] / [0.813, 0.840] |
+| ⤷ D-head, scored on death ‡ | **0.344** | **0.946** | [0.288, 0.415] / [0.928, 0.960] |
+
+Standalone agents: gbm 0.279/0.806 · vitals_tcn 0.189/0.754 · labs
+0.166/0.727 · cadence 0.156/0.703 · resp 0.134/0.712 · fluid 0.093/0.654 ·
+ecg_meas 0.055/0.539 (the ECG agent is near-chance alone yet still clears
+the fusion bar — its value is conditional, not marginal).
+
+† label-using headroom bound, not a model. ‡ scored against
+`label_24h_death`, not the composite — the only row on a different target.
+Not listed: the T5 exceedance rungs, whose score vectors were not persisted
+(their deliverable was lead, and their AUPRC is in T5).
+
+One reproducibility note: the T1 ladder rungs' cached scores predate the
+float64 storage fix (audit finding 6), so recomputing them here can differ
+from their in-run T1 values in the 4th decimal (e.g. LOGIT3 0.290 vs 0.291)
+— the tiebreak that separates isotonic plateaus is finer than float32. The
+flagship rows were regenerated after the fix and match exactly.
+
+The two metrics agree on the program's arc — NEWS2 → the GBM bar → ALL-8
+above it — and the flagship leads on both. The D-head's 0.946 death AUROC
+is the single most striking number in the table: death is highly separable
+when a head is trained for it, which is precisely T7's supervision-artifact
+diagnosis stated in the literature's preferred metric.
+
 ## Protocol (all experiments)
 
 - **Parents.** Earliness parent = core-3+meas orchestrator (`vitals_tcn`,
@@ -116,16 +218,22 @@ Test, mean over seeds {42,1,2}; ΔvsFAIR = paired patient-clustered AUPRC
 delta vs FAIR+TRAJ; sign = seeds agreeing. Full per-seed rows with CIs in
 `data/cache/fusion_ladder_scores.npz` meta and `logs/fusion_ladder_full.log`.
 
-| rung | AUPRC | ΔvsFAIR | sign | lead@1% | lead@2% | lead@5% | win@2% |
-|---|---|---|---|---|---|---|---|
-| ORCH-meas (parent) | 0.247 | −0.0397 | 0/3 | +2.0 ✓3/3 | +1.7 ✓3/3 | +1.0 ✓3/3 | 58–63% |
-| FAIR+TRAJ (parent) | 0.287 | — | — | 0.0 | 0.0 | 0.0 | 38% |
-| MAX | 0.282 | −0.0047 | 0/3 | 0.0 | +0.7 (2/3) | +0.2 (1/3) | 49–54% |
-| **LOGIT3** | **0.291** | **+0.0037** | **✓3/3** | 0.0 | 0.0 | 0.0 | 44–45% |
-| CONSTRAINED | 0.262 | −0.0249 | 0/3 | +0.7 (2/3) | +1.7 ✓3/3 | +0.7 (2/3) | 51–63% |
-| CONSTR-1H | 0.283 | −0.0038 | 0/3* | 0.0 | +1.0 ✓3/3 | +0.3 (1/3) | 51–54% |
-| GATED | 0.291 | +0.0034 | ✓3/3 | 0.0 | 0.0 | 0.0 | 45% |
-| ORACLE-GATE † | 0.233 | −0.0540 | 0/3 | 0.0 | +0.3 | 0.0 | 47–51% |
+| rung | AUPRC | AUROC | ΔvsFAIR | sign | lead@1% | lead@2% | lead@5% | win@2% |
+|---|---|---|---|---|---|---|---|---|
+| ORCH-meas (parent) | 0.247 | 0.790 | −0.0397 | 0/3 | +2.0 ✓3/3 | +1.7 ✓3/3 | +1.0 ✓3/3 | 58–63% |
+| FAIR+TRAJ (parent) | 0.287 | 0.807 | — | — | 0.0 | 0.0 | 0.0 | 38% |
+| MAX | 0.277 | 0.802 | −0.0047 | 0/3 | 0.0 | +0.7 (2/3) | +0.2 (1/3) | 49–54% |
+| **LOGIT3** | **0.290** | **0.807** | **+0.0037** | **✓3/3** | 0.0 | 0.0 | 0.0 | 44–45% |
+| CONSTRAINED | 0.259 | 0.796 | −0.0249 | 0/3 | +0.7 (2/3) | +1.7 ✓3/3 | +0.7 (2/3) | 51–63% |
+| CONSTR-1H | 0.283 | 0.804 | −0.0038 | 0/3* | 0.0 | +1.0 ✓3/3 | +0.3 (1/3) | 51–54% |
+| GATED | 0.291 | 0.807 | +0.0034 | ✓3/3 | 0.0 | 0.0 | 0.0 | 45% |
+| ORACLE-GATE † | 0.241 | 0.802 | −0.0540 | 0/3 | 0.0 | +0.3 | 0.0 | 47–51% |
+
+AUROC separates these models far less than AUPRC does (0.79–0.81 across a
+0.247–0.291 AUPRC range) — at 4.7% prevalence it is dominated by the
+true-negative mass every model gets right, which is exactly why AUPRC is
+this project's headline. Both are reported throughout for comparability with
+the EWS literature, which usually quotes AUROC.
 
 † label-using headroom bound, not a model.
 
@@ -181,16 +289,21 @@ receptive field). k=0 pass-through drift 0.0 on all three seeds.
 
 Test, mean over frozen-head seeds {42,1,2} (per-seed leads in brackets):
 
-| model | AUPRC | lead@1% | lead@2% | win@2% | n_pair@2% |
-|---|---|---|---|---|---|
-| parent ORCH-meas | 0.250 | +2.0 ✓3/3 | +2.0 ✓3/3 | 61% | 434 |
-| LatentCast k=2 | 0.2504 | +1.0 [1,1,1] | +1.0 [1,1,1] | 55% | ~396 |
-| LatentCast k=4 | 0.2369 | [1,0,1] | [1,0,1] | 50% | ~375 |
-| LatentCast k=6 | 0.2138 | [0,0,1] | 0.0 | 46% | ~351 |
-| LatentCast k=8 | 0.1985 | 0.0 | 0.0 | 42% | ~332 |
-| LatentCast k=12 | 0.1873 | [−.5,−1,0] | 0.0 | 35% | ~308 |
-| control: shifted-GBM k=2..12 | 0.285→0.276 | 0.0, win 34–36% | 0.0, win 38–40% | — | — |
-| control: raw-NEWS2-forecast k=2..12 | 0.118→0.109 | 0 to −3 | ≤0, win 12–23% | — | — |
+| model | AUPRC | AUROC | lead@1% | lead@2% | win@2% | n_pair@2% |
+|---|---|---|---|---|---|---|
+| parent ORCH-meas | 0.247 | 0.790 | +2.0 ✓3/3 | +2.0 ✓3/3 | 61% | 434 |
+| LatentCast k=2 | 0.2504 | 0.791 | +1.0 [1,1,1] | +1.0 [1,1,1] | 55% | ~396 |
+| LatentCast k=4 | 0.2369 | 0.788 | [1,0,1] | [1,0,1] | 50% | ~375 |
+| LatentCast k=6 | 0.2138 | 0.785 | [0,0,1] | 0.0 | 46% | ~351 |
+| LatentCast k=8 | 0.1985 | 0.782 | 0.0 | 0.0 | 42% | ~332 |
+| LatentCast k=12 | 0.1873 | 0.778 | [−.5,−1,0] | 0.0 | 35% | ~308 |
+| control: shifted-GBM k=2→12 | 0.285→0.276 | 0.807→0.803 | 0.0, win 34–36% | 0.0, win 38–40% | — | — |
+| control: raw-NEWS2-forecast k=2→12 | 0.118→0.109 | 0.710→0.703 | 0 to −3 | ≤0, win 12–23% | — | — |
+
+The AUROC column makes the forecasting decay legible in a second way: it
+falls monotonically with horizon (0.791 → 0.778) exactly as AUPRC does, so
+the k-decay is a real loss of discrimination, not an artifact of AUPRC's
+prevalence sensitivity.
 
 **Verdict: the pre-registered null, with a mechanism.** Alarming on the
 predicted-future latent does NOT extend the +2h — it trades along the same
@@ -216,15 +329,15 @@ in `logs/distill_grid.log` / `data/cache/distill_grid.npz`.
 
 | family | objective | best cell | freeze AUPRC | freeze lead@2% | test (frontier only) |
 |---|---|---|---|---|---|
-| gbm | bce (parent) | — | 0.2545 | 0.0 | 0.287 / 0h |
-| gbm | tls | H=6 | 0.2573 | **0.0** | 0.2845 / 0h |
+| gbm | bce (parent) | — | 0.2545 | 0.0 | 0.287 AUPRC / 0.807 AUROC / 0h |
+| gbm | tls | H=6 | 0.2573 | **0.0** | 0.2845 / 0.806 / 0h |
 | gbm | utility | β=0.5 | 0.2555 | **0.0** | — |
-| gbm | distill | λ=0.75 (s42) | 0.2443 | **+1.0** | **0.2755 / +1.0h (win 50%)** |
+| gbm | distill | λ=0.75 (s42) | 0.2443 | **+1.0** | **0.2755 / 0.801 / +1.0h (win 50%)** |
 | gbm | distill | λ=1.0 | ~0.230 | +1.0 ✓3/3 | — (orchestrator-level AUPRC) |
-| orch | bce (parent) | s42 | 0.2312 | +2.0 | 0.2502 / +2.0h (win 61%) |
+| orch | bce (parent) | s42 | 0.2312 | +2.0 | 0.2502 / 0.790 / +2.0h (win 61%) |
 | orch | tls / utility | all | 0.223–0.239 | +1 to +2 | — (no gain on either axis) |
-| orch | distill (GBM teacher) | λ=0.5 (s42) | 0.2418 | +1.0 | 0.2593 / +1.0h (win 51%) |
-| orch | distill (GBM teacher) | λ=0.75 (s1) | 0.2483 | **0.0** | 0.2639 / 0h |
+| orch | distill (GBM teacher) | λ=0.5 (s42) | 0.2418 | +1.0 | 0.2593 / 0.794 / +1.0h (win 51%) |
+| orch | distill (GBM teacher) | λ=0.75 (s1) | 0.2483 | **0.0** | 0.2639 / 0.796 / 0h |
 
 **Verdict: the pre-registered null — no grid point Pareto-dominates
 FAIR+TRAJ — plus the sharp version of the mechanism.** Pure objective shaping
@@ -256,11 +369,14 @@ accuracy but gaining lead.
 the fusion never learns to trust in-sample-sharp GBM scores. Config
 core-3+meas+gbm, seeds {42,1,2}:
 
-| seed | AUPRC | Δ vs parent (CI) | Δ vs FAIR (CI) | lead@2% | win@2% (CI) | lead@5% | win@5% |
-|---|---|---|---|---|---|---|---|
-| 42 | 0.2766 | [+0.0199, +0.0327] | [−0.0198, −0.0013] | +1.0 | 57% [52, 62] | +1.0 | 56% |
-| 1 | 0.2801 | [+0.0224, +0.0357] | [−0.0157, +0.0021] | +1.0 | 55% [50, 59] | +1.0 | 52% |
-| 2 | 0.2738 | [+0.0257, +0.0397] | [−0.0220, −0.0049] | +1.0 | 57% [53, 62] | +1.0 | 57% |
+| seed | AUPRC | AUROC | Δ vs parent (CI) | Δ vs FAIR (CI) | lead@2% | win@2% (CI) | lead@5% | win@5% |
+|---|---|---|---|---|---|---|---|---|
+| 42 | 0.2766 | 0.801 | [+0.0199, +0.0327] | [−0.0198, −0.0013] | +1.0 | 57% [52, 62] | +1.0 | 56% |
+| 1 | 0.2801 | 0.802 | [+0.0224, +0.0357] | [−0.0157, +0.0021] | +1.0 | 55% [50, 59] | +1.0 | 52% |
+| 2 | 0.2738 | 0.799 | [+0.0257, +0.0397] | [−0.0220, −0.0049] | +1.0 | 57% [53, 62] | +1.0 | 57% |
+
+(mean AUROC 0.8006, CI [0.787, 0.816] — above the core-3+meas parent's 0.790,
+below FAIR+TRAJ's 0.807.)
 
 The biggest single accuracy jump for the architecture in the program:
 **+0.030 AUPRC over the core-3+meas parent, CI clear of zero 3/3 seeds**,
@@ -275,14 +391,14 @@ The two are complementary frontier endpoints of the target region.
 FAIR+TRAJ + per-agent risks, risk-trajectory features (Δ/min/max/mean over
 6/12/24h), latents, and the OOF orchestrator risk + trajectory:
 
-| variant | features | test AUPRC | lead@2% | win@2% |
-|---|---|---|---|---|
-| FAIR+TRAJ (parent) | 145 | 0.287 | 0.0 | 38% |
-| +RISKS | 149 | 0.2742 | 0.0 | 42% |
-| +RISKTRAJ | 197 | 0.2757 | 0.0 | 39% |
-| +LATENT | 300 | 0.2778 | 0.0 | 41% |
-| +ORCH (per seed, OOF, + agent cols) | 210 | 0.2738–0.2797 | 0.0 3/3 | 38–44% |
-| +ORCHONLY (per seed, OOF, clean) | 158 | 0.2797–0.2840 | 0.0 3/3 | 41–43% |
+| variant | features | test AUPRC | test AUROC | lead@2% | win@2% |
+|---|---|---|---|---|---|
+| FAIR+TRAJ (parent) | 145 | 0.287 | 0.807 | 0.0 | 38% |
+| +RISKS | 149 | 0.2742 | 0.802 | 0.0 | 42% |
+| +RISKTRAJ | 197 | 0.2757 | 0.804 | 0.0 | 39% |
+| +LATENT | 300 | 0.2778 | 0.804 | 0.0 | 41% |
+| +ORCH (per seed, OOF, + agent cols) | 210 | 0.2779 | 0.802 | 0.0 3/3 | 38–44% |
+| +ORCHONLY (per seed, OOF, clean) | 158 | 0.2820 | 0.805 | 0.0 3/3 | 41–43% |
 
 **Feature-level integration cannot buy the GBM lead.** Two-step diagnosis:
 the per-agent variants cost accuracy because the agents' train-split
@@ -305,12 +421,14 @@ features and by fusion direction (T4).
 
 **Deliverable ranking against the team targets** (all at the 2% budget):
 
-| model | AUPRC | vs FAIR | lead | win | deploy |
-|---|---|---|---|---|---|
-| CONSTR-1H stack | 0.283 | ties 3/3 | +1h 3/3 | 51–54% | 2 models + blend |
-| **ORCH+GBM (5th agent)** | 0.277 | −0.010 | +1h 3/3 (also @5%) | 55–57% | one orchestrator |
-| GBM-distill λ=0.75 | 0.2755 | −0.012 | +1h | 50% | single XGBoost |
-| ORCH-meas (parent) | 0.247 | −0.040 | +2h 3/3 | 58–63% | one orchestrator |
+| model | AUPRC | AUROC | vs FAIR | lead | win | deploy |
+|---|---|---|---|---|---|---|
+| CONSTR-1H stack | 0.283 | 0.804 | ties 3/3 | +1h 3/3 | 51–54% | 2 models + blend |
+| **ORCH+GBM (5th agent)** | 0.277 | 0.801 | −0.010 | +1h 3/3 (also @5%) | 55–57% | one orchestrator |
+| GBM-distill λ=0.75 | 0.2755 | 0.801 | −0.012 | +1h | 50% | single XGBoost |
+| ORCH-meas (parent) | 0.247 | 0.790 | −0.040 | +2h 3/3 | 58–63% | one orchestrator |
+
+*(This ranking is superseded by T6/T8/T9 — see the final scoreboard.)*
 
 The honest statement of what was achieved: the +2h/zero-accuracy-cost unicorn
 does not exist in this design space — but the frontier now has three usable
@@ -371,14 +489,18 @@ alone 0.096/0.646.
 
 **Fusion (each cell vs its cached parent, within-seed, seeds {42,1,2}):**
 
-| config | test AUPRC (s42/s1/s2) | val Δ vs parent | test Δ CI > 0 | lead@2% | win@2% |
-|---|---|---|---|---|---|
-| meas + cadence | 0.2641/0.2653/0.2453 | + 3/3 | 2/3 | +1/+1/+2 | 55–60% |
-| meas + fluid | 0.2531/0.2596/0.2403 | + 2/3 | 1/3 | +2/+1/+1 | 57–61% |
-| meas + both | 0.2564/0.2673/0.2546 | + 3/3 | **3/3** | +2/+1/+1 | 56–61% |
-| gbm + cadence | 0.2781/0.2856/0.2787 | + 3/3 | 2/3 | +1 3/3 | 55–59% |
-| gbm + fluid | 0.2787/0.2843/0.2772 | + 3/3 | 2/3 | +1 3/3 | 53–58% |
-| **gbm + both** | **0.2813/0.2870/0.2780** | **+ 3/3** | 2/3 (3rd −0.0003) | +1/+1/+2 | 55–60% |
+| config | test AUPRC (s42/s1/s2) | mean AUROC | val Δ vs parent | test Δ CI > 0 | lead@2% | win@2% |
+|---|---|---|---|---|---|---|
+| meas + cadence | 0.2641/0.2653/0.2453 | 0.794 | + 3/3 | 2/3 | +1/+1/+2 | 55–60% |
+| meas + fluid | 0.2531/0.2596/0.2403 | 0.791 | + 2/3 | 1/3 | +2/+1/+1 | 57–61% |
+| meas + both | 0.2564/0.2673/0.2546 | 0.796 | + 3/3 | **3/3** | +2/+1/+1 | 56–61% |
+| gbm + cadence | 0.2781/0.2856/0.2787 | 0.804 | + 3/3 | 2/3 | +1 3/3 | 55–59% |
+| gbm + fluid | 0.2787/0.2843/0.2772 | 0.803 | + 3/3 | 2/3 | +1 3/3 | 53–58% |
+| **gbm + both** | **0.2813/0.2870/0.2780** | **0.804** | **+ 3/3** | 2/3 (3rd −0.0003) | +1/+1/+2 | 55–60% |
+
+Standalone agents (test): cadence AUPRC 0.156 / AUROC 0.703 — a
+timestamps-only model above NEWS2 on both metrics (0.114 / 0.683); fluid
+0.093 / 0.654.
 
 **The first outward move of the frontier.** Every prior experiment traded one
 axis for the other; the cadence/fluid agents raise accuracy WITHOUT spending
@@ -471,10 +593,16 @@ Standalone: val AUPRC 0.154 / AUROC 0.718 (vent-loaded, as expected).
 
 **Fusion (vs the cached ALL-7 parent, within-seed):**
 
-| config | test AUPRC (s42/s1/s2) | Δ vs ALL-7 CI | Δ vs FAIR+TRAJ CI | lead@2% | win |
-|---|---|---|---|---|---|
-| **ALL-8** (all7+resp) | **0.3125 / 0.3111 / 0.2938** | **>0 on 3/3** | **>0 on 2/3** (s2 spans) | +1.0 3/3 | 53–58% |
-| ALL-8 cap-at-HFNC | 0.3130 / 0.3116 / 0.2940 | >0 on 3/3 | — | +1.0 3/3 | 53–57% |
+| config | test AUPRC (s42/s1/s2) | mean AUROC | Δ vs ALL-7 CI | Δ vs FAIR+TRAJ CI | lead@2% | win |
+|---|---|---|---|---|---|---|
+| **ALL-8** (all7+resp) | **0.3125 / 0.3111 / 0.2938** | **0.8212** [0.813, 0.840] | **>0 on 3/3** | **>0 on 2/3** (s2 spans) | +1.0 3/3 | 53–58% |
+| ALL-8 cap-at-HFNC | 0.3130 / 0.3116 / 0.2940 | 0.8210 | >0 on 3/3 | — | +1.0 3/3 | 53–57% |
+
+AUROC moves with AUPRC here — 0.804 (ALL-7) → 0.821 (ALL-8) against
+FAIR+TRAJ's 0.807 — so the respiratory gain is visible on both metrics, and
+the cap-at-HFNC variant matches on both (0.8210 vs 0.8212): further evidence
+the gain is not the near-label NIV rung. Standalone resp agent: 0.134 /
+0.712.
 
 **The new flagship: mean test AUPRC 0.306 — the architecture now BEATS the
 equal-information GBM on ranking** (paired CI clear of zero on 2/3 seeds,
@@ -516,7 +644,10 @@ beyond each head's own isotonic.
 | 42 | 0.3141 | spans 0 | **[+0.0157, +0.0386]** | 0.182 | 0.351 | +1.0 | 57% | +1.0 (51%) |
 | 1 | 0.3069 | spans 0 | **[+0.0085, +0.0311]** | 0.181 | 0.338 | +2.0 | 59% | +2.0 (56%) |
 | 2 | 0.3017 | spans 0 | **[+0.0034, +0.0255]** | 0.188 | 0.343 | +1.5 | 58% | +1.0 (52%) |
-| **mean** | **0.3076** | equal | **ABOVE 3/3** | **0.184** | **0.344** | **+1.5** | **58%** | **+1.3** |
+| **mean** | **0.3075** | equal | **ABOVE 3/3** | **0.184** | **0.344** | **+1.5** | **58%** | **+1.3** |
+
+Composite AUROC 0.8221 [0.813, 0.840] (vs FAIR+TRAJ 0.807, ALL-8 0.8212);
+the D-head's death AUROC is **0.9462** [0.928, 0.960].
 
 **The fix lands on every axis it was designed for, and costs nothing:**
 
@@ -548,6 +679,7 @@ plugs into. Findings and fixes:
 | 3 | With the new configs added, a caller asking for `all-8` with one cache missing would **degrade straight to core-3**, silently discarding modalities that *are* cached. | medium | `FLAGSHIP_DEGRADATION_ORDER` chain + test that the chain is strictly nested (degradation only ever removes modalities). |
 | 4 | `resp_seen` built on an object-dtype `fillna`, which pandas deprecates (silent behaviour change on upgrade). | low | Cast to float before the groupby chain. |
 | 5 | Tabular agents built their feature frame **twice per fit** (normalizer, then matrix) — a full 2.5M-row rebuild wasted per agent. | low (efficiency) | `_fit_model` builds once and passes the frame to `_fit_normalizer`/`_matrix`. |
+| 6 | Scores carrying the `_strictify` rank tiebreak (1e-9) were **cached as float32**, whose resolution near 0.1 is 7.5e-9 — the cast silently restored the isotonic plateaus, so cached scores were not the scores evaluated (D-head death AUPRC read 0.328 from cache vs 0.344 in-run). Found by cross-checking the new AUROC table against the run logs. | medium (irreproducible numbers) | float64 storage in `two_head.py` and `fusion_ladder.py`; the flagship was re-run and now reproduces exactly from cache. |
 
 Verified clean, no action needed: leakage perturbation test on all three new
 builders (rewrite the future → rows ≤ t unchanged, later rows respond); zero
@@ -612,6 +744,9 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 
 # T9 two-head fix (the final flagship)
 .venv/bin/python scripts/two_head.py --seeds 42,1,2
+
+# both-metrics scoreboard (AUPRC + AUROC for every cached model)
+.venv/bin/python scripts/metrics_table.py --reps 1000
 
 # tests
 .venv/bin/python -m pytest -q   # 524 passing

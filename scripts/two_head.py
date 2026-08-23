@@ -120,9 +120,13 @@ def main():
         r["delta_vs_all8_ci"] = delta_ci(draws["two"], draws["parent"])
         r["delta_vs_fair_ci"] = delta_ci(draws["two"], draws["fair"])
         results[seed] = r
-        payload[f"val_s{seed}"] = s_val.astype(np.float32)
-        payload[f"test_s{seed}"] = s_test.astype(np.float32)
-        payload[f"dhead_test_s{seed}"] = heads["D"]["test"].astype(np.float32)
+        # float64, NOT float32: these scores carry the _strictify rank
+        # tiebreak (1e-9), and float32's resolution near 0.1 is 7.5e-9 --
+        # casting down silently restores the isotonic plateaus and makes the
+        # cached scores differ from the ones actually evaluated here.
+        payload[f"val_s{seed}"] = s_val
+        payload[f"test_s{seed}"] = s_test
+        payload[f"dhead_test_s{seed}"] = heads["D"]["test"]
 
         b = r["budgets"][0.02]
         c = r["race"][0.02]

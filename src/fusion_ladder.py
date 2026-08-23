@@ -295,8 +295,12 @@ def run(stage="all", reps=2000, auprc_reps=1000, quick=False,
 
         for name, (s_val, s_test) in rungs.items():
             tag = name.replace("-", "_")
-            payload[f"val_{tag}_s{seed}"] = s_val.astype(np.float32)
-            payload[f"test_{tag}_s{seed}"] = s_test.astype(np.float32)
+            # float64: every rung is built from _strictify'd parents, whose
+            # 1e-9 rank tiebreak is below float32's resolution (7.5e-9 near
+            # 0.1) -- storing float32 would re-introduce the isotonic
+            # plateaus the tiebreak exists to remove.
+            payload[f"val_{tag}_s{seed}"] = s_val
+            payload[f"test_{tag}_s{seed}"] = s_test
 
     if len(seeds) > 1:
         _print_aggregate(results, fair_variant)
