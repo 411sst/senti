@@ -502,3 +502,156 @@ def build_resp_features(cohort, resp, max_level=5, verbose=False):
     out["resp_hrs_since_record"] = lev_stale.to_numpy(dtype=float)
     return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
         .sort_values(["stay_id", "hour"]).reset_index(drop=True)
+
+
+# --- Consciousness / sedation / pain (neuro-status agent) ---------------------
+
+NEURO_STATUS_PATH = "data/cache/mimic_neuro_status_hourly.parquet"
+
+# Two semantics, two paths (see mimic_neuro_status.sql): levels are carried
+# forward under a staleness bound like vitals; counts zero-fill like cadence.
+NEURO_VALUE_COLS = ["rass_min", "rass_max", "pain_max"]
+NEURO_COUNT_COLS = ["n_rass", "cam_assessed", "cam_positive", "n_pain"]
+
+# RASS is protocolled ~q4h and pain q4-8h; 12h staleness matches the vitals
+# discipline -- past it, reassessment has stopped, which is itself a state the
+# count channels carry.
+NEURO_MAX_STALENESS = {"rass_min": 12, "rass_max": 12, "pain_max": 12}
+
+NEURO_STATUS_FEATURES = [
+    "rass_now", "rass_low_now", "rass_hrs_since", "rass_delta_24h",
+    "agitated_now", "deeply_sedated_now",
+    "n_rass_24h", "rass_swing_24h",
+    "cam_assessed_24h", "cam_positive_24h", "delirium_recent",
+    "hrs_since_cam",
+    "pain_now", "pain_hrs_since",
+]
+
+
+def load_neuro_status(path=NEURO_STATUS_PATH):
+    df = pd.read_parquet(path)
+    df["stay_id"] = df["stay_id"].astype("int64")
+    df["hour"] = df["hour"].astype("int64")
+    return df
+
+
+def build_neuro_status_features(cohort, neuro):
+    """Sedation / delirium / pain trajectory, strictly before t.
+
+    The construct is the arc, not the level: a patient LIGHTENING toward
+    agitation (rass_delta_24h > 0, agitated_now) or newly delirium-positive is
+    the pre-deterioration signature; a deeply sedated patient whose RASS has
+    not been reassessed in 12h is a different state from an alert one, which
+    is why the staleness channel is a feature rather than an imputation
+    artifact.
+
+    Levels ride :func:`carry_forward_to_cohort` (cohort-row aligned); counts
+    ride :func:`_dense_shifted_grid` and come back to cohort rows through the
+    same final key-merge cadence uses.
+    """
+    keys = cohort[["stay_id", "hour"]]
+
+    # -- level path: already one row per cohort key, dense hourly within stay
+    vals = carry_forward_to_cohort(keys, neuro, NEURO_VALUE_COLS,
+                                   lookback=0, max_staleness=NEURO_MAX_STALENESS)
+    out = vals[["stay_id", "hour"]].copy()
+    rass, rass_lo = vals["rass_max"], vals["rass_min"]
+    stay = vals["stay_id"]
+    out["rass_now"] = rass.to_numpy(np.float32)
+    out["rass_low_now"] = rass_lo.to_numpy(np.float32)
+    out["rass_hrs_since"] = vals["rass_max_hrs_since"].to_numpy(np.float32)
+    out["rass_delta_24h"] = (rass - rass.groupby(stay, sort=False).shift(24)) \
+        .to_numpy(np.float32)
+    out["agitated_now"] = (rass >= 2).astype(np.float32).to_numpy()
+    out["deeply_sedated_now"] = (rass_lo <= -3).astype(np.float32).to_numpy()
+    hi = rass.groupby(stay, sort=False).rolling(24, min_periods=1).max() \
+        .droplevel(0).sort_index()
+    lo = rass_lo.groupby(stay, sort=False).rolling(24, min_periods=1).min() \
+        .droplevel(0).sort_index()
+    out["rass_swing_24h"] = (hi - lo).to_numpy(np.float32)
+    out["pain_now"] = vals["pain_max"].to_numpy(np.float32)
+    out["pain_hrs_since"] = vals["pain_max_hrs_since"].to_numpy(np.float32)
+
+    # -- count path: dense grid, zero-filled, shifted; features then key-merged
+    merged, cohort_keys = _dense_shifted_grid(
+        keys, neuro[["stay_id", "hour"] + NEURO_COUNT_COLS],
+        NEURO_COUNT_COLS, 0, name="neuro_status")
+    cnt = merged[["stay_id", "hour"]].copy()
+    cnt["n_rass_24h"] = np.log1p(
+        _rolling_sum(merged, "n_rass", 24).to_numpy(dtype=float))
+    cnt["cam_assessed_24h"] = np.log1p(
+        _rolling_sum(merged, "cam_assessed", 24).to_numpy(dtype=float))
+    cam_pos24 = _rolling_sum(merged, "cam_positive", 24)
+    cnt["cam_positive_24h"] = np.log1p(cam_pos24.to_numpy(dtype=float))
+    cnt["delirium_recent"] = (cam_pos24 > 0).to_numpy(dtype=np.float32)
+    cnt["hrs_since_cam"] = _hours_since_positive(merged, "cam_assessed") \
+        .to_numpy(np.float32)
+
+    out = out.merge(cnt, on=["stay_id", "hour"], how="left")
+    if len(out) != len(cohort_keys):
+        raise ValueError("neuro-status feature join changed row count")
+    return out[["stay_id", "hour"] + NEURO_STATUS_FEATURES]
+
+
+# --- Infection workup (cultures + antibiotics) --------------------------------
+
+INFECTION_PATH = "data/cache/mimic_infection_hourly.parquet"
+INFECTION_CHANNELS = ["n_cultures", "n_blood_cultures", "n_abx_starts",
+                      "n_abx_stops"]
+INFECTION_LOOKBACK_HOURS = 24
+
+INFECTION_FEATURES = [
+    "cultures_6h", "cultures_24h", "cultures_72h",
+    "blood_culture_24h", "hrs_since_culture",
+    "abx_starts_24h", "abx_active_now", "abx_delta_24h",
+    "on_abx", "new_abx_6h",
+]
+
+
+def load_infection(path=INFECTION_PATH):
+    df = pd.read_parquet(path)
+    df["stay_id"] = df["stay_id"].astype("int64")
+    df["hour"] = df["hour"].astype("int64")
+    return df
+
+
+def build_infection_features(cohort, infection):
+    """Suspicion-of-infection workup, strictly before t.
+
+    A culture draw is Sepsis-3's t_suspicion made bedside-visible; a new
+    antibiotic or a widening active count is the escalation that follows.
+    Culture RESULTS are never read -- they lag days and would be a different,
+    later signal. The active-antibiotic count is cumsum(starts) -
+    cumsum(stops), clipped at zero because a stop whose start predates the
+    24h lookback would otherwise push the count negative.
+    """
+    merged, cohort_keys = _dense_shifted_grid(
+        cohort[["stay_id", "hour"]], infection, INFECTION_CHANNELS,
+        INFECTION_LOOKBACK_HOURS, name="infection")
+
+    out = merged[["stay_id", "hour"]].copy()
+    for w in (6, 24, 72):
+        out[f"cultures_{w}h"] = np.log1p(
+            _rolling_sum(merged, "n_cultures", w).to_numpy(dtype=float))
+    out["blood_culture_24h"] = (
+        _rolling_sum(merged, "n_blood_cultures", 24) > 0
+    ).to_numpy(dtype=np.float32)
+    out["hrs_since_culture"] = _hours_since_positive(merged, "n_cultures") \
+        .to_numpy(np.float32)
+
+    stay = merged["stay_id"]
+    starts = merged["n_abx_starts"].groupby(stay, sort=False).cumsum()
+    stops = merged["n_abx_stops"].groupby(stay, sort=False).cumsum()
+    active = (starts - stops).clip(lower=0)
+    out["abx_starts_24h"] = np.log1p(
+        _rolling_sum(merged, "n_abx_starts", 24).to_numpy(dtype=float))
+    out["abx_active_now"] = active.to_numpy(np.float32)
+    out["abx_delta_24h"] = (active - active.groupby(stay, sort=False)
+                            .shift(24).fillna(0)).to_numpy(np.float32)
+    out["on_abx"] = (active > 0).to_numpy(dtype=np.float32)
+    out["new_abx_6h"] = (
+        _rolling_sum(merged, "n_abx_starts", 6) > 0).to_numpy(dtype=np.float32)
+
+    return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
+        .sort_values(["stay_id", "hour"]).reset_index(drop=True) \
+        [["stay_id", "hour"] + INFECTION_FEATURES]

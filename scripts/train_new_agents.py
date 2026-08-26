@@ -46,7 +46,9 @@ def main():
     ap.add_argument("--epochs", type=int, default=12)
     args = ap.parse_args()
 
-    from agents.tabular_agent import CadenceAgent, FluidAgent, RespAgent
+    from agents.tabular_agent import (CadenceAgent, FluidAgent,
+                                      InfectionAgent, NeuroStatusAgent,
+                                      RespAgent)
 
     from baselines_mimic import load_splits
 
@@ -57,6 +59,8 @@ def main():
         "fluid": FluidAgent,
         "resp": RespAgent,
         "resp_cap4": lambda **kw: RespAgent(max_level=4, **kw),
+        "neuro_status": NeuroStatusAgent,
+        "infection": InfectionAgent,
     }
 
     for which in args.agent.split(","):

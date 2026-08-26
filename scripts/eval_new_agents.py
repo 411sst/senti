@@ -36,6 +36,8 @@ PARENTS = {
     "gbm": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm"),
     "all7": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm",
              "cadence", "fluid"),
+    "all8": ("vitals_tcn", "news2", "labs", "ecg_meas", "gbm",
+             "cadence", "fluid", "resp"),
 }
 ADDITIONS = {
     "cadence": ("cadence",),
@@ -43,6 +45,9 @@ ADDITIONS = {
     "both": ("cadence", "fluid"),
     "resp": ("resp",),
     "respcap4": ("resp_cap4",),
+    "neuro": ("neuro_status",),
+    "infect": ("infection",),
+    "both2": ("neuro_status", "infection"),
 }
 
 
@@ -58,6 +63,13 @@ def parent_scores(name, ctx):
         meta = json.loads(str(z["meta_json"]))
         return {s: (z[f"val_gbm+both_s{s}"].astype(float),
                     z[f"test_gbm+both_s{s}"].astype(float))
+                for s in meta["seeds"]}
+    if name == "all8":
+        z = np.load(REPO / "data" / "cache" / "resp_fusion.npz",
+                    allow_pickle=True)
+        meta = json.loads(str(z["meta_json"]))
+        return {s: (z[f"val_all7+resp_s{s}"].astype(float),
+                    z[f"test_all7+resp_s{s}"].astype(float))
                 for s in meta["seeds"]}
     z = np.load(REPO / "data" / "cache" / "orch_gbm_agent.npz",
                 allow_pickle=True)

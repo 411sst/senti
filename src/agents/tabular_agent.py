@@ -26,8 +26,14 @@ from agents.base import KEY_COLUMNS, Agent
 from agents.labs_agent import LabsMLP
 from config import SEED
 from metrics import auprc
-from modality_features import (  # noqa: F401  (re-exported public names)
+from modality_features import (  # noqa: F401  (re-exported public names,
     CADENCE_FEATURES,
+    INFECTION_FEATURES,
+    NEURO_STATUS_FEATURES,
+    build_infection_features,
+    build_neuro_status_features,
+    load_infection,
+    load_neuro_status,
     CADENCE_PATH,
     FLUID_FEATURES,
     FLUIDS_PATH,
@@ -238,3 +244,37 @@ class RespAgent(TabularMLPAgent):
             self.source = load_resp()
         return build_resp_features(df, self.source,
                                    max_level=self.max_level)
+
+
+class NeuroStatusAgent(TabularMLPAgent):
+    """Sedation / delirium / pain trajectory (RASS, CAM-ICU, pain score).
+
+    The consciousness arc the bank could not see: GCS lives in the vitals
+    agent but moves late; RASS is protocolled ~q4h and lightening-toward-
+    agitation or a fresh CAM-ICU positive precedes decline.
+    """
+
+    name = "neuro_status"
+    FEATURES = NEURO_STATUS_FEATURES
+
+    def _feature_frame(self, df):
+        if self.source is None:
+            self.source = load_neuro_status()
+        return build_neuro_status_features(df, self.source)
+
+
+class InfectionAgent(TabularMLPAgent):
+    """Suspicion-of-infection workup: culture draws + antibiotic exposure.
+
+    Clinician-behavioural family (like cadence -- T7: recognition timestamps
+    are an asset): a culture order is Sepsis-3's t_suspicion, hours before
+    any vasoactive order. Culture results are never read.
+    """
+
+    name = "infection"
+    FEATURES = INFECTION_FEATURES
+
+    def _feature_frame(self, df):
+        if self.source is None:
+            self.source = load_infection()
+        return build_infection_features(df, self.source)

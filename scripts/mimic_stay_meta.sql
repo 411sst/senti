@@ -77,6 +77,27 @@ dxflags AS (
     MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^G|^I6'))
               OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^3[2-5][0-9]|^43[0-8]'))
              THEN 1 ELSE 0 END) AS dx_neuro,
+    -- Condition flags for the condition->agent roster (T13). Any-position ICD:
+    -- these label WHAT THE STAY WAS, for retrospective stratification -- they
+    -- are discharge-coded and must never become a real-time selector input.
+    MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^A4[01]|^R652'))
+              OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^038|^99591|^99592|^78552'))
+             THEN 1 ELSE 0 END) AS dx_sepsis,
+    MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^N17'))
+              OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^584'))
+             THEN 1 ELSE 0 END) AS dx_aki,
+    MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^I50'))
+              OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^428'))
+             THEN 1 ELSE 0 END) AS dx_hf,
+    MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^J1[2-8]'))
+              OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^48[0-6]'))
+             THEN 1 ELSE 0 END) AS dx_pneumonia,
+    MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^J96'))
+              OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^5188[124]'))
+             THEN 1 ELSE 0 END) AS dx_respfail,
+    MAX(CASE WHEN (d.icd_version = 10 AND REGEXP_CONTAINS(d.icd_code, r'^K92[012]|^K2[5-8]'))
+              OR (d.icd_version = 9  AND REGEXP_CONTAINS(d.icd_code, r'^578'))
+             THEN 1 ELSE 0 END) AS dx_gibleed,
     COUNT(*) AS n_diagnoses
   FROM stays s
   JOIN `physionet-data.mimiciv_3_1_hosp.diagnoses_icd` d USING (hadm_id)
@@ -90,7 +111,9 @@ SELECT
   a.admission_type, a.admission_location,
   v.curr_service, v.service_is_fallback,
   x.icd_code AS dx1_code, x.icd_version AS dx1_version, x.long_title AS dx1_title,
-  f.dx_burn, f.dx_resp, f.dx_gu, f.dx_cardio, f.dx_neuro, f.n_diagnoses
+  f.dx_burn, f.dx_resp, f.dx_gu, f.dx_cardio, f.dx_neuro,
+  f.dx_sepsis, f.dx_aki, f.dx_hf, f.dx_pneumonia, f.dx_respfail, f.dx_gibleed,
+  f.n_diagnoses
 FROM stays s
 LEFT JOIN `physionet-data.mimiciv_3_1_hosp.patients` p USING (subject_id)
 LEFT JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a USING (hadm_id)

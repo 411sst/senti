@@ -37,6 +37,12 @@ EXTRACTS = {
                      REPO / "data" / "cache" / "mimic_extra_vitals_hourly.parquet"),
     "stay_meta": (REPO / "scripts" / "mimic_stay_meta.sql",
                   REPO / "data" / "cache" / "mimic_stay_meta.parquet"),
+    "code_status": (REPO / "scripts" / "mimic_code_status.sql",
+                    REPO / "data" / "cache" / "mimic_code_status.parquet"),
+    "neuro_status": (REPO / "scripts" / "mimic_neuro_status.sql",
+                     REPO / "data" / "cache" / "mimic_neuro_status_hourly.parquet"),
+    "infection": (REPO / "scripts" / "mimic_infection.sql",
+                  REPO / "data" / "cache" / "mimic_infection_hourly.parquet"),
 }
 
 

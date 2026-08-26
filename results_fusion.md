@@ -576,6 +576,8 @@ Two mechanisms fall out, both headline-grade:
 Caveat carried from the design: death is itself treatment-mediated
 (DNR/withdrawal), so death-only rows are a lower bound on physiological
 signal; comfort-care-excluded sensitivity is listed future work.
+**(Closed in T11: the exclusion is now computed from charted code status,
+and the lead survives it.)**
 
 ## T8 — Respiratory-support agent: ALL-8 beats the GBM outright
 
@@ -896,6 +898,348 @@ wrong object: what needs to be per-unit is the operating point, and for the two
 categories with no unit at all (urology, burns) there is not enough data here to
 say anything, honestly, in either direction.
 
+## T11 — Charted code status: the death-stay lead survives the DNR exclusion
+
+T7 ended on a caveat it could not act on: death is treatment-mediated
+(DNR/withdrawal of care), so any lead measured on death stays might be
+anticipation of a decision rather than of physiology. Acting on it needed to
+know *when* a limitation of care was documented — and before reaching for a
+language model over notes, the honest first move was to check for a structured
+field. **MIMIC-IV charts it directly**: `itemid` 223758 ("Code Status") is a
+timestamped ICU flowsheet item with seven distinct values. The extraction is a
+lookup, not an inference (`src/code_status.py`, `scripts/mimic_code_status.sql`,
+0.9% of entries timestamped before ICU intime and kept — an earlier decision
+is still a decision).
+
+Two design points that matter:
+
+- **DNI contaminates the ventilation arm, not just death.** Our label counts
+  invasive-ventilation onset, and a DNI order forecloses exactly that event, so
+  CPR and intubation limits are tracked separately. Exposure turns out small:
+  2.5% of charted vent-first stays had DNI documented beforehand.
+- **A palliative care plan is not a DNR.** The palliative NCP items
+  (229150/52/54/55) mark a goals-of-care conversation, not a decision, so they
+  carry a separate `kind` and are never folded into the limitation flags. Also
+  deliberately excluded after inspection: 227954 "Status and Comfort" *reads*
+  like goals of care but is a sedation scale (top values Asleep/Calm/Awake).
+
+### Coverage — who has a charted status at all
+
+| | stays | share |
+|---|---|---|
+| cohort | 56,157 | |
+| code status charted | 22,424 | 39.9% |
+| palliative care plan | 787 | 1.4% |
+| either | 22,927 | 40.8% |
+
+Coverage by first event: vent 60% · vaso 57% · **death 45%** · event-free 38% —
+a 22-point spread, so the uncharted stays are a **biased sample**, not
+missing-at-random.
+
+### The death cohort is substantially a decided-outcome cohort
+
+Among death-first stays *with* a charted status (1,029): **46.7% had a
+limitation documented before death** (13.1% comfort-measures-only), a median of
+**66 hours** before (IQR 26–131h). T7's worry was legitimate.
+
+### But the attack does not land
+
+The flagship's paired first-alarm race on death stays (seed 42, 2% budget,
+global thresholds — only the summary is split, same posture as
+`decompose.component_race`):
+
+| death-stay subgroup | n | median lead | win |
+|---|---|---|---|
+| all | 150 | +1.0h | 51% |
+| **limitation documented before death** | 34 | **0.0h** | **32%** |
+| charted, no limitation | 27 | 0.0h | 48% |
+| no charted status | 89 | +2.0h | 58% |
+| **excluding decided stays** | **116** | **+1.0h** | **56%** |
+
+The model is *worst* precisely where a person had already decided the outcome
+(win 32%, below chance) and best where no decision exists on the chart. Exclude
+the decided stays and the lead **holds at +1.0h with the win rate rising to
+56%**. This is the opposite of the "predicting the order set" attack: whatever
+the early signal is on death stays, it is not the DNR.
+
+Cells are small (34/27) — reported as direction, not as separated estimates;
+the load-bearing row is the 116-stay exclusion.
+
+### What this prices the language-model idea at
+
+Code status is charted for only 40% of the cohort, non-uniformly. **89 of the
+150 raced death stays have no charted status** — filling those from notes would
+triple the evidence base for this table. That is the concrete case for
+requesting MIMIC-IV-Note access (a separate PhysioNet module; this account is
+currently 403 on it). When it lands, the 22,424 charted stays are a free
+validation set for any note-based extractor — accuracy is measurable without
+hand-labelling. Until then, this is as far as the structured record goes.
+
+Never a model feature: a code-status entry is a clinician decision about the
+outcome we predict; it is used only to partition stays, the same audit-only
+posture as the note blackout.
+
+## T12 — Standby operating points: what "keep models on standby" actually needs
+
+T10 decomposed the clinician's "keep models on standby because ICU cannot be
+generalized" into measured facts: discrimination varies across units only
+modestly, but **alarm burden varies five-fold** at one global threshold and
+the flagship's lead is unit-dependent. So the thing to put on standby is a
+small table of **per-unit operating points** keyed by `first_careunit` — a
+database column known at ICU admission — not six models. `src/standby.py`
+is that layer; nothing retrains, and the dynamic per-patient form of standby
+already exists inside the orchestrator's attention, which reweights agents
+hour by hour as modalities appear and go stale.
+
+**Two anchors per unit, because two questions are being asked.** The
+deployment threshold is the model's own (1 − budget) quantile within the
+unit's V_freeze rows — that is what equalizes burden. The race thresholds are
+the NEWS2-anchored pair re-frozen within the unit — NEWS2's integer score
+overshoots fine budgets by different amounts per unit (badly in low-acuity
+neuro, where the anchored volume lands near 4%), so a fair volume-matched
+race must re-anchor, but that same overshoot is why the anchored pair cannot
+*be* the deployment threshold. Units whose freeze half is too thin fall back
+to the global point and say so.
+
+### A — burden equalization (flagship s42, 2% budget)
+
+| unit | prev | alarm @ global thr | alarm @ standby thr |
+|---|---|---|---|
+| neuro | 1.4% | 0.75% | 1.82% |
+| cardiac | 6.1% | 3.15% | 2.37% |
+| medical | 6.0% | 3.91% | 1.79% |
+| med-surg | 5.5% | 4.03% | 3.07% |
+| surgical | 5.5% | 2.58% | 1.88% |
+| trauma | 5.4% | 2.89% | 2.24% |
+
+**Spread 5.3× → 1.7×.** The residue is honest val→test drift, not a fitting
+failure: the thresholds hit the budget exactly on the freeze half by
+construction and are then applied unchanged to test.
+
+### B — the race under per-unit anchoring redistributes the lead
+
+| unit | global: lead / win (n) | standby: lead / win (n) |
+|---|---|---|
+| neuro | 0.0h / 38% (21) | **+3.0h / 63% (38)** |
+| med-surg | 0.0h / 49% (129) | **+1.0h / 56% (103)** |
+| medical | +2.0h / 63% (123) | +2.0h / 64% (121) |
+| trauma | +2.0h / 69% (35) | +2.0h / 68% (34) |
+| cardiac | +1.0h / 57% (72) | **0.0h / 48% (64)** |
+| surgical | +2.0h / 60% (50) | 0.0h / 46% (65) |
+
+This is T5's zero-sum lesson operating at the unit level. Under a global
+threshold the two units where the flagship showed **no lead — neuro and
+med-surg — wake up** (+3.0h/63% and +1.0h/56%), and neuro's jointly-caught
+pool nearly doubles (21 → 38 stays): the global NEWS2 threshold was simply
+mis-set for a unit whose NEWS2 distribution sits low, and both models were
+being scored against an anchor that barely fired there. Symmetrically,
+cardiac and surgical lose their lead — re-anchoring *strengthens NEWS2*
+exactly where its global threshold was most miscalibrated (cardiac, the unit
+where its AUROC is 0.555). NEWS2 still cannot rank there; but firing at the
+right volume, it alarms as early as the model does on the stays both catch.
+
+The deployment reading: per-unit operating points are not a free lunch — they
+are a **reallocation** of earliness toward the units a global threshold was
+starving, which is precisely what an alarm system owner would want, stated
+with the cost visible rather than hidden.
+
+### C — the agent roster is mostly shared, with unit-specific seats
+
+Standalone lift (AUPRC ÷ prevalence — raw AUPRC would rank the four-fold
+prevalence spread, per T10 Part C) puts **gbm and vitals_tcn in the top-3
+nearly everywhere** — the core roster is not unit-specific. The seats that
+move: **labs and cadence claim cardiac** (43% of CVICU stays deteriorate;
+cadence reads the post-op monitoring rhythm), **resp claims neuro, medical
+and med-surg** (where deterioration is respiratory-led), and news2's weakest
+seat is cardiac (lift 1.5) — the same story as its 0.555 AUROC there.
+ecg_meas is uniformly weak standalone (1.0–1.2), consistent with its benched
+status; its value, where it has one, is inside the fusion.
+
+No per-unit models are built, because nothing above justifies one: the roster
+overlaps heavily, discrimination barely separates across units, and T10's
+Gao et al. citation shows a specialty model transferring across whole
+databases with <4% loss. Six thresholds, one model.
+
+## T13 — Condition → agent: which situation correlates best to which agents
+
+T12 answered "standby" at the unit level; the clinician's actual meaning,
+clarified, was **patient status**: if the situation is sepsis, maybe vitals and
+fluids are the agents that detect the anomaly. The agents are modality readers,
+not disease specialists, so the question becomes measurable: *for stays with
+condition X, which modality carries the early signal?* Condition flags are
+any-position ICD (sepsis, acute respiratory failure, pneumonia, AKI, heart
+failure, GI bleed) — retrospective labels of what the stay was, overlapping
+rather than a partition, and **discharge-coded, so never a real-time selector
+input**. The real-time form of this standby already exists: the orchestrator's
+attention reads the same evidence hour by hour from the agents themselves.
+
+Standalone lift (AUPRC ÷ within-condition prevalence) per agent, test split;
+race = flagship vs NEWS2 at the global 2% budget within the subgroup:
+
+| condition | stays | prev | top-3 agents | notable | race |
+|---|---|---|---|---|---|
+| sepsis | 1,222 | 9.9% | gbm · vitals_tcn · **resp** | fluid NOT elevated (1.8 = cohort-wide) | +1.0h / 59% (199) |
+| resp failure | 1,644 | 10.3% | gbm · vitals_tcn · labs | | +1.0h / 55% (277) |
+| pneumonia | 1,193 | 8.6% | gbm · vitals_tcn · resp | | +1.0h / 57% (178) |
+| AKI | 2,448 | 8.0% | gbm · vitals_tcn · **cadence** | | +2.0h / 59% (273) |
+| heart failure | 2,145 | 6.9% | gbm · vitals_tcn · labs | | +2.0h / 61% (178) |
+| GI bleed | 554 | 6.3% | gbm · **labs (3.9)** · vitals_tcn | labs far above its usual 2.2–2.7 | +1.0h / 54% (35) |
+
+**Four readings:**
+
+1. **The clinician's sepsis guess is half right.** vitals_tcn is top-3 in
+   sepsis; the fluid agent is not — its standalone lift in septic stays (1.8)
+   is exactly its cohort-wide value. Standalone lift is a coarse instrument
+   (fluid could still contribute *inside* the fusion, per its T6 marginal
+   role), but there is no evidence of a special fluid→sepsis affinity. The
+   agent that IS specifically elevated in sepsis is **resp** — septic patients
+   escalate oxygen support before the vent/vaso event.
+2. **GI bleed is the cleanest condition-specific seat in the program:** labs
+   lift 3.9 against its usual 2.2–2.7. Clinically exact — a falling
+   haemoglobin is *the* early signal in GI bleeding, and no other modality
+   sees it.
+3. **The shared core holds everywhere.** gbm and vitals_tcn are top-3 in all
+   six conditions, as in all six units (T12) — further evidence for one model
+   with learned per-patient weighting rather than condition-specific models.
+4. **The flagship's lead survives every condition subgroup:** +1.0 to +2.0h at
+   54–61% win. Unlike the unit view (where med-surg and neuro sat at zero
+   under global thresholds), no condition is being left behind.
+
+Next hop if wanted: read the orchestrator's attention weights per condition —
+the direct evidence that the fusion already *learns* this roster hour by hour.
+
+## T14 — Specialist Sentinels: the doctors' proposal, run to ground
+
+The clinician direction, in its final clarified form: tailor Sentinel to one or
+a few ICU scenarios (cardio, neuro, respiratory, urology, burns) — a specialist
+per scenario, each activating the best-suited agents from the shared bank
+("standby agents"). T12 gave every unit a local operating point; this is the
+remaining question: **does specializing the MODEL add anything beyond
+specializing the threshold?**
+
+Design (`scripts/run_specialist.py`): three arms per specialty, seeds {42,1,2},
+all raced under specialty-local thresholds so operating-point specialization is
+granted to every arm and cannot confound the answer.
+
+    generalist          the global two-head flagship, scores as deployed
+    specialist-all8     two-head retrained ONLY on the specialty's stays (same
+                        architecture, same protocol), full 8-agent bank
+    specialist-roster   retrained on the specialty's stays, bank restricted to
+                        the top-4 agents by standalone lift on the specialty's
+                        OWN V_freeze half (selection never sees test)
+
+If anything the design favors the specialists: they get specialty-local
+isotonic calibration where the generalist keeps its global one. Urology and
+burns are unbuildable — 197 / 128 cohort stays (36 / 21 in test) — and are
+reported as that finding rather than skipped.
+
+### The rosters the data picked (V_freeze lift, per specialty)
+
+| specialty | top-4 roster | benched |
+|---|---|---|
+| cardio (8,957 train stays) | gbm · **cadence** · vitals_tcn · **labs** | news2 1.5, fluid 1.5, ecg_meas 1.2 |
+| neuro (8,585) | gbm · **resp** · vitals_tcn · **cadence** | fluid 1.5, ecg_meas 1.0 |
+| respiratory (2,500) | gbm · **resp** · vitals_tcn · **labs** | fluid 1.8, ecg_meas 1.1 |
+
+A shared core {gbm, vitals_tcn} plus two scenario seats — the same structure
+T12-C and T13 read off the generalist, now confirmed by independent selection.
+
+### The verdict: the generalist is never beaten (18/18 cells)
+
+3-seed means; paired AUPRC deltas vs the generalist per seed:
+
+| specialty | arm | AUPRC | lead@2% | delta vs generalist |
+|---|---|---|---|---|
+| cardio | generalist | **0.353** | **+1.0h** | — |
+| | specialist-all8 | 0.340 | +0.7h | negative 3/3, CI clear 1/3 |
+| | specialist-roster | 0.337 | +0.8h | negative 3/3, CI clear 1/3 |
+| neuro | generalist | **0.187** | **+2.2h** | — |
+| | specialist-all8 | 0.168 | +1.7h | negative 3/3, CI clear 1/3 |
+| | specialist-roster | 0.171 | +1.5h | negative 3/3, CI clear 1/3 |
+| respiratory | generalist | **0.310** | **+2.0h** | — |
+| | specialist-all8 | 0.244 | +1.2h | negative 3/3, CI clear 2/3 |
+| | specialist-roster | 0.250 | +1.0h | negative 3/3, CI clear 3/3 |
+
+Every one of the 18 specialist cells has a negative point delta; 9 of 18 CIs
+are clear of zero; **zero cells favor the specialist**. The generalist also
+holds the better mean lead in all three specialties.
+
+### Reading
+
+1. **Specialization by training-data restriction is strictly a loss here.** A
+   specialist sees ~20% of the stays (respiratory: 6%) and gives up the
+   cross-scenario physiology the generalist learns from everyone else's
+   deteriorations — which evidently transfers, echoing Gao et al.'s <4%
+   cross-database loss for a specialty model (T10). The deficit scales with
+   data starvation: respiratory (2,500 stays) loses by ~0.06 AUPRC, cardio and
+   neuro (~9,000) by ~0.015–0.019.
+2. **The "standby agents" half of the idea survives.** Within the specialist
+   frame the 4-agent roster matches the 8-agent bank (roster ≥ all8 in 5 of 9
+   seed-cells, and better on mean AUPRC in respiratory and neuro) — half the
+   bank suffices per scenario, which matters for deployment cost, and the
+   seats the selection picks are clinically legible (resp for neuro and
+   respiratory; cadence + labs for cardio).
+3. **What the doctors asked for is delivered by a different decomposition than
+   they imagined:** one model trained on everyone (T14 says restricting data
+   only hurts) + per-unit operating points (T12: burden 5.3x→1.7x, the dead
+   units wake up) + attention doing per-patient agent weighting continuously
+   (T13: the roster the attention would need is condition-dependent, and the
+   fusion reads it from the data hour by hour, earlier than any
+   discharge-coded label could).
+4. Honest scope: this tests specialists at the flagship's own scale (~25k
+   params, this database). A specialty model with specialty-specific FEATURES
+   (e.g. ICP monitoring in neuro, pressor-dose trajectories in cardiac) is a
+   different, unrun experiment — and the only form of specialization this
+   result leaves open.
+
+## T15 — Tier-1 modality candidates: neuro-status and infection-workup, benched
+
+The modality survey (post-T14) censused every remaining accessible channel and
+ranked two as Tier-1: **neuro-status** (RASS ~q4h in 89% of stays, CAM-ICU in
+78%, pain score — the sedation/delirium arc no agent could see) and
+**infection-workup** (528,684 culture draws in 70% of stays + antibiotic
+starts/stops from `derived.antibiotic` — Sepsis-3's t_suspicion made
+bedside-visible, aimed at T13's finding that no agent is specifically elevated
+in sepsis). Both were built to the house pattern: level channels carried
+forward under staleness (RASS 0 is "alert and calm", never zero-filled),
+count channels zero-filled (silence is a real 0), 24h pre-ICU lookback for
+cultures and antibiotics, results never read.
+
+| agent | coverage | standalone AUPRC / AUROC | death comp. |
+|---|---|---|---|
+| neuro_status (14 feat) | 98.6% of stays | 0.101 / 0.648 | 0.076 |
+| infection (10 feat) | 81.6% | 0.075 / 0.630 | 0.011 |
+
+Standalone weakness is not disqualifying (fluid debuted at 0.093 and earned
+its seat), so both went through the ship bar: fusion contribution over the
+ALL-8 parent, within seed, CI clear of zero.
+
+| cell | val Δ vs ALL-8 (s42 / s1 / s2) | test Δ 95% CI |
+|---|---|---|
+| ALL-8 + neuro | −0.0075 / +0.0011 / +0.0023 | one negative, two span zero |
+| ALL-8 + infection | −0.0105 / −0.0003 / +0.0015 | one negative, two span zero |
+| ALL-8 + both | −0.0120 / +0.0026 / −0.0013 | one negative, two span zero |
+
+**Neither clears the bar on any seed; both are benched**, joining notes and
+ECG as retained-not-shipped modalities with a standing re-entry condition (a
+positive val contribution with the CI clear of zero).
+
+Why the census looked better than the fusion turned out, best reading:
+**redundancy with cadence.** The cadence agent already counts lab draws and
+medication orders — culture draws and antibiotic starts are substantially the
+same "attention of the infectious kind" events seen through a coarser
+instrument, and the attention layer has had that signal since T6. Likewise
+RASS/CAM state correlates with what vitals (GCS) and resp (support level)
+already carry. The bank at eight agents appears near saturation for this
+label: the ninth latent dilutes more than it adds.
+
+Kept for the record: both agents, their extracts, builders and emission
+caches stay maintained (`train_new_agents.py --agent neuro_status,infection`;
+`eval_new_agents.py --parents all8 --agents neuro,infect,both2`), and the
+per-component numbers localize any future value — neuro_status's death
+component (0.076) is its strongest suit, worth revisiting if a death-weighted
+two-head bank is ever re-opened.
+
 ## Architecture audit (post-T8 sweep)
 
 A full pass over every component the program added, plus the pipeline it
@@ -988,9 +1332,30 @@ wait
 # T10 ICU-category strata
 .venv/bin/python scripts/run_icu_strata.py --parts a,b,c --reps 2000
 
+# T11 charted code status (coverage, decided-before-death timing, lead exclusion)
+GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
+  .venv/bin/python scripts/fetch_cadence_fluids.py --which code_status
+.venv/bin/python scripts/run_code_status.py
+
+# T12 standby operating points (burden equalization, per-unit race, roster)
+.venv/bin/python scripts/run_standby.py --budget 0.02
+
+# T13 condition -> agent roster (sepsis, resp failure, pneumonia, AKI, HF, GI bleed)
+.venv/bin/python scripts/run_condition_roster.py
+
+# T14 specialist Sentinels (three arms x cardio/neuro/respiratory x 3 seeds)
+.venv/bin/python scripts/run_specialist.py --specialty cardio,neuro,respiratory
+
+# T15 tier-1 modality candidates (fetch, train, ship-bar fusion)
+GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
+  .venv/bin/python scripts/fetch_cadence_fluids.py --which neuro_status,infection
+.venv/bin/python scripts/train_new_agents.py --agent neuro_status,infection
+.venv/bin/python scripts/eval_new_agents.py --parents all8 \
+  --agents neuro,infect,both2 --out data/cache/tier1_fusion.npz
+
 # both-metrics scoreboard (AUPRC + AUROC for every cached model)
 .venv/bin/python scripts/metrics_table.py --reps 1000
 
 # tests
-.venv/bin/python -m pytest -q   # 578 passing
+.venv/bin/python -m pytest -q   # 618 passing
 ```
