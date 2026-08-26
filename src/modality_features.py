@@ -54,34 +54,102 @@ def build_lab_features(cohort, labs, max_staleness=LAB_MAX_STALENESS_HOURS):
     Returns a frame with one row per cohort row: the carried lab values plus a
     ``<lab>_hrs_since`` staleness channel for each.
     """
+    return carry_forward_to_cohort(cohort, labs, LAB_COLUMNS,
+                                   lookback=LAB_LOOKBACK_HOURS,
+                                   max_staleness=max_staleness)
+
+
+def carry_forward_to_cohort(cohort, source, columns, lookback, max_staleness):
+    """LOCF + strictly-before-t shift + staleness bound, on the cohort's rows.
+
+    The shared core of every irregularly-sampled modality builder: labs, and the
+    supplementary vitals/blood-gas channels the published GBM specs need. Kept
+    as one function because the leakage argument only has to be checked once.
+
+    ``max_staleness`` is either a scalar bound applied to every column or a
+    ``{column: bound}`` mapping, matching ``MAX_STALENESS_HOURS`` in
+    ``mimic_cohort``.
+    """
     cohort_keys = cohort[["stay_id", "hour"]].drop_duplicates()
     span = cohort_keys.groupby("stay_id")["hour"].max().reset_index(name="max_hour")
 
     # Dense grid: one row per (stay, hour) from -lookback to the stay's end.
     grid = span.assign(
-        hour=[np.arange(-LAB_LOOKBACK_HOURS, int(m) + 1) for m in span["max_hour"]]
+        hour=[np.arange(-lookback, int(m) + 1) for m in span["max_hour"]]
     ).explode("hour")[["stay_id", "hour"]]
     grid["hour"] = grid["hour"].astype(int)
 
-    labs = labs[labs["hour"].between(-LAB_LOOKBACK_HOURS, int(span["max_hour"].max()))]
-    merged = grid.merge(labs, on=["stay_id", "hour"], how="left")
+    source = source[source["hour"].between(-lookback, int(span["max_hour"].max()))]
+    merged = grid.merge(source, on=["stay_id", "hour"], how="left")
     merged = merged.sort_values(["stay_id", "hour"]).reset_index(drop=True)
 
     stay, hour = merged["stay_id"], merged["hour"]
     out = merged[["stay_id", "hour"]].copy()
-    for col in LAB_COLUMNS:
+    for col in columns:
+        bound = (max_staleness.get(col) if isinstance(max_staleness, dict)
+                 else max_staleness)
         observed = merged[col] if col in merged else pd.Series(np.nan, index=merged.index)
         value = observed.groupby(stay, sort=False).ffill()
         value = value.groupby(stay, sort=False).shift(1)          # strictly before t
         last = hour.where(observed.notna()).groupby(stay, sort=False).ffill()
         last = last.groupby(stay, sort=False).shift(1)
         staleness = hour - last
-        out[col] = value.where(staleness <= max_staleness).to_numpy()
-        out[f"{col}_hrs_since"] = staleness.where(staleness <= max_staleness).to_numpy()
+        out[col] = value.where(staleness <= bound).to_numpy()
+        out[f"{col}_hrs_since"] = staleness.where(staleness <= bound).to_numpy()
 
     # Keep only the cohort's prediction hours, in cohort key order.
     return cohort_keys.merge(out, on=["stay_id", "hour"], how="left") \
                       .sort_values(["stay_id", "hour"]).reset_index(drop=True)
+
+
+# --- Supplementary vitals and blood gases (published GBM specs) --------------
+
+EXTRA_VITALS_PATH = "data/cache/mimic_extra_vitals_hourly.parquet"
+
+# Channels mimic_cohort.sql never pulled, required by the specs reproduced in
+# src/lit_gbm.py: Sadanandan 2026 needs DBP, MAP, pCO2 and pO2; eCART needs MAP.
+EXTRA_VITALS_COLUMNS = ["dbp", "mbp", "pco2", "po2"]
+
+# Bounds follow mimic_cohort.MAX_STALENESS_HOURS: pressures are vitals (12h,
+# beyond which monitoring has stopped); blood gases get 24h, the same bound as
+# FiO2 and the expiry eCARTv5 applies to gases and lactate.
+EXTRA_MAX_STALENESS = {"dbp": 12, "mbp": 12, "pco2": 24, "po2": 24}
+
+# Physiologic plausibility bounds, applied on load. The raw extract contains a
+# pO2 of -32 and one of 4242 mmHg; eCARTv5's stated rule is that "nonphysiologic
+# flowsheet data were considered input errors and treated as missing", and a
+# carried-forward impossible value is worse than a gap because the model reads
+# it as a measurement.
+EXTRA_PLAUSIBLE = {"dbp": (5, 200), "mbp": (5, 250),
+                   "pco2": (5, 150), "po2": (10, 700)}
+
+
+def load_extra_vitals(path=EXTRA_VITALS_PATH):
+    """Supplementary hourly channels, with ids typed for a safe join.
+
+    BigQuery hands these back as floats; joining a float ``stay_id`` against the
+    cohort's integer grid silently matches nothing, which is how an earlier
+    coverage audit ended up with bands summing to 200%.
+    """
+    df = pd.read_parquet(path)
+    df["stay_id"] = df["stay_id"].astype("int64")
+    df["hour"] = np.floor(df["hour"].astype(float)).astype("int64")
+    for col, (lo, hi) in EXTRA_PLAUSIBLE.items():
+        if col in df:
+            df[col] = df[col].where(df[col].between(lo, hi))
+    return df.groupby(["stay_id", "hour"], as_index=False).mean()
+
+
+def build_extra_vitals_features(cohort, extra,
+                                max_staleness=EXTRA_MAX_STALENESS):
+    """DBP / MAP / pCO2 / pO2 carried to the cohort's rows, strictly before t.
+
+    Same leakage guarantee as :func:`build_lab_features`, which it shares an
+    implementation with. Lookback is 0: these channels are ICU-only, so unlike
+    labs there is no pre-admission history to reach back for.
+    """
+    return carry_forward_to_cohort(cohort, extra, EXTRA_VITALS_COLUMNS,
+                                   lookback=0, max_staleness=max_staleness)
 
 
 # --- Notes (radiology reports) -----------------------------------------------

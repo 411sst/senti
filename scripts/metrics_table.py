@@ -70,6 +70,11 @@ SPEC = [
     ("ALL-8 cap-at-HFNC", "resp_fusion", "test_all7+respcap4_s{s}"),
     ("TWO-HEAD ALL-8", "two_head", "test_s{s}"),
     ("  |- D-head (death only)", "two_head", "dhead_test_s{s}"),
+    # Literature-anchored GBMs (T10) -- specifications taken from published
+    # papers rather than chosen here; see docs/references.md.
+    ("lit: Sadanandan XGB", "lit_gbm_scores", "test_sadanandan"),
+    ("lit: YAIB LGBM", "lit_gbm_scores", "test_yaib"),
+    ("lit: eCART-style GBM", "lit_gbm_scores", "test_ecart"),
 ]
 
 # Standalone agents come from their emission caches.
@@ -81,7 +86,8 @@ AGENT_ROWS = [("cadence agent", "cadence"), ("fluid agent", "fluid"),
 # Rows that get patient-clustered CIs on both metrics.
 HEADLINE = {"NEWS2", "FAIR+TRAJ (145 feat)", "ORCH core-3+meas", "LOGIT3",
             "CONSTR-1H", "ORCH+GBM (5th agent)", "ALL-7 (gbm+both)",
-            "ALL-8 (all7+resp)", "TWO-HEAD ALL-8", "  |- D-head (death only)"}
+            "ALL-8 (all7+resp)", "TWO-HEAD ALL-8", "  |- D-head (death only)",
+            "lit: Sadanandan XGB", "lit: YAIB LGBM", "lit: eCART-style GBM"}
 
 
 def load_scores(name, key):

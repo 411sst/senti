@@ -84,7 +84,7 @@ flowchart LR
   TH -->|"cT · isotonic on V_fit"| OR{{"noisy-OR<br/>1−(1−cT)(1−cD)"}}
   DH -->|"cD · isotonic on V_fit"| OR
   OR --> AL["ALARM<br/>threshold frozen on V_freeze,<br/>volume-matched to NEWS2"]
-  DH --> DR["death risk<br/>AUPRC 0.328 · AUROC 0.946"]
+  DH --> DR["death risk<br/>AUPRC 0.344 · AUROC 0.946"]
 ```
 
 Both heads are the same ~25k-param `LatentFusionNet` (attention over agents
@@ -667,6 +667,235 @@ forward pass over the same cached bank; both heads share the agents, and the
 D-head's death score is independently useful (it is the best death-risk
 ranker in the program, by a wide margin).
 
+## T10 — The literature bar, and which ICU this actually is
+
+Every earlier table raced the flagship against **our** gradient-boosted
+comparator (`baselines_fair.py`, FAIR+TRAJ, 145 features). That invites one
+obvious objection: we chose the shape of the model we then beat. A clinician
+reviewing the project on 2026-08-26 raised the practical form of it — is this
+comparator anything like what is actually deployed?
+
+So the comparator was replaced by three whose **specification comes from a
+paper**, refit on our cohort under our protocol. Full citations, the numbers
+each source reports, and every deviation forced by our data are in
+`docs/references.md`; the specs themselves are in `src/lit_gbm.py`, each
+carrying its own machine-readable `deviations` list.
+
+```
+lit:sadanandan   arXiv:2603.14719 -- the only published model found whose LABEL
+                 IS OURS: ICU death or vasopressor onset or ventilation onset
+                 within 24h, scored hourly on MIMIC-IV. 25 features (7 vital
+                 channels + their 16 labs + age, sex). Reports XGBoost
+                 AUROC 0.7486 / AUPRC 0.1123.
+lit:yaib         arXiv:2306.05109 -- the community MIMIC-IV benchmark recipe:
+                 forward-fill, missing indicators, expanding min/max/mean/count
+                 per channel, into LightGBM over their published search space.
+                 218 features.
+lit:ecart        Churpek 2025, Crit Care Explor -- the FDA-cleared GBM early
+                 warning score: 24h min/max and trends, delivered FiO2, time of
+                 day, gases expiring at 24h, training down-sampled to 50%
+                 prevalence. 95 features.
+```
+
+Two channels the specs need did not exist in our cohort (`mimic_cohort.sql`
+pulls 5 vitals and no blood gases), so DBP, MAP, pCO2 and pO2 were fetched into
+`mimic_extra_vitals_hourly.parquet` — 0.47 GB scanned, same tables and same
+hourly binning as the original extract. With those, all 16 of Sadanandan's labs
+are available.
+
+### Part 1 — three published GBMs, and not one of them warns earlier
+
+| model | AUPRC [95% CI] | AUROC [95% CI] | lead@2% | win | n_pair | alarm% |
+|---|---|---|---|---|---|---|
+| NEWS2 | 0.114 [0.102, 0.128] | 0.683 [0.668, 0.700] | — | — | — | 2.28 |
+| lit: Sadanandan XGB | 0.239 [0.220, 0.261] | 0.766 [0.751, 0.782] | **0.0** | 36% | 376 | 2.66 |
+| lit: eCART-style GBM | 0.280 [0.257, 0.304] | 0.814 [0.800, 0.828] | **0.0** | 42% | 378 | 2.56 |
+| lit: YAIB LGBM | 0.281 [0.258, 0.306] | 0.808 [0.793, 0.822] | **0.0** | 42% | 365 | 2.43 |
+| FAIR+TRAJ (ours, 145 feat) | 0.287 [0.264, 0.311] | 0.807 [0.793, 0.821] | **0.0** | 38% | 389 | 2.61 |
+| **two-head ALL-8** (3-seed) | **0.3075** [0.291, 0.337] | **0.8221** [0.813, 0.840] | **+1.5** | **58%** | — | — |
+| two-head ALL-8, s42 only | 0.314 | 0.827 | +1.0 | 57% | 430 | 2.79 |
+
+Paired first-alarm race vs NEWS2 at a 2% alarm budget, thresholds frozen on
+V_freeze, jointly-caught stays only. CIs are patient-clustered bootstraps
+(`scripts/metrics_table.py --reps 1000`). The flagship appears twice because
+the paired-race columns are computed per seed: the bolded row is the 3-seed
+headline from T9, the row below it is the single seed the race ran on. NEWS2
+would be racing itself, so its timing columns are blank.
+
+Paired AUPRC deltas, patient-clustered, 95% CI:
+
+| vs FAIR+TRAJ (ours) | delta | verdict |
+|---|---|---|
+| lit: eCART-style | +0.007 [−0.004, +0.019] | **not separated** |
+| lit: YAIB LGBM | +0.006 [−0.006, +0.018] | **not separated** |
+| lit: Sadanandan XGB | +0.048 [+0.035, +0.061] | ours higher |
+| two-head flagship s42 | −0.027 [−0.039, −0.016] | flagship higher |
+
+| vs two-head flagship s42 | delta | verdict |
+|---|---|---|
+| lit: eCART-style | +0.034 [+0.021, +0.047] | flagship higher |
+| lit: YAIB LGBM | +0.033 [+0.019, +0.047] | flagship higher |
+| lit: Sadanandan XGB | +0.075 [+0.060, +0.091] | flagship higher |
+| FAIR+TRAJ (ours) | +0.027 [+0.016, +0.039] | flagship higher |
+
+**Three things fall out, and the second is the one that matters.**
+
+1. **Our comparator was not a strawman.** The eCART-style spec (0.280 / 0.814)
+   and the YAIB spec (0.281 / 0.808) are statistically indistinguishable from
+   FAIR+TRAJ (0.287 / 0.807) — both CIs span zero. Every table in this document
+   that says "the GBM wins ranking" was measuring against published practice,
+   not against a model built to lose.
+
+2. **Not one of them warns earlier than NEWS2.** Median lead 0.0h, win rate
+   36–42% — *below* the 50% coin flip. Three independently designed
+   gradient-boosted rankers, one of them the published recipe of an FDA-cleared
+   product, spanning 25 to 218 features and two libraries, all land at zero
+   lead while ranking 2.1–2.5× NEWS2's AUPRC. The dissociation between ranking
+   and earliness is now a property of the model class, not of one model we
+   built.
+
+   eCARTv5's own validation paper says the same thing in its own numbers: it
+   beats NEWS by 6.8 AUROC points (0.834 vs 0.766) and its median lead time is
+   **16h against NEWS's 17h**. We did not discover this. We reproduced it, on a
+   different cohort, in a different care setting, with a harness that controls
+   alarm volume.
+
+3. **The flagship clears all three.** +0.033 to +0.075 AUPRC with every CI
+   clear of zero, and it is the only model on the board with a positive lead.
+
+### Sanity check: does the reproduction land where the paper landed?
+
+Sadanandan samples hours 6–48 of stays lasting at least 24h. Re-scoring our
+reproduction on that row window (not a retrain on their cohort — our stays are
+still censored at the first event, and theirs are not):
+
+| | AUPRC | AUROC |
+|---|---|---|
+| lit:sadanandan, their row window | 0.137 | 0.728 |
+| **as published, their cohort** | **0.112** | **0.749** |
+| FAIR+TRAJ, same window | 0.172 | 0.765 |
+| NEWS2, same window | 0.080 | 0.688 |
+
+207,683 of 361,229 test hours, 5,904 stays, prevalence 3.53% against their
+2.8%. AUROC lands 2 points low and AUPRC 2.5 points high — the AUPRC direction
+is what the prevalence gap predicts. Close enough to call the reproduction
+faithful, and reported with its gap rather than tuned onto their number.
+
+### Part 2 — which ICU is this, and does one model hold across it?
+
+The same clinician review raised two more points:
+
+> "Keep models on standby because ICU cannot be generalized."
+> "ICU: Cardio, neuro, respiratory, urology, burns."
+
+Neither was answerable from the cohort as built — `mimic_cohort.sql` selects no
+stay-level metadata, so nothing in `mimic_cohort_hourly.parquet` records which
+kind of ICU a stay happened in. `scripts/mimic_stay_meta.sql` adds it (0.26 GB
+scanned, one row per stay): care unit, hospital service at ICU entry, and
+primary ICD diagnosis. Three views are needed, not one, because **the five
+categories a clinician names are not five ICU units in MIMIC-IV** — cardiac and
+neuro are places, respiratory/urology/burns are only a service or a diagnosis.
+
+**Composition (56,157 stays).** By care unit:
+
+| unit group | stays | share | deteriorated | hourly prevalence |
+|---|---|---|---|---|
+| medical (MICU) | 12,615 | 22.5% | 20.4% | 6.12% |
+| cardiac (CCU + CVICU) | 11,865 | 21.1% | 23.7% | 5.86% |
+| med-surg (MICU/SICU) | 10,336 | 18.4% | 18.9% | 5.21% |
+| surgical (SICU) | 8,175 | 14.6% | 18.1% | 5.60% |
+| neuro (Neuro SICU / Stepdown / Intermediate) | 7,439 | 13.3% | 7.7% | **1.47%** |
+| trauma (TSICU) | 5,707 | 10.2% | 16.9% | 5.64% |
+
+Against the five categories named:
+
+| category | dedicated ICU? | by service | by primary dx | assigned | share |
+|---|---|---|---|---|---|
+| cardio | **yes** (CCU, CVICU) | 10,368 | 18,043 | 12,861 | 22.9% |
+| neuro | **yes** (3 neuro units) | 11,519 | 1,718 | 12,161 | 21.7% |
+| respiratory | **no** | 0 | 4,133 | 3,651 | 6.5% |
+| urology | **no** (GU service only) | 197 | 1,094 | 197 | 0.35% |
+| burns | **no** | 78 (plastics) | 50 (burn ICD) | 128 | 0.23% |
+
+**The answer to "which category is this dataset": a general mixed adult ICU,
+weighted to medical and cardiac.** Cardio (22.9%) and neuro (21.7%) are
+genuinely present and separately evaluable. Respiratory exists only as a
+diagnosis, distributed inside the MICU rather than a unit of its own. **Urology
+and burns are effectively absent** — 36 and 21 stays respectively in the test
+split, which is too few to fit a model on, evaluate, or make any claim about.
+This hospital has no burn unit; burn patients go to a regional centre.
+
+**Per-stratum performance** (test split, thresholds frozen ONCE globally on
+V_freeze — never refit per stratum, which would make this a tuning exercise):
+
+| unit | prev | NEWS2 | FAIR+TRAJ | eCART-style | two-head s42 | lead | win |
+|---|---|---|---|---|---|---|---|
+| medical | 6.0% | 0.130/0.703 | 0.218/0.785 | 0.229/0.802 | **0.260/0.827** | **+2.0h** | 63% |
+| cardiac | 6.1% | 0.092/**0.555** | 0.353/0.776 | 0.325/0.772 | **0.366**/0.775 | +1.0h | 57% |
+| med-surg | 5.5% | 0.158/0.737 | 0.331/0.827 | 0.349/0.839 | **0.356/0.853** | 0.0h | 49% |
+| surgical | 5.5% | 0.137/0.677 | 0.304/0.760 | 0.265/0.761 | **0.324/0.778** | **+2.0h** | 60% |
+| neuro | 1.4% | 0.066/0.730 | **0.162**/0.819 | 0.143/0.827 | 0.156/**0.853** | 0.0h | 38% |
+| trauma | 5.4% | 0.106/0.664 | 0.270/0.759 | 0.271/0.774 | **0.295/0.780** | **+2.0h** | 69% |
+
+Cells are AUPRC/AUROC; lead and win are the two-head flagship's paired race vs
+NEWS2 at the 2% budget.
+
+**Four findings, and the third is a warning about the second.**
+
+1. **NEWS2 collapses in the cardiac ICU.** AUROC **0.555** — a coin flip with a
+   limp. Everywhere else it manages 0.66–0.74. Every ML model holds 0.77–0.78
+   in that same unit. If there is one place a deterioration model earns its
+   keep over the standard score, the published evidence in this table says it
+   is the CCU/CVICU.
+
+2. **The flagship's earliness is unit-dependent.** +2.0h in medical, surgical
+   and trauma (win rates 60–69%); +1.0h in cardiac; **0.0h in med-surg and
+   neuro**. FAIR+TRAJ manages 0.0h or worse everywhere, and is actually *later*
+   than NEWS2 in the cardiac unit (−1.0h). The lead is real, and it is not
+   uniform.
+
+3. **"Which ICU is hardest" has no metric-free answer, and the naive reading is
+   wrong.** By AUPRC the worst unit is neuro (0.156). By AUROC neuro is the
+   *best* (0.853, tied with med-surg), and the worst is cardiac (0.775). The
+   two orderings are near-reversed, because AUPRC is bounded below by
+   prevalence and neuro's event rate is 1.47% against cardiac's 5.86% — a
+   four-fold gap. Normalising (AUPRC ÷ prevalence) puts neuro top at **10.8×**
+   lift versus cardiac's 6.0×. Reporting the AUPRC spread alone would have
+   manufactured heterogeneity that is mostly arithmetic, so `run_part_c` prints
+   all three and refuses to pick.
+
+   Formally: AUPRC spread 0.210 vs median CI width 0.118 (exceeds noise);
+   AUROC spread 0.078 vs 0.066 (barely exceeds); on the clinician-category view
+   AUROC spread 0.063 vs CI width 0.063 — **within noise**.
+
+4. **What the evidence actually supports is per-unit THRESHOLDS, not per-unit
+   models.** At one global 2%-budget threshold the realised alarm burden varies
+   more than five-fold across units:
+
+   | unit | prev | NEWS2 alarm% | two-head alarm% |
+   |---|---|---|---|
+   | med-surg | 5.5% | 4.18% | 4.03% |
+   | medical | 6.0% | 3.11% | 3.91% |
+   | cardiac | 6.1% | 2.26% | 3.15% |
+   | trauma | 5.4% | 1.62% | 2.89% |
+   | surgical | 5.5% | 1.65% | 2.58% |
+   | neuro | 1.4% | 0.83% | **0.75%** |
+
+   A ward calibrated for the med-surg unit's alarm load would be running at a
+   fifth of that burden in neuro. That is a deployment fact, it is measurable
+   now, and it does not require training six models. Gao et al. 2026 point the
+   same way from the other side: their cardiovascular-specific ICU model
+   transferred MIMIC-IV ↔ eICU with under 4% AUROC loss, i.e. the *model* was
+   portable across settings even when the setting changed a great deal.
+
+**So the clinician is right, with a correction.** Performance does vary by ICU
+type — but the variation that survives a prevalence-free metric is modest, and
+the variation that is unambiguously large is in **alarm burden and lead**, not
+in discrimination. "Models on standby" is the right instinct pointed at the
+wrong object: what needs to be per-unit is the operating point, and for the two
+categories with no unit at all (urology, burns) there is not enough data here to
+say anything, honestly, in either direction.
+
 ## Architecture audit (post-T8 sweep)
 
 A full pass over every component the program added, plus the pipeline it
@@ -745,9 +974,23 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 # T9 two-head fix (the final flagship)
 .venv/bin/python scripts/two_head.py --seeds 42,1,2
 
+# T10 literature-anchored GBMs (XGBoost on GPU and LightGBM on CPU, in parallel)
+GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
+  .venv/bin/python scripts/fetch_cadence_fluids.py --which extra_vitals,stay_meta
+OMP_NUM_THREADS=8  .venv/bin/python src/lit_gbm.py --specs sadanandan,ecart \
+  --device cuda --out data/cache/lit_gbm_scores_gpu.npz &
+OMP_NUM_THREADS=14 .venv/bin/python src/lit_gbm.py --specs yaib \
+  --out data/cache/lit_gbm_scores_cpu.npz &
+wait
+.venv/bin/python src/lit_gbm.py --merge data/cache/lit_gbm_scores_{gpu,cpu}.npz
+.venv/bin/python scripts/run_lit_gbm.py --reps 2000
+
+# T10 ICU-category strata
+.venv/bin/python scripts/run_icu_strata.py --parts a,b,c --reps 2000
+
 # both-metrics scoreboard (AUPRC + AUROC for every cached model)
 .venv/bin/python scripts/metrics_table.py --reps 1000
 
 # tests
-.venv/bin/python -m pytest -q   # 524 passing
+.venv/bin/python -m pytest -q   # 578 passing
 ```

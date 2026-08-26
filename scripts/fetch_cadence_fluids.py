@@ -1,13 +1,19 @@
-"""Fetch the hourly cadence and fluid-balance extracts to local Parquet.
+"""Fetch the supplementary MIMIC-IV extracts to local Parquet.
 
-Runs scripts/mimic_cadence.sql and/or scripts/mimic_fluids.sql (see those
-files for the leakage rationale per modality) and writes
-``data/cache/mimic_{cadence,fluids}_hourly.parquet``. Feature construction
-happens afterwards in ``src/modality_features.py``.
+Runs one of scripts/mimic_*.sql (see each file for its leakage rationale) and
+writes the matching ``data/cache/*.parquet``. Feature construction happens
+afterwards in ``src/modality_features.py``.
+
+Despite the name this is the general extract runner: cadence, fluids and resp
+are hourly modality extracts; ``extra_vitals`` adds the DBP/MAP/pCO2/pO2
+channels the published GBM specs need (src/lit_gbm.py) and ``stay_meta`` adds
+the stay-level care-unit / service / diagnosis metadata used for ICU-category
+stratification (src/icu_strata.py).
 
 Usage:
     GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
-        python scripts/fetch_cadence_fluids.py [--which cadence,fluids] [--force]
+        python scripts/fetch_cadence_fluids.py [--which cadence,fluids]
+                                               [--force] [--dry-run]
 """
 
 import argparse
@@ -27,12 +33,16 @@ EXTRACTS = {
                REPO / "data" / "cache" / "mimic_fluids_hourly.parquet"),
     "resp": (REPO / "scripts" / "mimic_resp.sql",
              REPO / "data" / "cache" / "mimic_resp_hourly.parquet"),
+    "extra_vitals": (REPO / "scripts" / "mimic_extra_vitals.sql",
+                     REPO / "data" / "cache" / "mimic_extra_vitals_hourly.parquet"),
+    "stay_meta": (REPO / "scripts" / "mimic_stay_meta.sql",
+                  REPO / "data" / "cache" / "mimic_stay_meta.parquet"),
 }
 
 
-def fetch(which, force=False):
+def fetch(which, force=False, dry_run=False):
     sql_path, out_path = EXTRACTS[which]
-    if out_path.exists() and not force:
+    if out_path.exists() and not force and not dry_run:
         print(f"[skip] {out_path} exists (use --force to refetch)")
         return
     sql = sql_path.read_text()
@@ -41,6 +51,8 @@ def fetch(which, force=False):
         dry_run=True, use_query_cache=False))
     print(f"[{which}] dry-run: would scan "
           f"{dry.total_bytes_processed / 1e9:.2f} GB")
+    if dry_run:
+        return
     df = client.query(sql).result().to_dataframe(
         create_bqstorage_client=USE_BQSTORAGE)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,9 +66,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--which", default="cadence,fluids")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print the byte estimate and stop (sandbox has no billing)")
     args = ap.parse_args()
     for which in args.which.split(","):
-        fetch(which.strip(), force=args.force)
+        fetch(which.strip(), force=args.force, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
