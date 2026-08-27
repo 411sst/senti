@@ -702,3 +702,20 @@ def test_torch_stays_deterministic_for_the_ablation(fitted):
     second = comprehensiveness(**kwargs)
     assert np.array_equal(first["drop_window"], second["drop_window"])
     assert torch.is_grad_enabled()      # we never left grad mode disabled
+
+
+def test_flagship_agents_have_label_and_phrase_coverage():
+    """T17 explains the all-8 flagship: every agent in that config must be
+    nameable in a rationale (label for the prompt, phrases for the extractor),
+    and its own phrases must actually trigger the extractor."""
+    from explain.drivers import AGENT_INHERITS_COMPONENTS, AGENT_LABELS, AGENT_PHRASES
+    from orchestrator.fusion import ORCHESTRATOR_CONFIGS
+
+    flagship = ORCHESTRATOR_CONFIGS["all-8"]
+    for agent in flagship:
+        assert agent in AGENT_LABELS, f"{agent} has no prompt label"
+        assert AGENT_PHRASES.get(agent), f"{agent} has no extractor phrases"
+        assert agent in AGENT_INHERITS_COMPONENTS, agent
+        phrase = AGENT_PHRASES[agent][0].replace("*", "ing")
+        assert agent in named_agents(f"driven by the {phrase}", flagship), \
+            f"{agent}'s own first phrase does not trigger the extractor"

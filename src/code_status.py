@@ -46,22 +46,31 @@ _CPR = re.compile(r"\bDNR\b|\bDNAR\b|do not resuscitate", re.I)
 _INTUB = re.compile(r"\bDNI\b|do not intubate", re.I)
 
 
-def classify(value):
+def classify(value, strict=True):
     """One charted value -> what it forecloses.
 
     Comfort measures only implies both limits: a patient on comfort measures is
     neither resuscitated nor intubated, and coding it as CMO alone would let a
     stay count as unrestricted for the ventilation arm.
+
+    A non-empty value that matches no pattern raises under ``strict`` (the
+    default): silent fallthrough would file an unrecognised DNR variant under
+    "no limitation". Missing values (None/"") are not unknown -- they classify
+    to all-False without raising. ``classify_census`` passes ``strict=False``
+    so it can aggregate every unmapped value before raising its own error.
     """
     v = "" if value is None else str(value)
     cmo = bool(_CMO.search(v))
     full = bool(_FULL.match(v))
-    return {
+    flags = {
         "is_full": full,
         "is_cmo": cmo,
         "limits_cpr": cmo or bool(_CPR.search(v)),
         "limits_intubation": cmo or bool(_INTUB.search(v)),
     }
+    if strict and v.strip() and not any(flags.values()):
+        raise ValueError(f"unmapped code-status value: {value!r}")
+    return flags
 
 
 # Palliative-plan rows are a different KIND of evidence: an open goals-of-care
@@ -82,7 +91,7 @@ def classify_census(values, strict=True):
     """
     unknown = {}
     for v, n in pd.Series(values).value_counts().items():
-        f = classify(v)
+        f = classify(v, strict=False)
         if not any(f.values()):
             unknown[v] = int(n)
     if unknown:
@@ -107,9 +116,12 @@ def load_code_status(path=CODE_STATUS_PATH, strict=True):
     is_cs = df["kind"].eq(CODE_STATUS_KIND)
 
     classify_census(df.loc[is_cs, "value"], strict=strict)
+    # strict=False here: the census above already enforced the caller's policy
+    # with the full aggregated list, which beats dying on the first bad row.
     flags = pd.DataFrame(
-        [classify(v) if k else {"is_full": False, "is_cmo": False,
-                                "limits_cpr": False, "limits_intubation": False}
+        [classify(v, strict=False) if k
+         else {"is_full": False, "is_cmo": False,
+               "limits_cpr": False, "limits_intubation": False}
          for v, k in zip(df["value"], is_cs)], index=df.index)
     flags["is_palliative_plan"] = ~is_cs
     return pd.concat([df, flags], axis=1)

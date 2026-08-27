@@ -68,6 +68,17 @@ def test_dnr_and_dni_are_tracked_separately():
     assert both["limits_cpr"] and both["limits_intubation"]
 
 
+def test_classify_raises_on_an_unknown_value():
+    with pytest.raises(ValueError, match="unmapped"):
+        classify("Limited interventions")
+
+
+def test_missing_value_is_not_unknown():
+    """None/"" are absence, not novelty -- they must not raise."""
+    for v in (None, "", "   "):
+        assert not any(classify(v).values())
+
+
 def test_census_raises_on_an_unrecognised_value():
     with pytest.raises(ValueError, match="unmapped"):
         classify_census(pd.Series(["Full code", "Limited interventions"]))

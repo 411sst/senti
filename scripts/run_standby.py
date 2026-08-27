@@ -48,14 +48,18 @@ def main():
     ap.add_argument("--budget", type=float, default=0.02)
     ap.add_argument("--reps", type=int, default=1000)
     ap.add_argument("--view", default="unit_group")
+    ap.add_argument("--seeds", default="42,1,2,3,4",
+                    help="fusion seeds; full A/B tables print for the first, "
+                         "the rest feed the D stability section")
     args = ap.parse_args()
+    seeds = [int(s) for s in args.seeds.split(",")]
 
     from baselines_mimic import load_splits
     from fusion_common import FusionContext
     from icu_strata import assign_strata
     from run_icu_strata import stay_frame          # scripts/ is on sys.path when run directly
     from standby import (agent_roster, burden_spread, evaluate_standby,
-                         rows_stratum, standby_thresholds)
+                         rows_stratum, standby_thresholds, threshold_stability)
 
     splits = load_splits()
     ctx = FusionContext(splits)
@@ -63,17 +67,27 @@ def main():
 
     th = np.load(REPO / "data/cache/two_head.npz")
     assert (th["stay_id_test"] == ctx.test_ordered["stay_id"].to_numpy()).all()
-    s_val, s_test = th["val_s42"].astype(float), th["test_s42"].astype(float)
 
     strat_val = rows_stratum(ctx.val_ordered, strata, args.view)
     strat_test = rows_stratum(ctx.test_ordered, strata, args.view)
 
-    thresholds = standby_thresholds(ctx, strat_val, s_val, args.budget)
-    rows = evaluate_standby(ctx, strat_test, s_test, thresholds, reps=args.reps)
+    per_seed = {}
+    for seed in seeds:
+        s_val = th[f"val_s{seed}"].astype(float)
+        s_test = th[f"test_s{seed}"].astype(float)
+        thr = standby_thresholds(ctx, strat_val, s_val, args.budget)
+        r = evaluate_standby(ctx, strat_test, s_test, thr, reps=args.reps)
+        per_seed[seed] = {"thresholds": thr, "units": r}
+
+    # The A/B/C tables below report the first seed (the published s42 view);
+    # D quantifies how much the operating points move across the others.
+    thresholds = per_seed[seeds[0]]["thresholds"]
+    rows = per_seed[seeds[0]]["units"]
 
     print("=" * 84)
     print(f"T12 — STANDBY OPERATING POINTS (budget {args.budget:.0%}, "
-          f"view {args.view}, flagship s42)")
+          f"view {args.view}, flagship s{seeds[0]}; "
+          f"stability over seeds {{{args.seeds}}})")
     print("=" * 84)
     print(f"\nA — burden equalization "
           f"(global spread {burden_spread(rows, 'alarm_global'):.1f}x -> "
@@ -120,9 +134,29 @@ def main():
     print("  * top-3 in that unit — lift, not raw AUPRC, so the four-fold "
           "prevalence spread cannot rank the units for the agents")
 
+    stability = threshold_stability(
+        {s: per_seed[s]["thresholds"] for s in seeds})
+    spread_by_seed = {s: burden_spread(per_seed[s]["units"], "alarm_standby")
+                      for s in seeds}
+    print(f"\nD — stability of the operating points across seeds {{{args.seeds}}}\n")
+    hdr = (f"{'unit':<14}{'thr min':>10}{'thr max':>10}{'cv':>8}"
+           f"{'sources':>28}")
+    print(hdr); print("-" * len(hdr))
+    for unit, st in sorted(stability.items()):
+        src = ", ".join(f"{k}x{v}" for k, v in
+                        sorted(st["source_counts"].items()))
+        print(f"{unit:<14}{st['min']:>10.4f}{st['max']:>10.4f}"
+              f"{st['cv']:>8.1%}{src:>28}")
+    print(f"\n  standby burden spread by seed: "
+          + "  ".join(f"s{s} {v:.1f}x" for s, v in spread_by_seed.items()))
+
     OUT_JSON.write_text(json.dumps(
-        {"view": args.view, "budget": args.budget,
-         "thresholds": thresholds, "units": rows,
+        {"view": args.view, "budget": args.budget, "seeds": seeds,
+         "thresholds": thresholds, "units": rows,          # first-seed view
+         "per_seed": {str(s): per_seed[s] for s in seeds},
+         "stability": stability,
+         "standby_burden_spread_by_seed": {str(s): v for s, v
+                                           in spread_by_seed.items()},
          "roster": roster}, indent=2, default=float))
     print(f"\n[saved] {OUT_JSON}")
 

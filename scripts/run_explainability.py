@@ -58,7 +58,19 @@ from text_arm.summaries import TREND_LAG_HOURS  # noqa: E402
 
 LABEL = "label_24h"
 EMB = REPO / "data" / "cache" / "embeddings"
-CACHE = REPO / "data" / "cache" / "rationales.jsonl"
+
+
+def cache_path(config, model):
+    """One rationale cache per (config, model).
+
+    The cache key is (stay_id, hour) and its fingerprint covers only the
+    SYSTEM PROMPT -- so a single shared file would silently serve sentences
+    generated under a different agent set or a different model. (The
+    pre-T17 single-config cache was data/cache/rationales.jsonl.)
+    """
+    import re
+    tag = re.sub(r"[^A-Za-z0-9]+", "_", f"{config}_{model}").strip("_")
+    return REPO / "data" / "cache" / f"rationales_{tag}.jsonl"
 
 
 # --- picking the patient-hours to explain ----------------------------------
@@ -266,12 +278,18 @@ def main():
                     help="alert budget: fraction of test hours over threshold")
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--config", default=None,
+                    help="orchestrator config to explain (e.g. all-8); "
+                         "default: the primary config")
+    ap.add_argument("--json", default=None,
+                    help="dump the metric table to this JSON path")
     ap.add_argument("--smoke", action="store_true",
                     help="print a rendered prompt and stop before the LLM")
     ap.add_argument("--no-verify", action="store_true")
     args = ap.parse_args()
 
-    config, agent_names = resolve_config(emb_dir=EMB)
+    config, agent_names = (resolve_config(preferred=args.config, emb_dir=EMB)
+                           if args.config else resolve_config(emb_dir=EMB))
     splits = load_splits()
     train, val, test = splits["train"], splits["val"], splits["test"]
     print(f"[config] {config} -> {agent_names}")
@@ -327,7 +345,15 @@ def main():
 
     # --- Part 1: generate -------------------------------------------------
     t0 = time.time()
-    cache = generate_rationales(contexts, CACHE, model=args.model)
+    from explain.rationales import SYSTEM_PROMPT as RATIONALE_SYSTEM
+    from text_arm.llm_orchestrator import OllamaRunner
+    # think=False: a reasoning model (gemma4) otherwise spends the whole
+    # num_predict budget deliberating and returns an empty sentence; harmless
+    # for non-reasoning models.
+    runner = OllamaRunner(model=args.model, system=RATIONALE_SYSTEM,
+                          num_predict=90, think=False)
+    cache = generate_rationales(contexts, cache_path(config, args.model),
+                                model=args.model, runner=runner)
     texts = cache.texts_for(contexts)
     elapsed = time.time() - t0
     print(f"[rationale] {elapsed:.0f}s "
@@ -404,6 +430,31 @@ def main():
     arm_table(results, order)
     sim_table(results, order)
     gap_table(results)
+
+    if args.json:
+        import json
+
+        def clean(v):
+            """JSON-safe: numpy arrays -> lists, numpy scalars -> floats."""
+            if isinstance(v, dict):
+                return {k: clean(x) for k, x in v.items()}
+            if isinstance(v, (list, tuple)):
+                return [clean(x) for x in v]
+            if isinstance(v, np.ndarray):
+                return v.tolist()
+            if isinstance(v, (np.floating, np.integer)):
+                return float(v)
+            return v
+
+        payload = {"config": config, "model": args.model,
+                   "agents": list(agent_names),
+                   "n_rows": len(rows), "n_fired": int(fired.sum()),
+                   "arms": {name: clean({k: v for k, v in r.items()
+                                         if not k.startswith("rows_")
+                                         and k != "driver_sets"})
+                            for name, r in results.items()}}
+        Path(args.json).write_text(json.dumps(payload, indent=2, default=float))
+        print(f"\n[saved] {args.json}")
 
 
 if __name__ == "__main__":

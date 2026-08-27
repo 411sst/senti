@@ -18,6 +18,7 @@ from standby import (
     evaluate_standby,
     rows_stratum,
     standby_thresholds,
+    threshold_stability,
 )
 
 LABEL = "label_24h"
@@ -205,3 +206,21 @@ def test_agent_roster_flags_underpowered_units():
     out = agent_roster(ctx, strat_test, {"a": np.zeros(len(ctx.y_test))},
                        min_pos=10 ** 6)
     assert out["x"]["underpowered"]
+
+
+def test_threshold_stability_summarises_spread_and_source_flips():
+    per_seed = {
+        42: {"a": {"thr_model_budget": 0.10, "source": "unit"},
+             "b": {"thr_model_budget": 0.20, "source": "unit"}},
+        1:  {"a": {"thr_model_budget": 0.12, "source": "unit"},
+             "b": {"thr_model_budget": 0.20, "source": "global-fallback"}},
+        2:  {"a": {"thr_model_budget": 0.14, "source": "unit"},
+             "b": {"thr_model_budget": 0.20, "source": "unit"}},
+    }
+    st = threshold_stability(per_seed)
+    assert st["a"]["min"] == 0.10 and st["a"]["max"] == 0.14
+    assert st["a"]["n_seeds"] == 3 and st["a"]["cv"] > 0
+    # a perfectly stable unit has zero spread ...
+    assert st["b"]["cv"] == pytest.approx(0.0, abs=1e-12)
+    # ... but its source flip across seeds is still surfaced
+    assert st["b"]["source_counts"] == {"unit": 2, "global-fallback": 1}

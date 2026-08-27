@@ -80,7 +80,7 @@ def oof_teacher(bank, train, val, seed, epochs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", default="42,1,2", help="comma list")
+    ap.add_argument("--seeds", default="42,1,2,3,4", help="comma list")
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--oof", action="store_true",
                     help="also produce out-of-fold train risks (distillation "

@@ -90,7 +90,7 @@ def build_gbm_agent_cache(splits, device="cuda"):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", default="42,1,2")
+    ap.add_argument("--seeds", default="42,1,2,3,4")
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--reps", type=int, default=2000)
     ap.add_argument("--auprc-reps", type=int, default=1000)

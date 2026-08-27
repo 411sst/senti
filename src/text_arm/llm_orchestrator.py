@@ -99,26 +99,40 @@ class OllamaRunner:
     """
 
     def __init__(self, model=DEFAULT_MODEL, timeout=120, temperature=0.0,
-                 system=SYSTEM_PROMPT, num_predict=8):
+                 system=SYSTEM_PROMPT, num_predict=8, num_ctx=None,
+                 think=None):
         self.model = model
         self.timeout = timeout
         self.temperature = temperature
         self.system = system
         self.num_predict = num_predict
+        self.num_ctx = num_ctx               # None -> ollama's model default
+        # think=False disables a reasoning model's hidden deliberation. A
+        # capped num_predict otherwise gets consumed ENTIRELY by the think
+        # block and the visible response comes back empty (observed with
+        # gemma4:12b: eval_count == num_predict, response == ""). Harmless
+        # for non-reasoning models (verified llama3.1/qwen2.5, ollama 0.30).
+        self.think = think                   # None -> field omitted
 
     def generate(self, prompt):
         """Return the model's raw reply for one prompt."""
-        payload = json.dumps({
+        options = {"temperature": self.temperature,
+                   "num_predict": self.num_predict,
+                   "top_p": 1.0, "seed": 42}
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        body = {
             "model": self.model,
             "prompt": prompt,
             "system": self.system,
             "stream": False,
             # temperature 0 for reproducibility: the ablation should not turn on
             # sampling luck.
-            "options": {"temperature": self.temperature,
-                        "num_predict": self.num_predict,
-                        "top_p": 1.0, "seed": 42},
-        })
+            "options": options,
+        }
+        if self.think is not None:
+            body["think"] = self.think
+        payload = json.dumps(body)
         result = subprocess.run(
             ["curl", "-s", "--max-time", str(self.timeout),
              "http://localhost:11434/api/generate",

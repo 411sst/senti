@@ -36,12 +36,21 @@ report only ranking metrics, distillation papers never report lead time.
    project's new best ranking score: test AUPRC 0.291 > 0.287, paired CI
    clear of zero 3/3 seeds. The earliness-constrained stack Pareto-improves
    the orchestrator (0.262 at the full +1.7h@2%).
-5. **The final flagship is two-head ALL-8** (T9): mean test AUPRC **0.3076**
-   — above the equal-information GBM's 0.287 with the paired CI clear of
-   zero on **3/3 seeds** — at **+1.5h mean lead@2% (58% win)**, with the
-   death component restored to parity (0.184 vs the GBM's 0.189) and a
-   death-specific head that ranks death at **0.344, 1.8× the GBM**. It
-   supersedes ALL-8 (T8), all-7 (T6), ORCH+GBM and CONSTR-1H (T1/T4).
+5. **The final flagship is two-head ALL-8** (T9): mean test AUPRC **0.3081
+   over five seeds** — above the equal-information GBM's 0.287 with the
+   paired CI clear of zero on **5/5 seeds** — with the death component
+   restored to parity (0.184 vs the GBM's 0.189) and a death-specific head
+   that ranks death at **0.342, 1.8× the GBM**. It supersedes ALL-8 (T8),
+   all-7 (T6), ORCH+GBM and CONSTR-1H (T1/T4). **The timing edge is
+   seed-fragile where the ranking edge is not**: lead@2% is
+   +1.0/+2.0/+1.5/+0.0/+0.0h (win 57/59/58/46/50%) across seeds
+   {42,1,2,3,4} — the "+1.5h @58%" previously quoted was the flattering
+   face of a 3/5-consistent effect, caught when the chain was extended to
+   five seeds (2026-08-27). The honest statement: mean +0.9h, positive in
+   3/5 seeds, null in two. T16 sharpens this further: on death stays the
+   surviving lead concentrates where a care-limitation was already
+   documented (notes included), and drops to +0.5h at 50% win on the
+   truly-undecided remainder.
 6. **Lead at fixed alarm volume is zero-sum** (T5): even a spike-preserving
    exceedance ensemble OR-ed with the parent reproduces the parent
    cell-for-cell — the parent's crossings already fill the budget, and
@@ -95,7 +104,9 @@ over single-head ALL-8: one extra forward pass across the same cached bank.
 ## Discrimination scoreboard — both metrics, every model
 
 Test split (361,229 hours, prevalence 4.74%); multi-seed rows are means over
-orchestrator seeds {42, 1, 2}. Regenerate with
+orchestrator seeds {42, 1, 2, 3, 4} where the cache carries five seeds (the
+flagship chain, re-run 2026-08-27) and {42, 1, 2} for rows whose caches remain
+the 3-seed historical record. Regenerate with
 `python scripts/metrics_table.py` (CIs are patient-clustered, 1000 reps).
 
 **Read AUPRC first.** At 4.7% prevalence AUROC is dominated by the vast
@@ -174,10 +185,19 @@ diagnosis stated in the literature's preferred metric.
   once per reported rung. Parents are re-scored under this same protocol, so
   their rows here differ slightly from results.md (which froze on full val).
 - **Seeds.** Orchestrator seed noise exceeds typical fusion deltas
-  (results_ecg.md), so every orchestrator-involving quantity runs at seeds
-  {42, 1, 2} (core-3+meas val AUPRC 0.2368 / 0.2415 / 0.2279), with all
-  fusion rules re-fit within seed; tables report mean + per-seed sign
-  consistency. The GBM is seed-fixed.
+  (results_ecg.md), so every orchestrator-involving quantity runs multi-seed,
+  with all fusion rules re-fit within seed; tables report mean + per-seed sign
+  consistency. The GBM is seed-fixed. T1–T8 were produced at seeds {42, 1, 2}
+  (core-3+meas val AUPRC 0.2368 / 0.2415 / 0.2279) and their tables stand as
+  that historical record; on 2026-08-27 the flagship chain (core-3+meas →
+  +gbm → ALL-7 → ALL-8 → two-head) was re-run end-to-end at seeds
+  {42, 1, 2, 3, 4} with the original three seeds reproducing bit-identically
+  (regression pin), so the scoreboard, T12 and T15 now report five seeds.
+- **Selection optimism.** Candidate configurations were *selected* on their
+  V_freeze deltas across many attempts over this program, so quoted V_freeze
+  margins carry val-selection optimism (the same optimism `tune_gbm` accepts).
+  Test-set numbers are computed once per shipped configuration and are the
+  honest estimate; nothing was ever selected on test.
 - **Raw scores into fusion; fusion calibrates.** Blending needs a common
   probability scale, so each experiment fits its own isotonics on V_fit.
   **Isotonic plateaus are strictified** with a 1e-9 rank tiebreak in
@@ -576,8 +596,10 @@ Two mechanisms fall out, both headline-grade:
 Caveat carried from the design: death is itself treatment-mediated
 (DNR/withdrawal), so death-only rows are a lower bound on physiological
 signal; comfort-care-excluded sensitivity is listed future work.
-**(Closed in T11: the exclusion is now computed from charted code status,
-and the lead survives it.)**
+**(Closed in T11 with charted code status — the lead survived that
+exclusion. REVISED in T16: with note-documented decisions included, the
+death-stay lead concentrates on decided stays and is null on the
+truly-undecided remainder. The caveat was right.)**
 
 ## T8 — Respiratory-support agent: ALL-8 beats the GBM outright
 
@@ -646,23 +668,33 @@ beyond each head's own isotonic.
 | 42 | 0.3141 | spans 0 | **[+0.0157, +0.0386]** | 0.182 | 0.351 | +1.0 | 57% | +1.0 (51%) |
 | 1 | 0.3069 | spans 0 | **[+0.0085, +0.0311]** | 0.181 | 0.338 | +2.0 | 59% | +2.0 (56%) |
 | 2 | 0.3017 | spans 0 | **[+0.0034, +0.0255]** | 0.188 | 0.343 | +1.5 | 58% | +1.0 (52%) |
-| **mean** | **0.3075** | equal | **ABOVE 3/3** | **0.184** | **0.344** | **+1.5** | **58%** | **+1.3** |
+| 3 | 0.3054 | spans 0 | **[+0.0066, +0.0301]** | 0.185 | 0.342 | +0.0 | 46% | +0.0 (41%) |
+| 4 | 0.3125 | spans 0 | **[+0.0150, +0.0362]** | 0.183 | 0.338 | +0.0 | 50% | +0.0 (47%) |
+| **mean (5 seeds)** | **0.3081** | equal | **ABOVE 5/5** | **0.184** | **0.342** | **+0.9** | **54%** | **+0.8** |
 
-Composite AUROC 0.8221 [0.813, 0.840] (vs FAIR+TRAJ 0.807, ALL-8 0.8212);
-the D-head's death AUROC is **0.9462** [0.928, 0.960].
+Composite AUROC 0.8219 [0.813, 0.840] (vs FAIR+TRAJ 0.807, ALL-8 0.8213);
+the D-head's death AUROC is **0.946** [0.928, 0.960]. Seeds 3 and 4 were
+added 2026-08-27 (chain re-run; published seeds reproduce bit-identically).
 
-**The fix lands on every axis it was designed for, and costs nothing:**
+**What the fix delivers, restated at five seeds:**
 
 1. **The death deficit is closed.** Component death AUPRC goes 0.096 → 0.184
-   — parity with the fair GBM's 0.189, from a model that also alarms 1–2h
-   earlier. The D-head *alone* reaches 0.344 death AUPRC, **1.8× the GBM's
-   0.189**: the representation was never the problem, the supervision was.
+   — parity with the fair GBM's 0.189. The D-head *alone* reaches 0.342 mean
+   death AUPRC, **1.8× the GBM's 0.189**: the representation was never the
+   problem, the supervision was. This result is 5/5 seed-stable.
 2. **Ranking improves against the bar.** Two-head beats FAIR+TRAJ with the
-   paired CI clear of zero on **3/3 seeds** — ALL-8 managed 2/3.
-3. **The lead improves too.** +1.5h mean at 58% win, versus ALL-8's +1.0h at
-   53–58%; the death-stay lead (T7's armor) holds at +1.3h mean.
+   paired CI clear of zero on **5/5 seeds** — ALL-8 managed 2/3. This is the
+   flagship's sturdiest claim.
+3. **The lead does NOT survive five seeds unweakened.** The 3-seed picture
+   read "+1.5h mean at 58% win"; seeds 3 and 4 are both null (+0.0h at
+   46%/50%). Five-seed mean: **+0.9h at 54% win, sign-consistent 3/5** — the
+   timing edge is real in most seeds but is seed-fragile in a way the
+   ranking edge is not, and claims built on it must carry that caveat
+   (the headline and the clinician artifact now do). The death-stay lead
+   softens identically (+0.8h mean, 3/5).
 4. Composite AUPRC is statistically indistinguishable from ALL-8 (CIs span
-   zero on 3/3) — the death-ranking and timing gains are free.
+   zero on 5/5) — the death-ranking gain is free; the timing gain is
+   seed-dependent.
 
 **Two-head ALL-8 is the final flagship.** Deployment cost is one extra
 forward pass over the same cached bank; both heads share the agents, and the
@@ -898,7 +930,13 @@ wrong object: what needs to be per-unit is the operating point, and for the two
 categories with no unit at all (urology, burns) there is not enough data here to
 say anything, honestly, in either direction.
 
-## T11 — Charted code status: the death-stay lead survives the DNR exclusion
+## T11 — Charted code status: the death-stay lead survives the DNR exclusion (revised by T16)
+
+> **2026-08-27, T16:** this section's conclusion was computed from CHARTED
+> evidence only, and 71% of death stays die post-ICU where the chart cannot
+> see the decision. With note-documented decisions folded in, the lead does
+> NOT survive the fuller exclusion — see T16's re-partitioned table. The
+> section below stands as the charted-evidence record.
 
 T7 ended on a caveat it could not act on: death is treatment-mediated
 (DNR/withdrawal of care), so any lead measured on death stays might be
@@ -1060,6 +1098,29 @@ overlaps heavily, discrimination barely separates across units, and T10's
 Gao et al. citation shows a specialty model transferring across whole
 databases with <4% loss. Six thresholds, one model.
 
+### D — the operating points are stable across seeds (added 2026-08-27)
+
+The six per-unit thresholds above were frozen from ONE seed's scores (s42).
+When the fusion net is retrained at seeds {42, 1, 2, 3, 4} and the freezing
+repeated per seed, the deployment thresholds barely move and no unit ever
+flips between its own threshold and the global fallback:
+
+| unit | thr_model_budget min–max | CV | source (5 seeds) |
+|---|---|---|---|
+| cardiac | 0.2844–0.3072 | 3.1% | unit ×5 |
+| med-surg | 0.2822–0.3101 | 3.4% | unit ×5 |
+| medical | 0.3234–0.3325 | 1.0% | unit ×5 |
+| neuro | 0.1965–0.2089 | 2.1% | unit ×5 |
+| surgical | 0.2678–0.3007 | 3.8% | unit ×5 |
+| trauma | 0.2678–0.2913 | 2.9% | unit ×5 |
+| unspecified | (global fallback) | 3.0% | global-fallback ×5 |
+
+The burden-equalization headline is likewise seed-stable: standby burden
+spread 1.7× / 1.6× / 1.7× / 1.7× / 1.5× across the five seeds (global spread
+5.3×). The T12 design — six numbers, one model — does not ride on a lucky
+seed. (`scripts/run_standby.py --seeds`, per-seed sections + stability block
+in `data/cache/standby_report.json`.)
+
 ## T13 — Condition → agent: which situation correlates best to which agents
 
 T12 answered "standby" at the unit level; the clinician's actual meaning,
@@ -1214,15 +1275,26 @@ Standalone weakness is not disqualifying (fluid debuted at 0.093 and earned
 its seat), so both went through the ship bar: fusion contribution over the
 ALL-8 parent, within seed, CI clear of zero.
 
-| cell | val Δ vs ALL-8 (s42 / s1 / s2) | test Δ 95% CI |
-|---|---|---|
-| ALL-8 + neuro | −0.0075 / +0.0011 / +0.0023 | one negative, two span zero |
-| ALL-8 + infection | −0.0105 / −0.0003 / +0.0015 | one negative, two span zero |
-| ALL-8 + both | −0.0120 / +0.0026 / −0.0013 | one negative, two span zero |
+The table below is the 2026-08-27 five-seed re-run, and it REPLACES the
+originally committed three-seed table, which turned out to have been computed
+against pre-final neuro_status emissions (the pain_max valuenum refetch and
+retrain landed between that eval and the commit — caught when the five-seed
+re-run failed to reproduce the old s42 cell and a single-cell rerun
+reproduced the new number exactly). Verdict unchanged; margins now exact.
 
-**Neither clears the bar on any seed; both are benched**, joining notes and
-ECG as retained-not-shipped modalities with a standing re-entry condition (a
-positive val contribution with the CI clear of zero).
+| cell | val Δ vs ALL-8 (s42/s1/s2/s3/s4) | test Δ 95% CI per seed |
+|---|---|---|
+| ALL-8 + neuro | +0.0030 / +0.0023 / +0.0020 / −0.0004 / −0.0015 | [−.0018,+.0042] / **[+.0012,+.0077]** / [−.0042,+.0013] / [−.0041,+.0024] / **[−.0064,−.0003]** |
+| ALL-8 + infection | −0.0098 / −0.0003 / +0.0010 / −0.0039 / −0.0015 | **[−.0165,−.0091]** / [−.0016,+.0037] / [−.0045,+.0008] / **[−.0083,−.0018]** / **[−.0056,−.0001]** |
+| ALL-8 + both | −0.0117 / +0.0024 / −0.0008 / −0.0006 / +0.0007 | **[−.0189,−.0089]** / [−.0029,+.0058] / [−.0039,+.0012] / [−.0060,+.0020] / [−.0026,+.0037] |
+
+**Nothing clears the bar; both stay benched.** Neuro is the nearest miss —
+val Δ positive in 3/5 seeds but averaging +0.0011, with test deltas clearing
+zero once in each direction (s1 positive, s4 negative): noise around zero,
+not signal. Infection is negative outright (3/5 test CIs below zero). Both
+join notes and ECG as retained-not-shipped modalities with the standing
+re-entry condition (a positive val contribution with the CI clear of zero,
+sign-consistent across seeds).
 
 Why the census looked better than the fusion turned out, best reading:
 **redundancy with cadence.** The cadence agent already counts lab draws and
@@ -1239,6 +1311,140 @@ caches stay maintained (`train_new_agents.py --agent neuro_status,infection`;
 per-component numbers localize any future value — neuro_status's death
 component (0.076) is its strongest suit, worth revisiting if a death-weighted
 two-head bank is ever re-opened.
+
+## T16 — Goals-of-care from discharge notes: the decided-outcome audit, completed
+
+T11 closed the T7 caveat with charted code status and pre-committed the
+extension the moment MIMIC-IV-Note access landed: fill the uncharted gap from
+notes, with the charted stays as a free validation set. Access landed
+2026-08-27; this is that extension. **Audit-only, like code status**: verdicts
+partition evaluation tables and never touch a model input (guard test:
+`tests/test_goc_notes.py`); notes never leave the machine — the readers are
+local ollama models (PhysioNet DUA).
+
+**Populations.** 2,718 death-first stays: 1,029 with charted code status /
+1,689 without. 1,913 have a discharge summary (one 3.5 GB-scan BigQuery pull,
+`scripts/fetch_goc_notes.py`), 805 do not. Critically, **1,939 (71%) died
+AFTER leaving the ICU** — and the charted extract reads ICU chartevents only,
+a fact that decides how the validation below must be read.
+
+**Method** (`src/goc_notes.py`, structured-first): a regex gate extracts
+±240-char excerpts around goals-of-care vocabulary (zero-hit notes are
+verdicted "no documentation" with no LLM call); three local readers from
+three model families — **qwen2.5-coder:14b, llama3.1:8b, gemma4:12b** —
+adjudicate each stay's excerpts into strict JSON
+(`{any_limitation, cmo ∈ yes/no/unsure}` + an evidence quote), temp 0,
+one parse retry then "unsure", append-only per-model verdict caches.
+(gemma4 is a reasoning model in this ollama build and returns an empty
+string when its hidden think block eats the token budget — probed, fixed
+with `think: false`, documented in `OllamaRunner`. deepseek-r1:14b also
+works but spends ~8× tokens/verdict; gemma4:e4b shares the think issue.)
+
+**Validation — the chart is only authoritative where the patient died in the
+ICU.** On all 832 charted+noted death stays the three readers agree with
+each other 97.7–98.4% yet with the charted field only ~56% (κ≈0.14) — and
+the disagreement is one-directional (readers say "limited", chart silent).
+Stratifying by where death occurred explains it: 87% of those disagreements
+sit on post-ICU deaths (85% of them CMO claims — the ward's terminal
+transition, structurally invisible to ICU chartevents). On **in-ICU deaths**,
+where chart and note describe the same window:
+
+| reader | n (in-ICU) | accuracy | sens | spec | κ |
+|---|---|---|---|---|---|
+| gemma4:12b | 240 | 0.729 | 0.873 | 0.288 | **0.181** |
+| qwen2.5-coder:14b | 238 | 0.731 | 0.878 | 0.276 | 0.174 |
+| llama3.1:8b | 241 | 0.730 | 0.879 | 0.271 | 0.171 |
+
+Winner by in-ICU κ: **gemma4:12b** (verdict source), qwen as the
+disagreement check (contradiction → unsure). Residual chart-negative
+disagreement even in-ICU is consistent with notes narrating discussions and
+decisions that never became formal charted orders; note-verdicts are
+therefore reported as their own evidence category ("note-documented"), never
+as chart-equivalent.
+
+**Applied to the 1,689 uncharted death stays**: 918 note-documented
+limitations / 154 documented no-limitation / 9 unsure / 608 without a note.
+The charted field had been silent on all of these; the notes answer for 64%
+of them.
+
+**The re-partitioned death-stay race (the T11 table, note-informed).** Same
+globally frozen thresholds, same 150 jointly-caught test-split death stays,
+flagship s42 (bit-identical to published, per the seed pin); only the
+summary split changes:
+
+| subgroup | n | median lead | win |
+|---|---|---|---|
+| all death stays | 150 | +1.0h | 51% |
+| charted, decision before death | 34 | 0.0h | 32% |
+| charted, no limitation | 27 | 0.0h | 48% |
+| uncharted, note: limitation | 48 | **+2.0h** | **65%** |
+| uncharted, note: no limitation | 3* | +1.0h | 67% |
+| uncharted, unsure or no note | 38 | +0.5h | 50% |
+| **EXCLUDING all decided** | **68** | **+0.5h** | **50%** |
+
+*fewer than 20 pairs — reported for completeness, not evidence.
+
+**This revises T11's conclusion.** T11, with charted evidence only, found the
+death-stay lead survived the exclusion (+1.0h / 56% on the 116 stays that
+were not charted-decided). The notes reveal that most of that surviving lead
+sat on stays whose decision was documented in the summary but never charted:
+the model's biggest wins concentrate exactly there (+2.0h at 65% on
+note-decided stays), and on the 68 stays with no documented decision anywhere
+the lead is **+0.5h at 50% win — null**. The honest reading of the death arm:
+the flagship's early death-stay alarms substantially track the care-pattern
+signature of a decision humans had already made, not physiology preceding an
+undecided death. (Vent/vaso stays — 84% of events — are untouched by this;
+the composite lead numbers already carry their own 5-seed caveat, T9.)
+
+Caveats: the extractor reads a document written after death and cannot time
+the decision against the alarm hour, so "decided" here means "documented as
+decided during the admission"; in-ICU specificity is 0.27–0.29, so
+note-verdicts on chart-silent stays carry noise; and 608 uncharted death
+stays have no note at all — their cell stays honestly labeled unknown.
+Reproduce: `data/cache/goc_report.json`, `logs/goc_report.log`.
+
+## T17 — Explanation cards for the flagship: measured, not asserted
+
+The clinician-facing question "why did Sentinel fire?" has a structured
+answer before any language model is involved: the fusion's attention over
+the eight agents, each agent's calibrated risk, the NEWS2 sub-scores, and
+the 4h vital trends. The explainability harness (built in the notes-arm era)
+renders those into a prompt and asks a local model for ONE sentence naming
+the drivers — withholding the fused risk and the alarm flag, so the sentence
+cannot leak the decision — then scores the sentences on faithfulness metrics
+with two anti-gaming baselines (the same sentences shuffled to wrong rows;
+one fixed generic sentence). T17 ports that harness to the shipped flagship
+(`--config all-8`; per-(config, model) rationale caches — the old shared
+cache would have silently served pre-flagship sentences) and benches the
+same three local readers on 200 sampled patient-hours (100 fired / 100
+quiet, disjoint stays, seed-42 refit verified against the T8 rung).
+
+| reader (FAITHFUL arm) | comp@win | rel@win | suff↓ | attn ρ / @1 | n2 ρ / @1 | halluc↓ | sim AUROC (scrubbed) |
+|---|---|---|---|---|---|---|---|
+| **gemma4:12b** | **0.386** | **79.5%** | **0.219** | **0.290 / 0.97** | **0.654 / 0.78** | **0.13** | **0.836 (0.823)** |
+| llama3.1:8b | 0.372 | 76.3% | 0.234 | 0.209 / 0.71 | 0.296 / 0.40 | 0.27 | 0.776 (0.775) |
+| qwen2.5-coder:14b | 0.343 | 71.0% | 0.262 | 0.176 / 0.72 | 0.374 / 0.47 | 0.23 | 0.723 (0.698) |
+
+Every reader beats both baselines on every metric family with the paired
+bootstrap CI clear of zero (e.g. gemma vs RANDOM: comp@win +0.082
+[+0.055, +0.112], hallucination −0.311 [−0.397, −0.218], n2 top-1 +0.354
+[+0.214, +0.490]; RANDOM's simulatability sits at/below chance). **Winner:
+gemma4:12b, on every column** — it names the top-attention agent in 97% of
+cards, the top NEWS2 sub-score at 0.78, hallucinates unsupported drivers at
+half the others' rate while naming MORE drivers per sentence (3.8 vs 2.4–2.7),
+its named drivers account for ~80% of the alert's ablatable risk mass, and a
+surrogate recovers the alarm decision from its card text at 0.836 AUROC —
+0.823 even with numerals and risk-vocabulary scrubbed, so the signal is the
+named drivers, not tell-words. Generation cost ~0.7s/card on the local GPU.
+
+So the same local model empirically wins both LLM seats (T16 extraction by
+in-ICU κ, T17 cards by the full bench) — with its reasoning mode OFF in both.
+Caveat: v1 cards explain the single-head ALL-8 fusion, the shared substrate
+of the two-head composite; per-head cards (a D-head card naming death-
+specific drivers) are the natural next step. medgemma:4b slots in as a
+future medical-domain reader on both benches, measurable the same way.
+Reproduce: `data/cache/explain_report_all8_{gemma,llama,qwen}.json`,
+`logs/t17_{gemma,llama,qwen}.log`.
 
 ## Architecture audit (post-T8 sweep)
 
@@ -1273,9 +1479,10 @@ execute it in one line.
 ## Reproduce
 
 ```bash
-# Phase 0 — substrate
+# Phase 0 — substrate (flagship chain re-run at 5 seeds on 2026-08-27;
+# seeds 42/1/2 reproduce the published arrays bit-identically)
 .venv/bin/python src/baselines_fair.py --variants FAIR,FAIR+TRAJ --device cuda --reps 1000
-.venv/bin/python scripts/train_orch_meas_seeds.py --seeds 42,1,2 --oof
+.venv/bin/python scripts/train_orch_meas_seeds.py --seeds 42,1,2,3,4 --oof
 
 # Bundle 4a/4b
 .venv/bin/python src/fusion_ladder.py --stage all --reps 2000 --auprc-reps 1000
@@ -1290,7 +1497,7 @@ execute it in one line.
 .venv/bin/python src/distill_lead.py --seeds 42,1,2 --device cuda
 
 # T4 bridge experiments
-.venv/bin/python scripts/orch_gbm_agent.py --seeds 42,1,2 --device cuda
+.venv/bin/python scripts/orch_gbm_agent.py --seeds 42,1,2,3,4 --device cuda
 .venv/bin/python src/gbm_agents.py --variants risks,risktraj,latent,orch --seeds 42,1,2 --device cuda
 .venv/bin/python src/gbm_agents.py --variants orchonly --seeds 42,1,2 --device cuda
 
@@ -1303,7 +1510,7 @@ for s in 42 1 2; do .venv/bin/python src/latentcast.py exceed --seeds $s \
 GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   .venv/bin/python scripts/fetch_cadence_fluids.py
 .venv/bin/python scripts/train_new_agents.py
-.venv/bin/python scripts/eval_new_agents.py --seeds 42,1,2
+.venv/bin/python scripts/eval_new_agents.py --seeds 42,1,2,3,4
 
 # T7 decomposition
 .venv/bin/python scripts/run_decomposition.py --part i,ii --device cuda
@@ -1313,10 +1520,10 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   .venv/bin/python scripts/fetch_cadence_fluids.py --which resp
 .venv/bin/python scripts/train_new_agents.py --agent resp,resp_cap4
 .venv/bin/python scripts/eval_new_agents.py --parents all7 --agents resp,respcap4 \
-  --out data/cache/resp_fusion.npz
+  --out data/cache/resp_fusion.npz --seeds 42,1,2,3,4
 
 # T9 two-head fix (the final flagship)
-.venv/bin/python scripts/two_head.py --seeds 42,1,2
+.venv/bin/python scripts/two_head.py --seeds 42,1,2,3,4
 
 # T10 literature-anchored GBMs (XGBoost on GPU and LightGBM on CPU, in parallel)
 GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
@@ -1337,8 +1544,9 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   .venv/bin/python scripts/fetch_cadence_fluids.py --which code_status
 .venv/bin/python scripts/run_code_status.py
 
-# T12 standby operating points (burden equalization, per-unit race, roster)
-.venv/bin/python scripts/run_standby.py --budget 0.02
+# T12 standby operating points (burden equalization, per-unit race, roster,
+# cross-seed threshold stability)
+.venv/bin/python scripts/run_standby.py --budget 0.02 --seeds 42,1,2,3,4
 
 # T13 condition -> agent roster (sepsis, resp failure, pneumonia, AKI, HF, GI bleed)
 .venv/bin/python scripts/run_condition_roster.py
@@ -1351,11 +1559,26 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   .venv/bin/python scripts/fetch_cadence_fluids.py --which neuro_status,infection
 .venv/bin/python scripts/train_new_agents.py --agent neuro_status,infection
 .venv/bin/python scripts/eval_new_agents.py --parents all8 \
-  --agents neuro,infect,both2 --out data/cache/tier1_fusion.npz
+  --agents neuro,infect,both2 --out data/cache/tier1_fusion.npz --seeds 42,1,2,3,4
+
+# T16 goals-of-care from discharge notes (audit-only; local LLMs, never a feature)
+GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
+  .venv/bin/python scripts/fetch_goc_notes.py --dry-run   # then without --dry-run
+.venv/bin/python scripts/run_goc_extraction.py --phase validate
+.venv/bin/python scripts/run_goc_extraction.py --phase apply
+.venv/bin/python scripts/run_goc_extraction.py --phase report
+
+# T17 flagship explanation cards + faithfulness bench (three local models)
+.venv/bin/python scripts/run_explainability.py --config all-8 --model llama3.1:8b \
+  --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_llama.json
+.venv/bin/python scripts/run_explainability.py --config all-8 --model qwen2.5-coder:14b \
+  --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_qwen.json
+.venv/bin/python scripts/run_explainability.py --config all-8 --model gemma4:12b \
+  --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_gemma.json
 
 # both-metrics scoreboard (AUPRC + AUROC for every cached model)
 .venv/bin/python scripts/metrics_table.py --reps 1000
 
 # tests
-.venv/bin/python -m pytest -q   # 618 passing
+.venv/bin/python -m pytest -q   # 640 passing
 ```

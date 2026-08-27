@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO / "src"))
 import numpy as np
 
 CACHE = REPO / "data" / "cache"
-SEEDS = (42, 1, 2)
+SEEDS = (42, 1, 2, 3, 4)  # flagship chain; historical 3-seed caches degrade gracefully
 
 # (label, npz, key-template) -- {s} expands over SEEDS for multi-seed rows.
 SPEC = [

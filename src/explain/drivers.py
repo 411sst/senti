@@ -40,6 +40,10 @@ from text_arm.summaries import (
 AGENT_LABELS = {
     "vitals_tcn": "vitals-TCN", "news2": "NEWS2", "labs": "labs",
     "notes": "notes", "ecg": "ECG",
+    # The flagship (all-8) additions -- T17 explains the shipped agent set.
+    "ecg_meas": "ECG measurements", "gbm": "GBM risk model",
+    "cadence": "charting cadence", "fluid": "fluids and urine output",
+    "resp": "respiratory support",
 }
 
 COMPONENT_LABELS = {
@@ -96,6 +100,22 @@ AGENT_PHRASES = {
     "notes": ("notes", "clinical note", "nursing note", "radiology",
               "documentation", "narrative", "chart note"),
     "ecg": ("ecg", "ekg", "electrocardiogram", "electrocardiographic"),
+    # NB: bare "ecg"/"ekg" belongs to ecg_meas in the flagship config -- the
+    # raw-waveform agent is benched, so the words cannot collide in one bank.
+    "ecg_meas": ("ecg", "ekg", "electrocardiogram", "electrocardiographic",
+                 "ecg measurements", "qt", "qtc", "qrs", "pr interval",
+                 "conduction"),
+    "gbm": ("gbm", "gradient boost", "gradient-boost", "boosted", "xgboost",
+            "risk model", "tabular model"),
+    "cadence": ("cadence", "charting", "charting frequency",
+                "measurement frequency", "observation frequency",
+                "monitoring intensity", "monitoring frequency",
+                "nursing attention"),
+    "fluid": ("fluid", "fluids", "urine", "urine output", "oliguri*",
+              "anuri*", "fluid balance", "diuresis", "intake and output"),
+    "resp": ("respiratory support", "ventilat*", "airway support",
+             "high-flow", "high flow", "bipap", "cpap", "niv",
+             "non-invasive", "noninvasive"),
 }
 
 AGENT_INHERITS_COMPONENTS = {
@@ -104,6 +124,12 @@ AGENT_INHERITS_COMPONENTS = {
     "labs": (),
     "notes": (),
     "ecg": (),
+    "ecg_meas": (),
+    "gbm": (),
+    # naming supplemental oxygen names the resp-support agent's domain
+    "resp": ("oxygen",),
+    "cadence": (),
+    "fluid": (),
 }
 
 

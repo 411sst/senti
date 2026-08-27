@@ -150,6 +150,37 @@ def burden_spread(rows, key):
     return float(max(vals) / min(vals)) if len(vals) >= 2 else float("nan")
 
 
+def threshold_stability(per_seed_thresholds, key="thr_model_budget"):
+    """Cross-seed spread of the per-unit deployment thresholds.
+
+    ``per_seed_thresholds`` is ``{seed: standby_thresholds(...) result}``. The
+    T12 claim rests on thresholds frozen from ONE seed's scores; this measures
+    how much those numbers move when the fusion net is retrained. Per unit:
+    min/max/mean of ``key`` across seeds and the coefficient of variation —
+    plus how often the unit kept its own threshold vs falling back to global,
+    since a unit that flips between "unit" and "global-fallback" across seeds
+    is itself a form of instability.
+    """
+    units = sorted({u for thr in per_seed_thresholds.values() for u in thr})
+    out = {}
+    for unit in units:
+        vals, sources = [], []
+        for thr in per_seed_thresholds.values():
+            if unit in thr:
+                vals.append(float(thr[unit][key]))
+                sources.append(thr[unit]["source"])
+        mean = float(np.mean(vals))
+        out[unit] = {
+            "n_seeds": len(vals),
+            "min": float(np.min(vals)),
+            "max": float(np.max(vals)),
+            "mean": mean,
+            "cv": float(np.std(vals) / mean) if mean else float("nan"),
+            "source_counts": {s: sources.count(s) for s in set(sources)},
+        }
+    return out
+
+
 def agent_roster(ctx, stratum_test, risks, min_pos=25):
     """Per-unit standalone AUPRC (and lift) for each agent's calibrated risk.
 
