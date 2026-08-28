@@ -1352,6 +1352,7 @@ where chart and note describe the same window:
 | reader | n (in-ICU) | accuracy | sens | spec | κ |
 |---|---|---|---|---|---|
 | gemma4:12b | 240 | 0.729 | 0.873 | 0.288 | **0.181** |
+| medgemma:4b (added 2026-08-28) | 241 | 0.739 | 0.896 | 0.254 | 0.175 |
 | qwen2.5-coder:14b | 238 | 0.731 | 0.878 | 0.276 | 0.174 |
 | llama3.1:8b | 241 | 0.730 | 0.879 | 0.271 | 0.171 |
 
@@ -1361,6 +1362,18 @@ disagreement even in-ICU is consistent with notes narrating discussions and
 decisions that never became formal charted orders; note-verdicts are
 therefore reported as their own evidence category ("note-documented"), never
 as chart-equivalent.
+
+**Fourth reader, post hoc (2026-08-28): medgemma:4b** (Q4_K_M, the
+medical-tuned gemma3 4B) on the same cached snippets and the same protocol
+— 1 parse failure in 832, unsure rate 0.1%. It lands second by in-ICU κ
+(0.175, within 0.006 of the winner; the four-reader spread is 0.171–0.181,
+inside noise on ~240 stays), with the highest sensitivity (0.896) bought by
+the lowest specificity (0.254), and agrees with each of the other three on
+97.1–98.3% of stays. Winner, ranking and applied verdicts are unchanged
+(this ran into `data/cache/goc_report_medgemma.json`; the published report
+above was not touched). The reading: a medical-tuned 4B matching three
+general 8–14B models says reader skill is not the residual on this task —
+the chart-vs-note asymmetry is.
 
 **Applied to the 1,689 uncharted death stays**: 918 note-documented
 limitations / 154 documented no-limitation / 9 unsure / 608 without a note.
@@ -1424,8 +1437,10 @@ quiet, disjoint stays, seed-42 refit verified against the T8 rung).
 | **gemma4:12b** | **0.386** | **79.5%** | **0.219** | **0.290 / 0.97** | **0.654 / 0.78** | **0.13** | **0.836 (0.823)** |
 | llama3.1:8b | 0.372 | 76.3% | 0.234 | 0.209 / 0.71 | 0.296 / 0.40 | 0.27 | 0.776 (0.775) |
 | qwen2.5-coder:14b | 0.343 | 71.0% | 0.262 | 0.176 / 0.72 | 0.374 / 0.47 | 0.23 | 0.723 (0.698) |
+| medgemma:4b (added 2026-08-28) | 0.341 | 70.1% | 0.257 | 0.294 / 0.71 | 0.202 / 0.36 | 0.36 | 0.703 (0.704) |
 
-Every reader beats both baselines on every metric family with the paired
+Every one of the original three readers beats both baselines on every
+metric family with the paired
 bootstrap CI clear of zero (e.g. gemma vs RANDOM: comp@win +0.082
 [+0.055, +0.112], hallucination −0.311 [−0.397, −0.218], n2 top-1 +0.354
 [+0.214, +0.490]; RANDOM's simulatability sits at/below chance). **Winner:
@@ -1441,10 +1456,26 @@ So the same local model empirically wins both LLM seats (T16 extraction by
 in-ICU κ, T17 cards by the full bench) — with its reasoning mode OFF in both.
 Caveat: v1 cards explain the single-head ALL-8 fusion, the shared substrate
 of the two-head composite; per-head cards (a D-head card naming death-
-specific drivers) are the natural next step. medgemma:4b slots in as a
-future medical-domain reader on both benches, measurable the same way.
-Reproduce: `data/cache/explain_report_all8_{gemma,llama,qwen}.json`,
-`logs/t17_{gemma,llama,qwen}.log`.
+specific drivers) are the natural next step.
+
+**Fourth reader, post hoc (2026-08-28): medgemma:4b**, same 200 sampled
+rows, same baselines, 0.72 s/card. It is last on six of the seven columns
+and — the first reader to do so — **fails the anti-gaming bar**: against
+RANDOM its hallucination gap is −0.056 [−0.162, +0.048] and its NEWS2 top-1
+gap +0.042 [−0.080, +0.163], both CIs crossing zero (comprehensiveness
++0.102 [+0.064, +0.142] and simulatability +0.233 [+0.123, +0.340] still
+clear, so the cards carry signal — they are just less faithful). The
+failure mode is visible in the samples: the cards fall into one template
+("attended to X and Y, with rising A and falling B driving the assessment")
+that names vital-sign trends on hours whose NEWS2 sub-score is zero — the
+definition of the hallucination metric — at 0.36/card versus gemma's 0.13.
+Medical-domain tuning buys nothing on a task whose inputs are numbers the
+model is handed verbatim, and a 0.36-vs-0.13 hallucination gap is not a
+quantization-sized gap, so the bf16 variant was not pulled. Verdict
+unchanged: gemma4:12b keeps both seats, and the bench did its job — a
+plausible-sounding medical model was rejected on measurement.
+Reproduce: `data/cache/explain_report_all8_{gemma,llama,qwen,medgemma}.json`,
+`logs/t17_{gemma,llama,qwen,medgemma}.log`.
 
 ## Architecture audit (post-T8 sweep)
 
@@ -1575,6 +1606,14 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_qwen.json
 .venv/bin/python scripts/run_explainability.py --config all-8 --model gemma4:12b \
   --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_gemma.json
+
+# medgemma:4b as a post-hoc fourth reader on both benches (2026-08-28; separate
+# GoC report so the published one is untouched; the three cached readers cost 0 calls)
+.venv/bin/python scripts/run_goc_extraction.py --phase validate \
+  --models qwen2.5-coder:14b,llama3.1:8b,gemma4:12b,medgemma:4b \
+  --json data/cache/goc_report_medgemma.json
+.venv/bin/python scripts/run_explainability.py --config all-8 --model medgemma:4b \
+  --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_medgemma.json
 
 # both-metrics scoreboard (AUPRC + AUROC for every cached model)
 .venv/bin/python scripts/metrics_table.py --reps 1000
