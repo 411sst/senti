@@ -175,9 +175,9 @@ def test_assert_aggregate_only_catches_ids_at_any_depth():
     with pytest.raises(ValueError, match="hour"):
         assert_aggregate_only({"stays": [{"hour": 6}]})
     with pytest.raises(ValueError, match="stay id"):
-        assert_aggregate_only({"ids": [30004306]})
+        assert_aggregate_only({"ids": [39999999]})
     with pytest.raises(ValueError, match="stay-id-like"):
-        assert_aggregate_only({"note": "see 30004306 for details"})
+        assert_aggregate_only({"note": "see 39999999 for details"})
 
 
 def test_assert_no_identifiers_reads_the_rendered_page():
@@ -185,4 +185,4 @@ def test_assert_no_identifiers_reads_the_rendered_page():
     with pytest.raises(ValueError):
         assert_no_identifiers("<td>stay_id</td>")
     with pytest.raises(ValueError):
-        assert_no_identifiers("<td>30004306</td>")
+        assert_no_identifiers("<td>39999999</td>")
