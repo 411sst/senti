@@ -27,7 +27,8 @@ from explain.faithfulness import (
     sufficiency, summarise_consistency, with_bank,
 )
 from explain.rationales import (
-    GENERIC_RATIONALE, RationaleCache, build_prompt, clean_reply,
+    GENERIC_RATIONALE, RationaleCache, build_menu, build_menu_prompt,
+    build_prompt, clean_reply, examples_for, few_shot_pool,
     generic_rationales, scrub_leak_words, shuffle_rationales,
 )
 from mimic_cohort import NEWS2_COMPONENTS, VITALS
@@ -179,6 +180,74 @@ def test_clean_reply_strips_boilerplate():
     assert clean_reply('Here is the sentence: "Rising HR."') == "Rising HR."
     assert clean_reply("  Rising   HR.  ") == "Rising HR."
     assert clean_reply(None) == ""
+
+
+# --- the menu-fewshot variant ----------------------------------------------
+
+def test_menu_lists_only_nonzero_parameters_and_top_agents():
+    context = make_context({"vitals_tcn": 0.7, "news2": 0.2, "labs": 0.1},
+                           {"heart_rate": 2, "spo2": 1})
+    menu = build_menu(context, n_agents=2)
+    assert "heart rate (sub-score 2)" in menu
+    assert "SpO2 (sub-score 1)" in menu
+    assert "temperature" not in menu               # zero-scored: off the menu
+    assert menu.index("vitals-TCN") < menu.index("NEWS2")
+    assert "labs" not in menu                      # third agent, n_agents=2
+    empty = build_menu(make_context({"vitals_tcn": 0.7, "news2": 0.3}, {}))
+    assert "name no vital sign" in empty
+
+
+def test_menu_prompt_never_contains_the_fused_risk_or_alert_flag():
+    """The variant keeps the plain prompt's leakage guarantee, examples included."""
+    target = make_context({"vitals_tcn": 0.7, "news2": 0.2, "labs": 0.1},
+                          {"heart_rate": 2})
+    target["fused_risk"], target["fired"] = 0.9312, True
+    example = make_context({"vitals_tcn": 0.5, "news2": 0.4, "labs": 0.1},
+                           {"resp_rate": 3})
+    example.update({"stay_id": 2, "fused_risk": 0.8765, "fired": True})
+    prompt = build_menu_prompt(target, [(example, "Rising respiratory rate.")])
+    for leak in ("0.9312", "0.8765", "fired", "alert"):
+        assert leak not in prompt.lower()
+    assert "EXAMPLE 1" in prompt and "Rising respiratory rate." in prompt
+    assert prompt.index("EXAMPLE 1") < prompt.index("NOW THIS PATIENT-HOUR")
+    assert prompt == build_menu_prompt(target, [(example, "Rising respiratory rate.")])
+
+
+def test_plain_prompt_is_untouched_by_the_variant():
+    """The three published T17 reports were generated under this exact prompt."""
+    context = make_context({"vitals_tcn": 0.5, "news2": 0.3, "labs": 0.2},
+                           {"resp_rate": 3})
+    prompt = build_prompt(context)
+    assert prompt.endswith("\n\nOne sentence naming the drivers:")
+    assert "CANDIDATE MENU" not in prompt and "EXAMPLE" not in prompt
+
+
+def test_few_shot_pool_keeps_only_faithful_exemplars():
+    faithful = make_context({"vitals_tcn": 0.7, "news2": 0.2, "labs": 0.1},
+                            {"heart_rate": 2})
+    wrong_agent = dict(faithful, stay_id=2)
+    hallucinated = dict(faithful, stay_id=3)
+    silent = dict(faithful, stay_id=4)
+    quiet = dict(faithful, stay_id=5)
+    contexts = [faithful, wrong_agent, hallucinated, silent, quiet]
+    texts = ["Rising heart rate drove the vitals-TCN agent.",   # keep
+             "Labs carried the assessment.",                    # not top agent
+             "Rising heart rate and falling SpO2 via vitals.",  # SpO2 scores 0
+             "",                                                # empty
+             "Vitals-TCN with a rising heart rate."]            # keep (quiet)
+    fired = [True, True, True, True, False]
+    pool = few_shot_pool(contexts, texts, AGENTS, fired, k_fired=2, k_quiet=2)
+    assert [c["stay_id"] for c, _ in pool] == [1, 5]     # interleaved fired/quiet
+
+
+def test_examples_never_include_the_row_itself():
+    a = make_context({"vitals_tcn": 0.7, "news2": 0.2, "labs": 0.1}, {"heart_rate": 2})
+    b, c = dict(a, stay_id=2), dict(a, stay_id=3)
+    pool = [(a, "A"), (b, "B"), (c, "C")]
+    assert [t for _, t in examples_for(pool, a, k=3)] == ["B", "C"]
+    assert [t for _, t in examples_for(pool, dict(a, stay_id=9), k=2)] == ["A", "B"]
+    prompt = build_menu_prompt(a, examples_for(pool, a))
+    assert "Sentence: A" not in prompt
 
 
 # --- anti-gaming baselines --------------------------------------------------

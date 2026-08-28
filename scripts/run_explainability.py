@@ -2,12 +2,19 @@
 
     python scripts/run_explainability.py --smoke                 # prompts only
     python scripts/run_explainability.py --n-alerts 30 --n-null 30
-    python scripts/run_explainability.py --n-alerts 200 --n-null 200
+    python scripts/run_explainability.py --config all-8 --model gemma4:12b \
+        --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_gemma.json
+    python scripts/run_explainability.py --config all-8 --model medgemma:4b \
+        --prompt-variant menu-fewshot ...   # enumerated menu + worked examples
 
 Part 1 -- generate a one-sentence rationale from the structured drivers the
 orchestrator already exposes (NEWS2 sub-scores, per-agent calibrated risk,
-attention over agents, 4h vital trend), using the local Llama from the text
-ablation.
+attention over agents, 4h vital trend), using a local ollama model
+(``--model``; the T17 bench winner is gemma4:12b). ``--prompt-variant
+menu-fewshot`` appends an enumerated candidate menu and three worked examples
+taken from another reader's cached plain-prompt cards: it lifts any reader,
+but it saturates the menu-served columns and inflates the shuffled baseline,
+so the plain prompt is the reported bench (results_fusion.md T17).
 
 Part 2 -- score those rationales on three offline faithfulness metrics that use
 the model's own structure as ground truth, and score two anti-gaming baselines
@@ -49,8 +56,10 @@ from explain.faithfulness import (  # noqa: E402
     simulatability, sufficiency, summarise_consistency, with_bank,
 )
 from explain.rationales import (  # noqa: E402
-    SYSTEM_PROMPT, build_prompt, generate_rationales, generic_rationales,
-    scrub_leak_words, shuffle_rationales,
+    MENU_SYSTEM_PROMPT, SYSTEM_PROMPT, RationaleCache, build_menu_prompt,
+    build_prompt, examples_for, few_shot_pool, generate_rationales,
+    generic_rationales, prompt_fingerprint, scrub_leak_words,
+    shuffle_rationales,
 )
 from orchestrator.fusion import AgentBank, Orchestrator, resolve_config  # noqa: E402
 from text_arm.llm_orchestrator import DEFAULT_MODEL  # noqa: E402
@@ -60,16 +69,19 @@ LABEL = "label_24h"
 EMB = REPO / "data" / "cache" / "embeddings"
 
 
-def cache_path(config, model):
-    """One rationale cache per (config, model).
+def cache_path(config, model, variant="plain"):
+    """One rationale cache per (config, model, prompt variant).
 
     The cache key is (stay_id, hour) and its fingerprint covers only the
     SYSTEM PROMPT -- so a single shared file would silently serve sentences
     generated under a different agent set or a different model. (The
-    pre-T17 single-config cache was data/cache/rationales.jsonl.)
+    pre-T17 single-config cache was data/cache/rationales.jsonl.) The plain
+    variant keeps the T17 path; other variants get their own file.
     """
     import re
     tag = re.sub(r"[^A-Za-z0-9]+", "_", f"{config}_{model}").strip("_")
+    if variant != "plain":
+        tag += "__" + re.sub(r"[^A-Za-z0-9]+", "_", variant).strip("_")
     return REPO / "data" / "cache" / f"rationales_{tag}.jsonl"
 
 
@@ -286,6 +298,13 @@ def main():
     ap.add_argument("--smoke", action="store_true",
                     help="print a rendered prompt and stop before the LLM")
     ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--prompt-variant", choices=["plain", "menu-fewshot"],
+                    default="plain",
+                    help="menu-fewshot: enumerated candidate menu + worked "
+                         "examples taken from another reader's cached cards")
+    ap.add_argument("--fewshot-from", default="gemma4:12b",
+                    help="reader whose plain-variant cards supply the examples")
+    ap.add_argument("--fewshot-k", type=int, default=3)
     args = ap.parse_args()
 
     config, agent_names = (resolve_config(preferred=args.config, emb_dir=EMB)
@@ -334,26 +353,46 @@ def main():
         [rows.stay_id.to_numpy(), rows.hour.to_numpy()]))
     contexts = build_contexts(rows, sub, subscores, agent_risks, attn[pos],
                               agent_names)
+    fired = rows["_fired"].to_numpy()
+
+    # --- prompt variant ---------------------------------------------------
+    system, prompt_fn, fingerprint = SYSTEM_PROMPT, build_prompt, None
+    if args.prompt_variant == "menu-fewshot":
+        exemplars = RationaleCache(cache_path(config, args.fewshot_from))
+        pool = few_shot_pool(contexts, exemplars.texts_for(contexts),
+                             agent_names, fired)
+        if not pool:
+            raise SystemExit(f"no faithful exemplar cards cached for "
+                             f"{args.fewshot_from} under config {config}")
+        print(f"[fewshot] {len(pool)} exemplar cards from {args.fewshot_from}: "
+              + ", ".join(f"{c['stay_id']}/{c['hour']}" for c, _ in pool))
+        system = MENU_SYSTEM_PROMPT
+        prompt_fn = lambda c: build_menu_prompt(  # noqa: E731
+            c, examples_for(pool, c, args.fewshot_k))
+        # the pool is part of the instructions: a changed pool must regenerate
+        fingerprint = prompt_fingerprint(
+            MENU_SYSTEM_PROMPT + "\n" + "\n".join(t for _, t in pool))
 
     if args.smoke:
-        print(f"\n--- system prompt ---\n{SYSTEM_PROMPT}")
+        print(f"\n--- system prompt ---\n{system}")
         for context in contexts[:2]:
             print(f"\n--- prompt: stay {context['stay_id']} hour {context['hour']} ---")
-            print(build_prompt(context))
+            print(prompt_fn(context))
         print("\n[smoke] stopping before the LLM.")
         return
 
     # --- Part 1: generate -------------------------------------------------
     t0 = time.time()
-    from explain.rationales import SYSTEM_PROMPT as RATIONALE_SYSTEM
     from text_arm.llm_orchestrator import OllamaRunner
     # think=False: a reasoning model (gemma4) otherwise spends the whole
     # num_predict budget deliberating and returns an empty sentence; harmless
     # for non-reasoning models.
-    runner = OllamaRunner(model=args.model, system=RATIONALE_SYSTEM,
+    runner = OllamaRunner(model=args.model, system=system,
                           num_predict=90, think=False)
-    cache = generate_rationales(contexts, cache_path(config, args.model),
-                                model=args.model, runner=runner)
+    cache = generate_rationales(
+        contexts, cache_path(config, args.model, args.prompt_variant),
+        model=args.model, runner=runner, prompt_fn=prompt_fn, system=system,
+        fingerprint=fingerprint)
     texts = cache.texts_for(contexts)
     elapsed = time.time() - t0
     print(f"[rationale] {elapsed:.0f}s "
@@ -367,7 +406,6 @@ def main():
     }
 
     # metrics 1 and 2 are about the alert, so they run on fired rows only
-    fired = rows["_fired"].to_numpy()
     fired_rows = rows[fired].reset_index(drop=True)
     fired_contexts = [c for c, f in zip(contexts, fired) if f]
     base_all = raw_risk_at(with_bank(orch, bank_sub), sub, rows)
@@ -447,6 +485,9 @@ def main():
             return v
 
         payload = {"config": config, "model": args.model,
+                   "prompt_variant": args.prompt_variant,
+                   "fewshot_from": (args.fewshot_from
+                                    if args.prompt_variant != "plain" else None),
                    "agents": list(agent_names),
                    "n_rows": len(rows), "n_fired": int(fired.sum()),
                    "arms": {name: clean({k: v for k, v in r.items()

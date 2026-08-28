@@ -1477,6 +1477,46 @@ plausible-sounding medical model was rejected on measurement.
 Reproduce: `data/cache/explain_report_all8_{gemma,llama,qwen,medgemma}.json`,
 `logs/t17_{gemma,llama,qwen,medgemma}.log`.
 
+**Prompt variant, post hoc (2026-08-28): enumerated menu + few-shot.** The
+hallucination failure is a grounding failure, so the cheapest lever is
+prompt-side. `--prompt-variant menu-fewshot` appends to the packet an
+enumerated CANDIDATE MENU — the three top-attention agents, and the non-zero
+NEWS2 sub-scores only ("none, so name no vital sign" when NEWS2 is 0) — with
+a rule to name drivers from the menu alone, and prefixes three worked
+examples drawn from another reader's cached plain-prompt cards (gemma's; an
+exemplar must name the top-attention agent and no zero-scored parameter; two
+fired + two quiet in the pool, never the target row itself; the pool is part
+of the cache fingerprint). Same 200 rows, same baselines, own cache files.
+Run for medgemma and, as the same-prompt control, for gemma:
+
+| reader · prompt | comp@win | rel@win | suff↓ | attn ρ / @1 | n2 ρ / @1 | halluc↓ | named | sim AUROC (scrubbed) |
+|---|---|---|---|---|---|---|---|---|
+| gemma4:12b · plain | 0.386 | 79.5% | 0.219 | 0.290 / 0.97 | 0.654 / 0.78 | 0.13 | 3.8 | 0.836 (0.823) |
+| medgemma:4b · plain | 0.341 | 70.1% | 0.257 | 0.294 / 0.71 | 0.202 / 0.36 | 0.36 | 2.8 | 0.703 (0.704) |
+| gemma4:12b · menu+fewshot | **0.405** | **82.9%** | **0.190** | **0.364 / 1.00** | **0.920 / 1.00** | **0.00** | 4.4 | **0.900 (0.899)** |
+| medgemma:4b · menu+fewshot | 0.396 | 80.8% | 0.204 | 0.353 / 1.00 | 0.904 / 0.98 | 0.01 | 4.3 | 0.816 (0.818) |
+
+Three readings. (1) **The variant rescues medgemma**: hallucination 0.36 →
+0.01, NEWS2 top-1 0.36 → 0.98, every gap vs RANDOM now CI-clear
+(hallucination −0.395 [−0.464, −0.327]; n2 top-1 +0.489 [+0.388, +0.588]),
+and its menu cards beat gemma's *plain* cards on every ablation column.
+(2) **Same prompt, gemma still wins every column** — and widens the one
+metric the menu cannot hand over, simulatability (0.900 vs 0.816). The
+plain-prompt gap between the two was mostly prompt robustness (instruction
+following under a loose prompt), which the menu removes; the residual is
+the model. Seat unchanged. (3) **The variant partly games the bench by
+construction**: the menu lists exactly what attn@1, n2@1 and the
+hallucination rate check for, so those columns saturate for any obedient
+reader — and because the top-attention agents barely change hour to hour,
+the menu-shaped RANDOM arm inflates too (gemma comp@win RANDOM 0.303 →
+0.362), narrowing every gap vs RANDOM (gemma comp@win +0.082 → +0.043
+[+0.018, +0.070]; sufficiency −0.038 [−0.073, −0.005], clear but barely).
+The plain prompt therefore stays the reported bench — it is the harder test
+and the one the 0.836 figure comes from; the menu is a deployment guardrail
+that lifts any reader, a design choice rather than a measurement.
+Reproduce: `data/cache/explain_report_all8_{medgemma,gemma}_menufs.json`,
+`logs/t17_{medgemma,gemma}_menufs.log`.
+
 ## Architecture audit (post-T8 sweep)
 
 A full pass over every component the program added, plus the pipeline it
@@ -1615,9 +1655,18 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 .venv/bin/python scripts/run_explainability.py --config all-8 --model medgemma:4b \
   --n-alerts 100 --n-null 100 --json data/cache/explain_report_all8_medgemma.json
 
+# T17 prompt variant: enumerated menu + few-shot from gemma's plain cards
+# (own cache file + fingerprint; the plain prompt and its reports are untouched)
+.venv/bin/python scripts/run_explainability.py --config all-8 --model medgemma:4b \
+  --prompt-variant menu-fewshot --n-alerts 100 --n-null 100 \
+  --json data/cache/explain_report_all8_medgemma_menufs.json
+.venv/bin/python scripts/run_explainability.py --config all-8 --model gemma4:12b \
+  --prompt-variant menu-fewshot --n-alerts 100 --n-null 100 \
+  --json data/cache/explain_report_all8_gemma_menufs.json
+
 # both-metrics scoreboard (AUPRC + AUROC for every cached model)
 .venv/bin/python scripts/metrics_table.py --reps 1000
 
 # tests
-.venv/bin/python -m pytest -q   # 640 passing
+.venv/bin/python -m pytest -q   # 645 passing
 ```
