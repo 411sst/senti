@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO / "src"))
 import numpy as np
 
 CACHE = REPO / "data" / "cache"
-SEEDS = (42, 1, 2, 3, 4)  # flagship chain; historical 3-seed caches degrade gracefully
+SEEDS = (42, 1, 2, 3, 4)  # flagship chain default; a cache's own meta_json seed list wins
 
 # (label, npz, key-template) -- {s} expands over SEEDS for multi-seed rows.
 SPEC = [
@@ -90,11 +90,24 @@ HEADLINE = {"NEWS2", "FAIR+TRAJ (145 feat)", "ORCH core-3+meas", "LOGIT3",
             "lit: Sadanandan XGB", "lit: YAIB LGBM", "lit: eCART-style GBM"}
 
 
+def cache_seeds(z):
+    """Seeds a cache carries: its own meta_json list when it has one (the
+    two-head flagship carries ten since T18), else the flagship-chain default."""
+    if "meta_json" in z.files:
+        try:
+            seeds = json.loads(str(z["meta_json"])).get("seeds")
+            if seeds:
+                return tuple(int(s) for s in seeds)
+        except (ValueError, TypeError):
+            pass
+    return SEEDS
+
+
 def load_scores(name, key):
     z = np.load(CACHE / f"{name}.npz", allow_pickle=True)
     if "{s}" not in key:
         return {None: z[key].astype(float)}
-    return {s: z[key.format(s=s)].astype(float) for s in SEEDS
+    return {s: z[key.format(s=s)].astype(float) for s in cache_seeds(z)
             if key.format(s=s) in z.files}
 
 

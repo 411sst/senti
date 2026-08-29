@@ -16,9 +16,17 @@ This script deploys BOTH on the ALL-8 flagship bank:
 Graded like every rung: composite AUPRC + paired deltas vs the ALL-8 parent
 and FAIR+TRAJ, the paired first-alarm race with the death/treatment subgroup
 split, per-component AUPRC (the D-head's death ranking is a deliverable in
-its own right), seeds {42, 1, 2}.
+its own right), seeds {42, 1, 2, 3, 4} (5-seed hardening 2026-08-27) and
+{5, ..., 9} (10-seed consistency check 2026-08-29).
 
-    python scripts/two_head.py [--seeds 42,1,2] [--reps 2000]
+The paired "vs ALL-8" delta needs the single-head ALL-8 parent re-fit at the
+same seed (resp_fusion.npz); seeds without a cached parent report that column
+as null rather than failing -- the parent is not the claim under test, and its
+chain costs ~10 min/seed. ``--out`` lets seed batches run in parallel
+processes (one thread each, bit-identity preserved) and be merged afterwards
+(scripts/merge_two_head.py).
+
+    python scripts/two_head.py [--seeds 42,1,2] [--reps 2000] [--out PATH]
 """
 
 import argparse
@@ -59,7 +67,10 @@ def main():
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--reps", type=int, default=2000)
     ap.add_argument("--auprc-reps", type=int, default=1000)
+    ap.add_argument("--out", default=str(OUT_CACHE),
+                    help="cache path (default data/cache/two_head.npz)")
     args = ap.parse_args()
+    out_path = Path(args.out)
     seeds = [int(s) for s in args.seeds.split(",")]
 
     from baselines_mimic import load_splits
@@ -112,12 +123,14 @@ def main():
         r["auprc_components"] = component_auprc(ctx, s_test)
         r["d_head_death_auprc"] = float(auprc(y_death_test,
                                               heads["D"]["test"]))
-        parent_test = zp[f"test_all7+resp_s{seed}"].astype(float)
-        draws = paired_auprc_draws(
-            ctx.y_test, {"two": s_test, "parent": parent_test,
-                         "fair": fair_test},
-            ctx.patient_test, reps=args.auprc_reps)
-        r["delta_vs_all8_ci"] = delta_ci(draws["two"], draws["parent"])
+        parent_key = f"test_all7+resp_s{seed}"
+        scored = {"two": s_test, "fair": fair_test}
+        if parent_key in zp.files:
+            scored["parent"] = zp[parent_key].astype(float)
+        draws = paired_auprc_draws(ctx.y_test, scored, ctx.patient_test,
+                                   reps=args.auprc_reps)
+        r["delta_vs_all8_ci"] = (delta_ci(draws["two"], draws["parent"])
+                                 if "parent" in draws else None)
         r["delta_vs_fair_ci"] = delta_ci(draws["two"], draws["fair"])
         results[seed] = r
         # float64, NOT float32: these scores carry the _strictify rank
@@ -130,9 +143,11 @@ def main():
 
         b = r["budgets"][0.02]
         c = r["race"][0.02]
+        vs_all8 = (f"[{r['delta_vs_all8_ci'][0]:+.4f},"
+                   f"{r['delta_vs_all8_ci'][1]:+.4f}]"
+                   if r["delta_vs_all8_ci"] is not None else "no cached parent")
         print(f"[seed {seed}] TWO-HEAD test AUPRC {r['auprc']:.4f} "
-              f"(vs ALL-8 [{r['delta_vs_all8_ci'][0]:+.4f},"
-              f"{r['delta_vs_all8_ci'][1]:+.4f}]; vs FAIR "
+              f"(vs ALL-8 {vs_all8}; vs FAIR "
               f"[{r['delta_vs_fair_ci'][0]:+.4f},"
               f"{r['delta_vs_fair_ci'][1]:+.4f}]) | death AUPRC "
               f"{r['auprc_components']['death']:.3f} (D-head "
@@ -145,8 +160,9 @@ def main():
     payload["meta_json"] = np.array(json.dumps(_jsonable(
         {"seeds": seeds, "reps": args.reps, "agents": list(ALL8),
          "results": results})))
-    np.savez_compressed(OUT_CACHE, **payload)
-    print(f"[cache] -> {OUT_CACHE}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out_path, **payload)
+    print(f"[cache] -> {out_path}")
 
 
 def _jsonable(obj):

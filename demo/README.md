@@ -48,6 +48,26 @@ Flags: `--skip-llm` (no ollama), `--refit` (rebuild the checkpoint), `--pick-ind
 5. Leave-behind: the aggregate-only page from `scripts/export_demo_static.py`, plus the
    Defence Brief link.
 
+## Running it on a teammate's machine (credentialed, no GPU)
+
+The app needs neither the data pipeline nor a GPU: it reads two JSON files and nothing
+else. Only PhysioNet-credentialed teammates may hold `bundle.json` (it is patient-level
+MIMIC-IV data); send it over a private channel, never through git or a shared drive.
+
+```bash
+git clone <repo> sentinel && cd sentinel && git checkout experiment-demo
+python3 -m venv .venv && .venv/bin/pip install -r requirements-demo.txt   # ~1 min, no torch
+mkdir -p data/cache/demo
+# copy bundle.json and cohort.json (from the build machine) into data/cache/demo/
+.venv/bin/streamlit run demo/app.py
+```
+
+What works without a GPU: everything — all three tabs, every stay, every hour, and the
+cached explanation card for each hour. The only difference is the **Regenerate live**
+button: with no ollama running it shows a warning and keeps the cached card. (Optional:
+`ollama pull gemma4:12b` and `ollama serve` on CPU makes the button work, at roughly
+20–30 s per card instead of ~1 s.)
+
 ## Before the demo
 
 - `OLLAMA_KEEP_ALIVE=1h` — ollama unloads the model after 5 min idle; the first live

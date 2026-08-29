@@ -36,18 +36,27 @@ report only ranking metrics, distillation papers never report lead time.
    project's new best ranking score: test AUPRC 0.291 > 0.287, paired CI
    clear of zero 3/3 seeds. The earliness-constrained stack Pareto-improves
    the orchestrator (0.262 at the full +1.7h@2%).
-5. **The final flagship is two-head ALL-8** (T9): mean test AUPRC **0.3081
-   over five seeds** — above the equal-information GBM's 0.287 with the
-   paired CI clear of zero on **5/5 seeds** — with the death component
+5. **The final flagship is two-head ALL-8** (T9): mean test AUPRC **0.3087
+   over ten seeds** (0.3081 over the first five) — above the equal-information
+   GBM's 0.287 with the paired CI clear of zero on **10/10 seeds** — with the death component
    restored to parity (0.184 vs the GBM's 0.189) and a death-specific head
-   that ranks death at **0.342, 1.8× the GBM**. It supersedes ALL-8 (T8),
+   that ranks death at **0.340 over ten seeds, 1.8× the GBM**. It supersedes ALL-8 (T8),
    all-7 (T6), ORCH+GBM and CONSTR-1H (T1/T4). **The timing edge is
    seed-fragile where the ranking edge is not**: lead@2% is
    +1.0/+2.0/+1.5/+0.0/+0.0h (win 57/59/58/46/50%) across seeds
    {42,1,2,3,4} — the "+1.5h @58%" previously quoted was the flattering
    face of a 3/5-consistent effect, caught when the chain was extended to
-   five seeds (2026-08-27). The honest statement: mean +0.9h, positive in
-   3/5 seeds, null in two. T16 sharpens this further: on death stays the
+   five seeds (2026-08-27). **Ten seeds (T18, 2026-08-29) settle the
+   direction and bound the magnitude**: the model is earlier more often
+   than later in **10/10 seeds** (sign test p ≤ 2e-3 in every seed; earlier
+   in 68.5% [64.7, 72.4] of the stays where the two differ), the per-seed
+   median lead@2% is **+0.95h [+0.52, +1.38]** over seeds (positive in 8/10,
+   zero in seeds 3 and 4), the *mean* lead is tail-dominated and not
+   seed-robust (+1.4h [−0.2, +3.0]), and about 70% of the model's ≥ 12h
+   leads are stays it flagged from the first scored hour. The honest
+   statement: about one hour at the median, in the model's favour in every
+   seed, with the long leads mostly admission-hour flags rather than
+   detected deterioration. T16 sharpens this further: on death stays the
    surviving lead concentrates where a care-limitation was already
    documented (notes included), and drops to +0.5h at 50% win on the
    truly-undecided remainder.
@@ -105,8 +114,9 @@ over single-head ALL-8: one extra forward pass across the same cached bank.
 
 Test split (361,229 hours, prevalence 4.74%); multi-seed rows are means over
 orchestrator seeds {42, 1, 2, 3, 4} where the cache carries five seeds (the
-flagship chain, re-run 2026-08-27) and {42, 1, 2} for rows whose caches remain
-the 3-seed historical record. Regenerate with
+flagship chain, re-run 2026-08-27), {42, 1, 2} for rows whose caches remain
+the 3-seed historical record, and {42, 1, 2, 3, 4, 5, 6, 7, 8, 9} for the
+two-head flagship and its D-head (T18, 2026-08-29). Regenerate with
 `python scripts/metrics_table.py` (CIs are patient-clustered, 1000 reps).
 
 **Read AUPRC first.** At 4.7% prevalence AUROC is dominated by the vast
@@ -144,8 +154,8 @@ reader needs to place Sentinel against published systems.
 | ALL-7 (gbm+both) | 0.282 | 0.804 | [0.262, 0.301] / [0.789, 0.818] |
 | ALL-8 (all7+resp) | 0.306 | 0.821 | [0.292, 0.335] / [0.813, 0.840] |
 | ALL-8 cap-at-HFNC | 0.306 | 0.821 | |
-| **TWO-HEAD ALL-8** — flagship | **0.307** | **0.822** | [0.291, 0.337] / [0.813, 0.840] |
-| ⤷ D-head, scored on death ‡ | **0.344** | **0.946** | [0.288, 0.415] / [0.928, 0.960] |
+| **TWO-HEAD ALL-8** — flagship (10 seeds) | **0.309** | **0.823** | [0.291, 0.337] / [0.813, 0.840] |
+| ⤷ D-head, scored on death ‡ (10 seeds) | **0.340** | **0.946** | [0.288, 0.415] / [0.928, 0.960] |
 
 Standalone agents: gbm 0.279/0.806 · vitals_tcn 0.189/0.754 · labs
 0.166/0.727 · cadence 0.156/0.703 · resp 0.134/0.712 · fluid 0.093/0.654 ·
@@ -192,7 +202,10 @@ diagnosis stated in the literature's preferred metric.
   that historical record; on 2026-08-27 the flagship chain (core-3+meas →
   +gbm → ALL-7 → ALL-8 → two-head) was re-run end-to-end at seeds
   {42, 1, 2, 3, 4} with the original three seeds reproducing bit-identically
-  (regression pin), so the scoreboard, T12 and T15 now report five seeds.
+  (regression pin), so the scoreboard, T12 and T15 now report five seeds;
+  the two-head flagship was extended to ten on 2026-08-29 (T18; the five
+  published seeds again reproduce bit-identically, checked by
+  `scripts/merge_two_head.py`).
 - **Selection optimism.** Candidate configurations were *selected* on their
   V_freeze deltas across many attempts over this program, so quoted V_freeze
   margins carry val-selection optimism (the same optimism `tune_gbm` accepts).
@@ -675,6 +688,11 @@ beyond each head's own isotonic.
 Composite AUROC 0.8219 [0.813, 0.840] (vs FAIR+TRAJ 0.807, ALL-8 0.8213);
 the D-head's death AUROC is **0.946** [0.928, 0.960]. Seeds 3 and 4 were
 added 2026-08-27 (chain re-run; published seeds reproduce bit-identically).
+Seeds 5–9 were added 2026-08-29 (two-head only, no ALL-8 parent at those
+seeds): AUPRC 0.3121 / 0.3063 / 0.3155 / 0.3109 / 0.3020, vs FAIR+TRAJ clear
+of zero 5/5, lead@2% +1.0h in all five (win 54 / 55 / 51 / 57 / 55%). The
+ten-seed reading — direction, magnitude, the ensemble and where the long
+leads come from — is T18.
 
 **What the fix delivers, restated at five seeds:**
 
@@ -1517,6 +1535,100 @@ that lifts any reader, a design choice rather than a measurement.
 Reproduce: `data/cache/explain_report_all8_{medgemma,gemma}_menufs.json`,
 `logs/t17_{medgemma,gemma}_menufs.log`.
 
+## T18 — Ten seeds: direction settled, magnitude bounded, long leads explained
+
+**Why.** Five seeds left the flagship's timing edge at "positive in 3/5,
+null in two" (T9). Two nulls out of five is uninformative either way, so
+seeds 5–9 were fixed in advance and run (two-head only; the single-head
+ALL-8 parent is not re-fit at the new seeds, so their "vs ALL-8" column is
+null — that column was "spans 0" on 5/5 and is not the claim under test).
+Batches ran as parallel single-thread processes and were merged under a
+bit-identity check: all five published seeds reproduce exactly
+(`scripts/merge_two_head.py`). The reading below was written down before
+the run: report per seed the median *and* wins : losses among discordant
+stays; treat seeds as the sampling unit; grade the 10-seed score ensemble
+as a rung; move the timing claim to the ensemble only if its median CI
+clears zero.
+
+**Per seed, 2% budget** (n = paired stays both systems catch before the
+event; positive = model earlier; "earlier when they differ" = wins among
+discordant stays, the statistic that survives both a median sitting on
+the ~20% tie atom and a tail-dominated mean):
+
+| seed | AUPRC | wins : ties : losses | median [CI] | mean | p10 / p90 | earlier when they differ | sign p |
+|---|---|---|---|---|---|---|---|
+| 42 | 0.3141 | 244 : 87 : 99 | +1.0 [+1, +2] | +2.7 | −14 / +22 | 71% | 3e-15 |
+| 1 | 0.3069 | 259 : 94 : 85 | +2.0 [+1, +2] | +4.4 | −13 / +25 | 75% | 1e-21 |
+| 2 | 0.3017 | 245 : 87 : 92 | +1.5 [+1, +2] | +2.4 | −14 / +24 | 73% | 3e-17 |
+| 3 | 0.3054 | 182 : 84 : 127 | +0.0 [0, +1] | −2.5 | −27 / +16 | 59% | 2e-3 |
+| 4 | 0.3125 | 209 : 87 : 126 | +0.0 [0, +1] | −1.1 | −25 / +19 | 62% | 7e-6 |
+| 5 | 0.3121 | 226 : 84 : 108 | +1.0 [0, +2] | +0.9 | −18 / +20 | 68% | 1e-10 |
+| 6 | 0.3063 | 233 : 91 : 102 | +1.0 [+1, +2] | +3.4 | −14 / +25 | 70% | 6e-13 |
+| 7 | 0.3155 | 209 : 84 : 120 | +1.0 [0, +1] | −1.0 | −21 / +18 | 64% | 1e-6 |
+| 8 | 0.3109 | 246 : 92 : 90 | +1.0 [+1, +2] | +2.5 | −14 / +21 | 73% | 7e-18 |
+| 9 | 0.3020 | 234 : 94 : 95 | +1.0 [+1, +2] | +2.2 | −15 / +20 | 71% | 1e-14 |
+
+**Seed-level (seeds as the unit, t-intervals over 10):** median lead
+**+0.95h [+0.52, +1.38]** (SD 0.60; positive in 8/10); mean lead +1.4h
+[−0.2, +3.0] (SD 2.24); earlier-when-they-differ **68.5% [64.7, 72.4]**
+(min 59%); AUPRC 0.3087 (SD 0.005), AUROC 0.8225. Wins exceed losses in
+**10/10** seeds, sign test p < 0.05 in 10/10. Pooling all 4,215 paired
+stay-seeds: median +1.0 [0, +2], mean +1.4, 68.7% earlier when they
+differ. At the observed spread, pinning the *mean* lead to ±1h would take
+22 seeds; the median to ±0.5h took 9.
+
+**Reading.**
+
+1. **Direction is settled.** The two null-median seeds were never
+   directionally null: 182 : 127 and 209 : 126 are 59% and 62% in the
+   model's favour with p ≤ 2e-3. What flips their median to zero is a
+   heavier loss tail (10th percentile −27h / −25h vs −14h elsewhere), not
+   a change in who is usually first.
+2. **Magnitude is about an hour at the median and is not a mean.** The
+   paired differences are heavy-tailed on both sides (p10 ≈ −15h, p90 ≈
+   +20h); the mean swings by seed with the tails and is the wrong summary
+   for this quantity. The seed-level median CI is clear of zero at ten
+   seeds; it was not at five ([−0.21, +2.01]).
+3. **The 10-seed score ensemble stabilises, it does not amplify.** Mean of
+   the ten V_fit-calibrated composites, thresholds re-frozen on V_freeze:
+   AUPRC **0.3137**, AUROC 0.8243, vs FAIR+TRAJ [+0.0156, +0.0376], death
+   AUPRC 0.187. Race @2%: n 415, median +1.0 [0, +2], win 54% [49, 59],
+   224 : 82 : 109 (67% earlier when they differ, p 3e-10); treatment stays
+   +1.0 [+1, +2] at 56% win; death stays +0.0 [0, +2] at 50%. @1% null
+   (46% win), @5% +1.0 [0, +1]. Prefix ensembles (k = 1…10 in seed order)
+   and every leave-one-out ensemble sit at median +1.0 with 66–69%
+   earlier-when-they-differ from k ≥ 4 — the ensemble is the average seed
+   made reproducible, and its median CI touches zero. **The pre-registered
+   bar was not met**, so the timing claim stays a per-seed statement; the
+   ensemble is nevertheless the right thing to *ship* (one number, no seed
+   lottery) at the cost of ten forward passes of a 52k-parameter net over
+   the same cached bank.
+4. **Where the long leads come from.** Among stays where one system was
+   ≥ 12h earlier, the earlier system was already at or above its threshold
+   on the *first scored hour* in **58–75%** of the model's long wins (70%
+   for the ensemble) but only **5–10%** of NEWS2's long wins. The model's
+   biggest "leads" are mostly patients it flagged on arrival whose event
+   came a day later; NEWS2's biggest leads are genuine rises. The null
+   seeds are exactly the ones with fewer arrival-hour wins (57 / 67 vs
+   78–97) and more long losses (70 / 64 vs 47–58) — the seed lottery is
+   largely about how the net prices the first hours of a stay. The paired
+   race credits a standing alarm with the whole gap, which is the
+   protocol; the claim it supports is "flags higher-risk patients earlier
+   and, at the median, an hour ahead of NEWS2", not "detects deterioration
+   a day early".
+
+**What changes upstream.** The headline and the scoreboard now carry the
+ten-seed numbers; T9's five-seed table stands as the record it was. T12-D
+(standby stability) and T15 remain five-seed — no claim there is under
+threat and re-running them at ten buys nothing. The Defence Brief and the
+clinician artifact still quote "3/5"; they should read "10/10 in direction,
++0.95h [+0.52, +1.38] at the median, long leads are arrival flags".
+
+Reproduce: `data/cache/two_head.npz` (ten seeds; five-seed cache preserved
+under `data/cache/backup_pre10seed_20260829/`), `data/cache/two_head_seeds.json`,
+`logs/two_head_10seed_{a,b,c}.log`, `logs/two_head_seeds.log`;
+`src/seed_lead.py` (helpers, tested), `scripts/two_head_seeds.py`.
+
 ## Architecture audit (post-T8 sweep)
 
 A full pass over every component the program added, plus the pipeline it
@@ -1596,6 +1708,15 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 # T9 two-head fix (the final flagship)
 .venv/bin/python scripts/two_head.py --seeds 42,1,2,3,4
 
+# T18 ten-seed consistency (seeds 5-9 added 2026-08-29; batches in parallel,
+# one CPU thread each, merged under the bit-identity pin)
+.venv/bin/python scripts/two_head.py --seeds 42,1,2,3 --out data/cache/two_head_part_a.npz
+.venv/bin/python scripts/two_head.py --seeds 4,5,6   --out data/cache/two_head_part_b.npz
+.venv/bin/python scripts/two_head.py --seeds 7,8,9   --out data/cache/two_head_part_c.npz
+.venv/bin/python scripts/merge_two_head.py --parts data/cache/two_head_part_{a,b,c}.npz \
+  --reference data/cache/backup_pre10seed_20260829/two_head.npz --seed-order 42,1,2,3,4,5,6,7,8,9
+.venv/bin/python scripts/two_head_seeds.py
+
 # T10 literature-anchored GBMs (XGBoost on GPU and LightGBM on CPU, in parallel)
 GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
   .venv/bin/python scripts/fetch_cadence_fluids.py --which extra_vitals,stay_meta
@@ -1668,5 +1789,5 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 .venv/bin/python scripts/metrics_table.py --reps 1000
 
 # tests
-.venv/bin/python -m pytest -q   # 645 passing
+.venv/bin/python -m pytest -q   # 661 passing
 ```
