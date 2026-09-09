@@ -21,7 +21,7 @@ for p in (REPO / "src", REPO / "demo"):
 
 from charts import (  # noqa: E402
     COMP2, GRAY, MODEL, attention_chart, auprc_bar_chart, burden_chart,
-    funnel_chart, news2_chart, race_chart, race_strip, risk_chart,
+    funnel_chart, news2_chart, race_chart, race_strip, risk_chart, sweep_chart,
 )
 from demo_bundle import (  # noqa: E402
     alarm_announcements, ollama_alive, stay_label, truncate_stay,
@@ -258,9 +258,9 @@ with tab_patient:
     stay = stays[labels.index(choice)]
     with st.expander("What you are looking at"):
         st.markdown(
-            "- **Stay** — one held-out test ICU stay, labelled by what happened and who alarmed "
-            "first. Four are curated: the clearest ventilation and vasopressor wins, the most "
-            "typical NEWS2-first loss, and a stay with no event.\n"
+            "- **Stay** — one held-out test ICU stay, labelled by what happened and how far "
+            "ahead of the ML baselines Sentinel alarmed. Four are curated: two clear wins "
+            "(ventilation, vasopressors), one narrow race, and a stay with no event.\n"
             "- **Risk chart** — Sentinel's fused risk each hour (two-head composite), computed only "
             "from information before that hour. Dashed line: the alarm threshold, frozen on "
             "validation at a 2% alarm budget, volume-matched to NEWS2. Blue dots: hours Sentinel is "
@@ -413,6 +413,22 @@ with tab_h2h:
             col.caption(f"of never-deteriorating stays get ≥ 1 alarm · "
                         f"{100 * cost['stay_precision'][m]:.0f}% of its alarmed stays "
                         f"truly deteriorate")
+
+        if "sweep" in h2:
+            st.markdown("**Does it hold at other budgets?**")
+            st.altair_chart(sweep_chart(h2["sweep"], lab), width="stretch")
+            sw = h2["sweep"]["rows"]
+            gaps = [r[models[0]]["catch"] - max(r[m]["catch"] for m in models[1:])
+                    for r in sw]
+            st.caption(
+                f"The same frozen-threshold protocol at {len(sw)} alarm budgets from "
+                f"{100 * sw[0]['budget']:g}% to {100 * sw[-1]['budget']:g}% of "
+                f"patient-hours. The gap over the best baseline never inverts "
+                f"(smallest {100 * min(gaps):+.0f} points, largest "
+                f"{100 * max(gaps):+.0f}); the dashed rule is the demo's operating "
+                f"point. AUPRC and AUROC are threshold-free — the budget choice is "
+                f"operational, not tuned.")
+
         st.markdown(f'<div class="quiet">{h2["caveat"]}</div>', unsafe_allow_html=True)
 
 

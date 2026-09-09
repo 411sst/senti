@@ -19,7 +19,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "demo"))
 
-from charts import auprc_bar_chart, burden_chart, funnel_chart, race_chart  # noqa: E402
+from charts import (  # noqa: E402
+    auprc_bar_chart, burden_chart, funnel_chart, race_chart, sweep_chart,
+)
 from demo_bundle import assert_aggregate_only, assert_no_identifiers  # noqa: E402
 
 COHORT = REPO / "data" / "cache" / "demo" / "cohort.json"
@@ -126,6 +128,23 @@ def render(c):
         comp_prec = " · ".join(
             f"{html.escape(lab.get(m, m))} {100 * cost['stay_precision'][m]:.0f}%"
             for m in models[1:])
+        sweep_panel, sweep_embed = "", ""
+        if "sweep" in h2:
+            sweep_json = sweep_chart(h2["sweep"], lab,
+                                     height=260).configure(**CHART_CONFIG).to_json()
+            rows = h2["sweep"]["rows"]
+            deltas = [r[models[0]]["catch"] - max(r[m]["catch"] for m in models[1:])
+                      for r in rows]
+            sweep_panel = f"""
+  <div class="panel" style="margin-top:16px"><div id="sweep" class="vis" style="min-height:280px"></div></div>
+  <p class="cap">Does it hold at other budgets? The same frozen-threshold protocol at
+  {len(rows)} alarm budgets from {100 * rows[0]['budget']:g}% to
+  {100 * rows[-1]['budget']:g}% of patient-hours — the catch-rate gap over the best
+  baseline runs {100 * min(deltas):+.0f} to {100 * max(deltas):+.0f} points and never
+  inverts; the dashed rule is the operating point above. AUPRC and AUROC are
+  threshold-free, so the budget choice is operational, not tuned.</p>"""
+            sweep_embed = (f"  var sweep = {sweep_json};\n"
+                           "  vegaEmbed(\"#sweep\", sweep, opts);\n")
         h2h_section = f"""
 <section>
   <h2>Head-to-head at the same alarm volume</h2>
@@ -150,11 +169,12 @@ def render(c):
   <p class="cap">Top: share of event stays caught at the same alarm volume. Bottom: among
   jointly-caught stays, who fires first ({gaps}; positive = Sentinel earlier). Exclusive
   catches are {excl}. {html.escape(h2['caveat'].capitalize())}.</p>
+  {sweep_panel}
 </section>
 """
         h2h_embeds = (f"  var funnel = {funnel_json};\n  var race = {race_json};\n"
                       "  vegaEmbed(\"#funnel\", funnel, opts);\n"
-                      "  vegaEmbed(\"#race\", race, opts);\n")
+                      "  vegaEmbed(\"#race\", race, opts);\n" + sweep_embed)
 
     seed_rows = "".join(
         f"<tr><td>{s['seed']}</td><td>{s['auprc']:.4f}</td><td>{s['auroc']:.4f}</td>"

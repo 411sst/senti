@@ -45,9 +45,9 @@ torch.set_num_threads(1)
 
 from baselines_mimic import load_splits  # noqa: E402
 from demo_bundle import (  # noqa: E402
-    COMPARATOR_LABELS, COMPARATORS, assert_aggregate_only, dumps_strict,
-    first_alarm_hour, first_alarm_table, h2h_summary, select_demo_stays,
-    stay_summary, t_head_from_composite, validate_bundle,
+    COMPARATOR_LABELS, COMPARATORS, assert_aggregate_only, budget_sweep_row,
+    dumps_strict, first_alarm_hour, first_alarm_table, h2h_summary,
+    select_demo_stays, stay_summary, t_head_from_composite, validate_bundle,
 )
 from explain.drivers import build_contexts  # noqa: E402
 from explain.faithfulness import column_spans, restrict_bank  # noqa: E402
@@ -412,6 +412,28 @@ def main():
         "caveat": ("published feature specs retrained on our cohort, "
                    "not the commercial products"),
     })
+    # Budget sweep: the same frozen-threshold head-to-head at seven nominal
+    # budgets plus the demo's own operating point (the matched volume), so the
+    # "does 2% matter?" question is answered on screen.
+    sweep_budgets = sorted({0.005, 0.01, 0.02, round(matched, 6), 0.03, 0.05,
+                            0.075, 0.10})
+    sweep_names = ["sentinel", *COMPARATORS]
+    sweep_val = {"sentinel": z["val_s42"].astype(float),
+                 **{n: zl[f"val_{n}"].astype(float) for n in COMPARATORS}}
+    sweep_test = {"sentinel": flag_test, **lit_test}
+    sweep_rows = []
+    for b in sweep_budgets:
+        thr_b = {n: float(np.quantile(sweep_val[n][fm][av], 1.0 - b))
+                 for n in sweep_names}
+        row = budget_sweep_row(
+            first_alarm_table(ctx.test_ordered, sweep_test, thr_b), sweep_names)
+        sweep_rows.append({"budget": float(b), **row})
+    h2h["sweep"] = {"models": sweep_names, "operating": matched,
+                    "rows": sweep_rows}
+    print("[sweep] catch at " + "; ".join(
+        f"{r['budget']:.1%}: " + "/".join(f"{r[n]['catch']:.0%}" for n in sweep_names)
+        for r in sweep_rows))
+
     f_any = h2h["funnel"]["any"]
     print("[h2h] catch " + " / ".join(f"{m} {f_any[m]['pct']:.1%}" for m in h2h["models"])
           + "; race " + "; ".join(

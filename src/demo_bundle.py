@@ -162,6 +162,25 @@ def h2h_summary(table, flagship, opponents, min_lead_h=6.0):
     }
 
 
+def budget_sweep_row(table, names):
+    """Catch rate over event stays and quiet-stay FP rate per model.
+
+    One row of the budget sweep; ``table`` is :func:`first_alarm_table` output
+    at one budget's thresholds. Aggregate-only by construction.
+    """
+    is_event = table["event_h"].notna()
+    ev, qt = table[is_event], table[~is_event]
+    row = {}
+    for n in names:
+        fa_ev = ev[f"fa_{n}"]
+        row[n] = {
+            "catch": float((fa_ev.notna() & (fa_ev <= ev["event_h"])).mean())
+            if len(ev) else 0.0,
+            "quiet_fp": float(qt[f"fa_{n}"].notna().mean()) if len(qt) else 0.0,
+        }
+    return row
+
+
 def select_demo_stays(summary, seed=42, pick_index=0, with_death=False,
                       max_hours=120):
     """Deterministic curated stays, one per role.
@@ -233,21 +252,34 @@ def t_head_from_composite(composite, d_head):
 
 
 def stay_label(stay):
-    """Selectbox label: what happened and who alarmed first, never the id."""
+    """Selectbox label: what happened and who alarmed first, never the id.
+
+    Framed against the ML baselines (the demo's comparators); falls back to
+    the event itself when a bundle predates the comparator traces.
+    """
     unit = f"{stay['unit_group']} ICU"
     event = stay.get("event_type")
     if event is None:
-        return f"No event — no alarm from either · {unit}"
+        return f"No event — no alarm from any model · {unit}"
     word = EVENT_WORD.get(event, "Event")
-    lead = (stay.get("first_alarm") or {}).get("lead_h")
-    if lead is None:
-        timing = "alarms not both before the event"
-    elif lead > 0:
-        timing = f"model alarm {lead:g} h before NEWS2"
-    elif lead < 0:
-        timing = f"NEWS2 alarm {-lead:g} h before the model"
+    fa = (stay.get("first_alarm") or {}).get("model")
+    comp = [h for h in (stay.get("comp_first_alarm") or {}).values() if h is not None]
+    event_h = stay.get("event_h")
+    if fa is None:
+        timing = ("the baselines alarm, Sentinel does not" if comp
+                  else "no alarm before the event")
+    elif not comp:
+        early = f"{event_h - fa:.0f} h before the event" if event_h is not None else "early"
+        timing = (f"only Sentinel alarms — {early}"
+                  if "comp_first_alarm" in stay else f"Sentinel alarms {early}")
     else:
-        timing = "model and NEWS2 alarm in the same hour"
+        lead = min(comp) - fa
+        if lead > 0:
+            timing = f"Sentinel alarms {lead:g} h before the baselines"
+        elif lead < 0:
+            timing = f"the baselines alarm {-lead:g} h before Sentinel"
+        else:
+            timing = "Sentinel and the baselines alarm in the same hour"
     return f"{word} — {timing} · {unit}"
 
 

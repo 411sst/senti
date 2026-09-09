@@ -209,6 +209,45 @@ def race_chart(race_rows, labels, height=150):
     return (bars + text).properties(height=height, width="container")
 
 
+def sweep_chart(sweep, labels, height=260):
+    """Catch rate vs alarm budget, one line per model; the operating point ruled.
+
+    ``sweep``: the cohort's ``h2h["sweep"]`` block — ``models``, ``operating``
+    (the frozen matched volume), and ``rows`` of ``{budget, <model>: {catch,
+    quiet_fp}}``.
+    """
+    names = [labels.get(m, m) for m in sweep["models"]]
+    colors = dict(zip(names, [MODEL, GRAY, COMP2]))
+    rows = []
+    for r in sweep["rows"]:
+        for m, name in zip(sweep["models"], names):
+            rows.append({"budget": 100 * r["budget"], "model": name,
+                         "catch": 100 * r[m]["catch"],
+                         "quiet_fp": 100 * r[m]["quiet_fp"]})
+    df = pd.DataFrame(rows)
+    x = alt.X("budget:Q", title="alarm budget (% of patient-hours, frozen on validation)",
+              scale=alt.Scale(domain=[0, 100 * sweep["rows"][-1]["budget"] * 1.04],
+                              nice=False))
+    y = alt.Y("catch:Q", title="% of event stays caught",
+              scale=alt.Scale(domain=[0, 100]))
+    color = alt.Color("model:N",
+                      scale=alt.Scale(domain=names, range=[colors[n] for n in names]),
+                      legend=alt.Legend(title=None, orient="top"))
+    tooltip = [alt.Tooltip("model:N"),
+               alt.Tooltip("budget:Q", title="budget %", format=".2f"),
+               alt.Tooltip("catch:Q", title="caught %", format=".1f"),
+               alt.Tooltip("quiet_fp:Q", title="quiet-stay FP %", format=".1f")]
+    lines = alt.Chart(df).mark_line(strokeWidth=2).encode(x=x, y=y, color=color)
+    pts = alt.Chart(df).mark_point(filled=True, size=60).encode(
+        x=x, y=y, color=color, tooltip=tooltip)
+    op = pd.DataFrame({"budget": [100 * sweep["operating"]],
+                       "label": ["operating point"]})
+    rule = alt.Chart(op).mark_rule(color=GRAY, strokeDash=[5, 4]).encode(x=x)
+    text = alt.Chart(op).mark_text(align="left", dx=5, color=GRAY, fontSize=11).encode(
+        x=x, text="label:N", y=alt.value(10))
+    return alt.layer(lines, pts, rule, text).properties(height=height, width="container")
+
+
 def race_strip(lanes, domain, sim_hour, event_h=None, height=140):
     """The replay's alarm race: one lane per model, a dot the moment it fires.
 

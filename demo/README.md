@@ -1,9 +1,13 @@
 # Sentinel demo dashboard
 
-Minimal Streamlit app for a live walkthrough: **Patient** (why an alarm fired, hour by
-hour, with the local-LLM explanation card), **Cohort** (ranking vs earliness, per-unit
-alarm burden, the caveats), **Footprint** (parameters, CPU latency, what runs where).
-`COMPONENTS.md` explains every component on the page — what it is and what it indicates.
+Minimal Streamlit app for a live walkthrough: **Live** (one stay replayed at accelerated
+speed, alarms popping as Sentinel, the eCART-style GBM and the YAIB LightGBM cross their
+frozen thresholds), **Patient** (why an alarm fired, hour by hour, with the local-LLM
+explanation card), **Head-to-head** (all 1,540 event stays vs the two ML baselines at the
+same alarm volume — catch rate, who fires first, what it costs), **Cohort** (ranking,
+per-unit alarm burden, the caveats), **Footprint** (parameters, CPU latency, what runs
+where). `COMPONENTS.md` explains every component on the page — what it is and what it
+indicates.
 
 ```bash
 .venv/bin/pip install -r requirements-demo.txt          # streamlit + altair, once
@@ -20,8 +24,10 @@ risk is the two-head composite from `data/cache/two_head.npz`), freezes the 2% g
 thresholds exactly as the results doc does, picks four curated test stays
 deterministically (ventilation and vasopressor stays where the model alarmed ≥ 2 h
 before NEWS2, one stay where NEWS2 alarmed first, one quiet stay), precomputes an
-explanation card for every hour of those stays with `gemma4:12b`, measures the CPU
-footprint, and writes:
+explanation card for every hour of those stays with `gemma4:12b`, freezes eCART-style and
+YAIB thresholds at the same matched volume and stores their per-stay score traces (for the
+Live race) plus the cohort-wide head-to-head block (for the Head-to-head tab), measures
+the CPU footprint, and writes:
 
 - `data/cache/demo/bundle.json` — **patient-level**. Stays under the gitignored
   `data/` tree and is only ever rendered on this laptop (PhysioNet DUA). Never
@@ -32,21 +38,31 @@ footprint, and writes:
 Flags: `--skip-llm` (no ollama), `--refit` (rebuild the checkpoint), `--pick-index k`
 (swap the curated stays), `--with-death` (add a death stay).
 
-## Presentation flow (about six minutes, then questions)
+## Presentation flow (about eight minutes, then questions)
 
-1. **Patient**, the ventilation stay: point at the two alarm markers ("Sentinel here,
-   NEWS2 sixteen hours later, intubation here"). The slider opens on the model's alarm
-   hour: attention shows the agents it leaned on, the chips show what NEWS2 could and
-   could not see, the card says it in one sentence. Press **Regenerate live** — about a
-   second on the laptop GPU, same sentence (temperature 0, seed 42: reproducible by design).
-2. The **quiet** stay: flat risk, no alarm from either — it also knows when to stay
-   silent. Then the **NEWS2-first** stay — "we show the ones we lose too".
-3. **Cohort**: the scatter ("five ranking models on the zero line, one above it"), the
-   burden bars ("same model, seven thresholds"), then read the three caveats aloud.
-4. **Footprint**: the numbers, one sentence on what runs where, then hand over to the
+1. **Live**, the ventilation stay, 2 s/hour, press **Play** and narrate the race: the risk
+   line climbs, Sentinel's alarm pops at hour 23 — its explanation card slides in — and
+   the two GBM dots don't land on the race strip until hour 37, three hours before the
+   intubation line. The lead time is *felt*, not read off a table (~70 s of clock time).
+   If time allows, the **vasopressor** stay: Sentinel three hours ahead, both baselines
+   alarming minutes before the event. **Pause before leaving the tab.**
+2. **Patient**, same ventilation stay: the slider opens on the alarm hour — attention
+   shows the agents it leaned on, the chips show what a bedside score could and could not
+   see, the card says it in one sentence. Press **Regenerate live** — about a second on
+   the laptop GPU, same sentence (temperature 0: reproducible by design).
+3. The **quiet** stay on either tab: flat risk, nobody alarms — it also knows when to
+   stay silent.
+4. **Head-to-head**: one stay was an anecdote; here are all 1,540 event stays at the same
+   alarm volume — catch rate 65% vs 54/52%, exclusive catches 246:63 and 265:55, and the
+   cost stated plainly (more quiet-stay alarms, lower per-alarm precision). Flip the
+   validity selector to **mid-stay only** yourself before anyone asks: there the three
+   models are equal — the extra catches come from reading arrival profiles earlier.
+5. **Cohort**: the ranking bars, the burden bars ("same model, seven thresholds"), then
+   read the three caveats aloud.
+6. **Footprint**: the numbers, one sentence on what runs where, then hand over to the
    Defence Brief's questions for review.
-5. Leave-behind: the aggregate-only page from `scripts/export_demo_static.py`, plus the
-   Defence Brief link.
+7. Leave-behind: the aggregate-only page from `scripts/export_demo_static.py` (now with
+   the head-to-head section), plus the Defence Brief link.
 
 ## Running it on a teammate's machine (credentialed, no GPU)
 
@@ -62,8 +78,8 @@ mkdir -p data/cache/demo
 .venv/bin/streamlit run demo/app.py
 ```
 
-What works without a GPU: everything — all three tabs, every stay, every hour, and the
-cached explanation card for each hour. The only difference is the **Regenerate live**
+What works without a GPU: everything — all five tabs (the Live replay included; it replays
+cached scores), every stay, every hour, and the cached explanation card for each hour. The only difference is the **Regenerate live**
 button: with no ollama running it shows a warning and keeps the cached card. (Optional:
 `ollama pull gemma4:12b` and `ollama serve` on CPU makes the button work, at roughly
 20–30 s per card instead of ~1 s.)
@@ -75,3 +91,8 @@ button: with no ollama running it shows a warning and keeps the cached card. (Op
   not reachable.
 - The attention shown is the single-head ALL-8 refit's (the composite's shared
   substrate) — the same caveat the T17 explanation benchmark carries.
+- The Live replay's tick timer belongs to the page, not the tab: pause the replay before
+  switching tabs, or it keeps advancing and its alarm toasts keep popping.
+- The Live tab is honest theatre: precomputed held-out scores replayed at clock speed
+  (the line under the controls says so). All three models alarm at thresholds frozen on
+  validation at the same alarm volume.

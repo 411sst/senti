@@ -8,10 +8,10 @@ import pytest
 
 from demo_bundle import (
     COMPARATOR_LABELS, DEATH_ROLE, ROLES, alarm_announcements,
-    assert_aggregate_only, assert_no_identifiers, dumps_strict,
-    first_alarm_hour, first_alarm_table, h2h_summary, nan_to_none,
-    select_demo_stays, stay_label, stay_summary, t_head_from_composite,
-    truncate_stay, validate_bundle,
+    assert_aggregate_only, assert_no_identifiers, budget_sweep_row,
+    dumps_strict, first_alarm_hour, first_alarm_table, h2h_summary,
+    nan_to_none, select_demo_stays, stay_label, stay_summary,
+    t_head_from_composite, truncate_stay, validate_bundle,
 )
 
 
@@ -108,6 +108,15 @@ def test_h2h_summary_counts_catches_races_exclusives_and_quiet_cost():
     assert h2h["cost"]["stay_precision"]["opp"] == 6 / 7   # the quiet FP hurts
 
 
+def test_budget_sweep_row_reports_catch_and_quiet_fp_per_model():
+    row = budget_sweep_row(_h2h_table(range(1, 12)), ["sent", "opp"])
+    assert row["sent"] == {"catch": 6 / 9, "quiet_fp": 0.0}
+    assert row["opp"] == {"catch": 6 / 9, "quiet_fp": 0.5}
+    assert assert_aggregate_only(
+        budget_sweep_row(_h2h_table(range(30000001, 30000012)), ["sent", "opp"]),
+        "sweep")
+
+
 def test_h2h_summary_output_passes_the_aggregate_gate():
     """Even fed real-range stay ids, no id can leak into the h2h block."""
     table = _h2h_table(range(30000001, 30000012))
@@ -176,15 +185,25 @@ def test_select_demo_stays_ranks_wins_by_lead_and_losses_by_typicality():
 
 # --- labels and JSON hygiene -----------------------------------------------
 
-def test_stay_label_never_mentions_the_id():
-    stay = {"unit_group": "medical", "event_type": "vent",
-            "first_alarm": {"model": 14, "news2": 20, "lead_h": 6.0}}
-    label = stay_label(stay)
-    assert label == "Ventilation — model alarm 6 h before NEWS2 · medical ICU"
-    assert stay_label({**stay, "first_alarm": {"lead_h": -2.0}}).startswith(
-        "Ventilation — NEWS2 alarm 2 h before the model")
+def test_stay_label_races_the_baselines_and_never_mentions_the_id_or_news2():
+    stay = {"unit_group": "medical", "event_type": "vent", "event_h": 40.0,
+            "first_alarm": {"model": 14, "news2": 20, "lead_h": 6.0},
+            "comp_first_alarm": {"ecart": 28, "yaib": 30}}
+    assert stay_label(stay) == \
+        "Ventilation — Sentinel alarms 14 h before the baselines · medical ICU"
+    behind = {**stay, "comp_first_alarm": {"ecart": 10, "yaib": None}}
+    assert stay_label(behind).startswith(
+        "Ventilation — the baselines alarm 4 h before Sentinel")
+    missed = {**stay, "comp_first_alarm": {"ecart": None, "yaib": None}}
+    assert stay_label(missed).startswith(
+        "Ventilation — only Sentinel alarms — 26 h before the event")
+    old_bundle = {"unit_group": "medical", "event_type": "vent", "event_h": 40.0,
+                  "first_alarm": {"model": 14}}
+    assert "Sentinel alarms 26 h before the event" in stay_label(old_bundle)
     assert stay_label({"unit_group": "neuro", "event_type": None}) == \
-        "No event — no alarm from either · neuro ICU"
+        "No event — no alarm from any model · neuro ICU"
+    for s in (stay, behind, missed):
+        assert "NEWS2" not in stay_label(s)
 
 
 def test_nan_to_none_and_strict_dumps():

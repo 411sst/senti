@@ -204,6 +204,71 @@ or an alarm.
 
 ---
 
+## Head-to-head tab
+
+Sentinel against the two published-spec ML baselines — the eCART-style GBM and the YAIB
+LightGBM, both retrained on this cohort from their published feature specifications
+(`src/lit_gbm.py`) — with **no NEWS2 anywhere on the tab**. Every number is recomputed at
+build time into `cohort.json["h2h"]` and is aggregate-only.
+
+### The budget banner
+Every model's threshold is frozen on the validation freeze half at the same alarm volume
+(the demo's matched 2.62% of patient-hours), so no model spends more alerts than another.
+The achieved test volumes are printed (2.8% / 2.6% / 2.4%) rather than hidden — thresholds
+are frozen on validation, so realised test volume drifts slightly.
+
+### How often is the anomaly caught (funnel + validity selector)
+**What it is.** Share of the 1,540 event stays each model catches, under a selectable
+definition of "catch": **any catch** (first alarm at or before the event: 65.5% / 53.6% /
+51.8%), **≥ 6 h warning** (34.9% / 28.2% / 27.1%), **mid-stay only** (an any-catch whose
+first alarm falls strictly after the stay's first scored hour — a change detection, not an
+arrival-profile flag: 23.2% / 24.7% / 24.5%). 449 event stays are missed by all three.
+
+**What it indicates.** The headline gap — Sentinel catches ~12 points more of the event
+stays than either GBM at the same alarm volume — holds under the ≥ 6 h definition too. The
+mid-stay view is the honest one to know cold: there the three models are equal (the GBMs a
+hair ahead), i.e. Sentinel's extra catches come largely from flagging high-risk arrival
+profiles earlier, not from better mid-stay change detection.
+
+### If it is caught, who catches it first (race bars)
+**What it is.** Among stays both models catch: Sentinel first / same hour / comparator
+first — vs the eCART-style GBM 28% / 62% / 10% (762 joint stays), vs YAIB 26% / 62% / 13%
+(743). Under each bar: the exclusive catches (only Sentinel : only the comparator —
+**246 : 63** vs eCART-style, **265 : 55** vs YAIB) and the median gap when they differ
+(+2.0 h, positive = Sentinel earlier).
+
+**What it indicates.** Most joint catches are same-hour ties; when the models disagree
+Sentinel is earlier roughly 3:1, and the exclusive-catch ratio is ~4:1 — the asymmetry is
+the persuasive number, not the median.
+
+### Is it a valid catch — and what does it cost (metrics row)
+**What it is.** Per model: the share of never-deteriorating stays that get at least one
+alarm (11.8% / 6.8% / 6.2% of 6,835 quiet stays) and stay-level precision — of the stays
+a model alarms on, how many truly deteriorate (56% / 64% / 65%).
+
+**What it indicates.** The price of the extra catches, stated plainly: Sentinel spends
+more of its budget on stays that never deteriorate. Same budget, different spending
+strategy — more catches, lower per-alarm precision.
+
+### Does it hold at other budgets? (sweep lines)
+**What it is.** The same frozen-threshold head-to-head at eight alarm budgets from 0.5%
+to 10% of patient-hours (the demo's matched operating point included as the dashed rule):
+one catch-rate line per model, quiet-stay FP in the tooltip. Computed at build time into
+`cohort.json["h2h"]["sweep"]` (`src/demo_bundle.py: budget_sweep_row`).
+
+**What it indicates.** The answer to "why 2%?": it doesn't matter. The catch-rate gap
+over the best baseline runs +7 to +13 points across the whole sweep and never inverts,
+and AUPRC/AUROC are threshold-free anyway — the budget is an operational choice (the
+matched volume is what NEWS2 ≥ 11, the deployed standard, spends in this cohort; for a
+20-bed ICU, 2% ≈ 10 alarm-hours a day), not a tuned parameter.
+
+### The caveat line
+"Published feature specs retrained on our cohort, not the commercial products" — the
+comparison is to the published eCART/YAIB recipes under our protocol, not to the deployed
+commercial eCART score.
+
+---
+
 ## Cohort tab
 
 ### The four headline numbers
@@ -211,19 +276,18 @@ or an alarm.
 |---|---|---|
 | **AUPRC · 5-seed mean** (0.308) | area under the precision–recall curve on 361,229 held-out patient-hours, averaged over five fusion training seeds; caption gives the equal-information GBM (0.287) and NEWS2 (0.114) | ranking quality at 4.7% prevalence — the claim that is robust: the paired margin over the GBM has its CI clear of zero on 5 of 5 seeds |
 | **AUROC** (0.822) | area under the ROC curve; caption gives the death head's own AUROC on death (0.946) | the conventional discrimination number; the death head is the strongest single ranking in the system |
-| **Lead vs NEWS2 · 2% budget** (+0.9 h) | median first-alarm lead over NEWS2 at matched alarm volume, on stays both systems catch before the event, averaged over five seeds; caption: positive in 3 of 5 seeds, win rate 54% | the timing claim — real but seed-sensitive, and always quoted with that spread |
+| **Event stays caught · same alarm volume** (65%) | share of the 1,540 event stays with a first alarm at or before the event, at the frozen matched volume; caption gives the best published-spec GBM (54%) and points to the Head-to-head tab | the capability claim in one number — same budget, ~12 points more of the deteriorations caught |
 | **Alarm-burden spread** (5.3× → 1.7×) | the ratio of the highest to the lowest realised alarm rate across the seven ICU types, at one global threshold versus seven per-unit thresholds | one model serves every unit once the operating point is per unit |
 
-### Ranking and earliness are different axes (scatter)
-**What it is.** Six systems, x = AUPRC, y = median hours earlier than NEWS2 at matched
-volume (`data/cache/lit_gbm_report.json`): NEWS2, our 145-feature GBM, three gradient-
-boosted models rebuilt from published specifications (Sadanandan 2026, eCART-style,
-YAIB LightGBM), and Sentinel. Tooltip shows AUROC, win rate and the number of paired stays.
+### Ranking quality, six systems (AUPRC bars)
+**What it is.** One bar per system, sorted by AUPRC (`data/cache/lit_gbm_report.json`):
+Sentinel (blue), our 145-feature GBM, three gradient-boosted models rebuilt from published
+specifications (Sadanandan 2026, eCART-style, YAIB LightGBM), and NEWS2 — all gray.
+Tooltip shows AUROC.
 
-**What it indicates.** Five systems spanning a 2.7× range of ranking quality all sit on
-the zero line — a better ranking model does not warn earlier. Only the agent-fusion
-architecture moves on both axes. Seed 42 is shown; the caption carries the five-seed mean
-and the 3-of-5 caveat.
+**What it indicates.** The ranking ladder at a glance: Sentinel clears every comparator,
+and NEWS2 sits at the bottom as context, not as a race — the timing story now lives on the
+Head-to-head tab, against the ML baselines only.
 
 ### Same model, seven thresholds (burden bars)
 **What it is.** Per ICU type, the realised alarm rate on the test split at one global
@@ -280,7 +344,9 @@ decision path is LLM-free end to end.
 | agent risks, NEWS2 sub-scores | the cached agent bank (`data/cache/embeddings/*_test.npz`) |
 | vitals, staleness, trends | `data/cache/mimic_cohort_hourly.parquet` + `src/explain/drivers.py: build_contexts` |
 | explanation cards | `src/explain/rationales.py` with `gemma4:12b`, cached in `data/cache/demo/` |
-| scatter | `data/cache/lit_gbm_report.json` |
+| ranking bars | `data/cache/lit_gbm_report.json` |
+| comparator traces, alarms, thresholds | `data/cache/lit_gbm_scores.npz`, frozen on the V_freeze half at the matched volume (`scripts/build_demo_bundle.py`) |
+| head-to-head block | `src/demo_bundle.py: first_alarm_table` + `h2h_summary` over all 8,375 test stays, written to `cohort.json["h2h"]` |
 | burden | `data/cache/standby_report.json` |
 | seeds, headline | `data/cache/metrics_table.json` + `two_head.npz` metadata |
 
