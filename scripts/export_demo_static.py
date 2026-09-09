@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "demo"))
 
-from charts import burden_chart, scatter_chart  # noqa: E402
+from charts import auprc_bar_chart, burden_chart, funnel_chart, race_chart  # noqa: E402
 from demo_bundle import assert_aggregate_only, assert_no_identifiers  # noqa: E402
 
 COHORT = REPO / "data" / "cache" / "demo" / "cohort.json"
@@ -100,9 +100,61 @@ def stat(n, k, green=False):
 
 def render(c):
     h, b, f = c["headline"], c["burden"], c["footprint"]
-    scatter = scatter_chart(c["scatter"], height=300).configure(**CHART_CONFIG).to_json()
+    ranking = auprc_bar_chart(c["scatter"], height=240).configure(**CHART_CONFIG).to_json()
     burden = burden_chart(b["units"], b["budget"], height=250).configure(**CHART_CONFIG).to_json()
     date = datetime.now(timezone.utc).strftime("%d %b %Y")
+
+    h2 = c.get("h2h")
+    h2h_section, h2h_embeds = "", ""
+    if h2:
+        lab, models, cost = h2["labels"], h2["models"], h2["cost"]
+        f_any = h2["funnel"]["any"]
+        funnel_json = funnel_chart(
+            [{"model": lab.get(m, m), "n": f_any[m]["n"], "pct": f_any[m]["pct"],
+              "flagship": m == models[0]} for m in models],
+            height=170).configure(**CHART_CONFIG).to_json()
+        race_json = race_chart(h2["race"], lab, height=150).configure(**CHART_CONFIG).to_json()
+        excl = " and ".join(
+            f"{r['only_flagship']}:{r['only_opponent']} vs the "
+            f"{html.escape(lab.get(r['opponent'], r['opponent']))}" for r in h2["race"])
+        gaps = "; ".join(
+            f"median gap when they differ {r['median_gap_h']:+.1f} h vs the "
+            f"{html.escape(lab.get(r['opponent'], r['opponent']))}" for r in h2["race"])
+        comp_fp = " · ".join(
+            f"{html.escape(lab.get(m, m))} {100 * cost['quiet_fp_rate'][m]:.1f}%"
+            for m in models[1:])
+        comp_prec = " · ".join(
+            f"{html.escape(lab.get(m, m))} {100 * cost['stay_precision'][m]:.0f}%"
+            for m in models[1:])
+        h2h_section = f"""
+<section>
+  <h2>Head-to-head at the same alarm volume</h2>
+  <p class="prose">Sentinel against the two published-spec ML baselines retrained on this
+  cohort. Every model's threshold is frozen on the validation freeze half at the same
+  {h2['matched']:.2%} alarm volume — no model spends more alerts than another.</p>
+  <div class="stats" style="margin-top:16px">
+    {stat(f"{100 * f_any[models[0]]['pct']:.0f}%",
+          f"of {h2['n_event_stays']:,} event stays caught by Sentinel — first alarm at or "
+          f"before the event · {h2['n_missed_by_all']:,} stays are missed by all three models",
+          green=True)}
+    {stat(f"{h2['race'][0]['only_flagship']} : {h2['race'][0]['only_opponent']}",
+          f"exclusive catches vs the {lab.get(h2['race'][0]['opponent'], '')} "
+          "(only Sentinel : only the comparator)", green=True)}
+    {stat(f"{100 * cost['quiet_fp_rate'][models[0]]:.1f}%",
+          f"of never-deteriorating stays get ≥ 1 Sentinel alarm · {comp_fp}")}
+    {stat(f"{100 * cost['stay_precision'][models[0]]:.0f}%",
+          f"of Sentinel's alarmed stays truly deteriorate · {comp_prec}")}
+  </div>
+  <div class="panel" style="margin-top:16px"><div id="funnel" class="vis" style="min-height:190px"></div></div>
+  <div class="panel" style="margin-top:16px"><div id="race" class="vis" style="min-height:170px"></div></div>
+  <p class="cap">Top: share of event stays caught at the same alarm volume. Bottom: among
+  jointly-caught stays, who fires first ({gaps}; positive = Sentinel earlier). Exclusive
+  catches are {excl}. {html.escape(h2['caveat'].capitalize())}.</p>
+</section>
+"""
+        h2h_embeds = (f"  var funnel = {funnel_json};\n  var race = {race_json};\n"
+                      "  vegaEmbed(\"#funnel\", funnel, opts);\n"
+                      "  vegaEmbed(\"#race\", race, opts);\n")
 
     seed_rows = "".join(
         f"<tr><td>{s['seed']}</td><td>{s['auprc']:.4f}</td><td>{s['auroc']:.4f}</td>"
@@ -142,20 +194,18 @@ def render(c):
 <div class="stats">
   {stat(f"{h['auprc_mean']:.3f}", f"AUPRC, five-seed mean · equal-information GBM {h['fair_traj']['auprc']:.3f}, NEWS2 {h['news2']['auprc']:.3f} · paired CI clear of every comparator, 5/5 seeds")}
   {stat(f"{h['auroc_mean']:.3f}", f"AUROC · the death head alone reaches {h['dhead_death_auroc_mean']:.3f} on death")}
-  {stat(f"+{h['lead_2pct_mean_h']:.1f} h", f"mean first-alarm lead vs NEWS2 at a 2% budget · positive in {h['lead_positive_seeds']} seeds · win rate {100 * h['win_rate_mean']:.0f}%", green=True)}
+  {stat(f"{100 * h2['funnel']['any'][h2['models'][0]]['pct']:.0f}%", f"of event stays caught at the same alarm volume · best published-spec GBM {100 * max(h2['funnel']['any'][m]['pct'] for m in h2['models'][1:]):.0f}% · thresholds frozen on validation", green=True) if h2 else stat(f"+{h['lead_2pct_mean_h']:.1f} h", f"mean first-alarm lead vs NEWS2 at a 2% budget · positive in {h['lead_positive_seeds']} seeds · win rate {100 * h['win_rate_mean']:.0f}%", green=True)}
   {stat(f"{b['spread_global_x']:.1f}× → {b['spread_standby_x']:.1f}×", "alarm-burden spread across ICU types: one global threshold → seven per-unit thresholds, same model", green=True)}
 </div>
 
 <section>
-  <h2>Ranking and earliness are different axes</h2>
-  <div class="panel"><div id="scatter" class="vis"></div></div>
+  <h2>Ranking quality, six systems</h2>
+  <div class="panel"><div id="ranking" class="vis" style="min-height:260px"></div></div>
   <p class="cap">{h['n_test_hours']:,} held-out patient-hours, {h['n_stays']:,} stays, prevalence
-  {h['prevalence_pct']:.2f}%. Alarm volume matched to NEWS2's own rate; thresholds frozen on validation;
-  paired first-alarm race on jointly-caught stays. Five comparators sit on the zero line; only the
-  agent-fusion architecture moves on both axes. Seed 42 shown — the five-seed mean lead is
-  +{h['lead_2pct_mean_h']:.1f} h, positive in {h['lead_positive_seeds']} seeds.</p>
+  {h['prevalence_pct']:.2f}%. Thresholds frozen on validation. Seed 42 shown for the flagship —
+  the five-seed mean is {h['auprc_mean']:.3f}, paired CI clear of every comparator on all five.</p>
 </section>
-
+{h2h_section}
 <section>
   <h2>Same model, seven thresholds</h2>
   <div class="panel"><div id="burden" class="vis"></div></div>
@@ -204,11 +254,11 @@ def render(c):
 <script>
 (function(){{
   var opts = {{actions:false, renderer:"svg"}};
-  var scatter = {scatter};
+  var ranking = {ranking};
   var burden = {burden};
-  vegaEmbed("#scatter", scatter, opts);
+  vegaEmbed("#ranking", ranking, opts);
   vegaEmbed("#burden", burden, opts);
-}})();
+{h2h_embeds}}})();
 </script>
 """
 

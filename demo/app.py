@@ -20,9 +20,12 @@ for p in (REPO / "src", REPO / "demo"):
     sys.path.insert(0, str(p))
 
 from charts import (  # noqa: E402
-    attention_chart, burden_chart, news2_chart, risk_chart, scatter_chart,
+    COMP2, GRAY, MODEL, attention_chart, auprc_bar_chart, burden_chart,
+    funnel_chart, news2_chart, race_chart, race_strip, risk_chart,
 )
-from demo_bundle import ollama_alive, stay_label  # noqa: E402
+from demo_bundle import (  # noqa: E402
+    alarm_announcements, ollama_alive, stay_label, truncate_stay,
+)
 from explain.drivers import AGENT_LABELS, COMPONENT_LABELS  # noqa: E402
 
 st.set_page_config(page_title="Sentinel", page_icon="🫀", layout="wide",
@@ -47,6 +50,12 @@ table.vit th {font-weight: 500; font-size: .75rem; letter-spacing: .04em; text-t
 table.vit .num {text-align: right; font-variant-numeric: tabular-nums;}
 table.vit .dim {opacity: .6;}
 table.vit td.rising {color: #eb6834;} table.vit td.falling {color: #2a78d6;}
+.alarmbanner {border-left: 4px solid #e34948; background: rgba(227,73,72,.08);
+       padding: .55rem .9rem; margin: .25rem 0; font-size: 1rem; max-width: 760px;}
+.alarmbanner.won {border-left-color: #2a78d6; background: rgba(42,120,214,.08);}
+.bigread {font-size: 2.5rem; font-weight: 700; font-variant-numeric: tabular-nums;
+       line-height: 1.1; padding-top: .2rem;}
+.bigread .sub {font-size: .85rem; font-weight: 400; opacity: .7; display: block;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,13 +75,178 @@ cohort = load_json(str(DEMO / "cohort.json"))
 AGENTS = bundle["agents"]
 COMPONENTS = bundle["news2_components"]
 THR = bundle["thresholds"]
+HAS_H2H = "h2h" in cohort
+HAS_COMP = bool(bundle["stays"]) and "comp_risk" in bundle["stays"][0]
+REBUILD_MSG = ("This bundle predates the head-to-head build. Rebuild it:  "
+               "`.venv/bin/python scripts/build_demo_bundle.py`")
+
+
+def vitals_table_html(stay, vitals, i, hour):
+    """The five-row model-view vitals table; shared by Patient and Live."""
+    trends = stay["contexts"].get(str(hour), {}).get("trends", {})
+    rows = []
+    for v in vitals:
+        t = trends.get(v, {})
+        age = stay["vitals_hrs_since"][v][i]
+        digits = 1 if v == "temperature" else 0
+        word = {"unknown": "no 4 h history"}.get(t.get("word"), t.get("word", "—"))
+        rows.append(
+            f"<tr><td>{COMPONENT_LABELS.get(v, v)}</td>"
+            f"<td class='num'>{'n/a' if t.get('now') is None else f'{t['now']:.{digits}f}'}</td>"
+            f"<td class='num dim'>{'—' if age is None else f'{age:.0f} h ago'}</td>"
+            f"<td class='num'>{'—' if t.get('before') is None else f'{t['before']:.{digits}f}'}</td>"
+            f"<td class='{word}'>{word}</td></tr>")
+    return ("<table class='vit'><thead><tr><th>vital</th><th class='num'>value</th>"
+            "<th class='num'>charted</th><th class='num'>4 h earlier</th><th>trend</th></tr></thead>"
+            "<tbody>" + "".join(rows) + "</tbody></table>")
 
 st.markdown("## Sentinel · ICU early warning")
 st.markdown('<div class="quiet">Eight small agents, one ~25k-parameter fusion, one local '
             'language model for the explanation. Every number here is held-out MIMIC-IV test '
             'data under frozen thresholds.</div>', unsafe_allow_html=True)
 
-tab_patient, tab_cohort, tab_footprint = st.tabs(["Patient", "Cohort", "Footprint"])
+tab_live, tab_patient, tab_h2h, tab_cohort, tab_footprint = st.tabs(
+    ["Live", "Patient", "Head-to-head", "Cohort", "Footprint"])
+
+
+# --- Live replay -----------------------------------------------------------------
+
+SPEEDS = {"1 s / h": 1.0, "2 s / h": 2.0, "4 s / h": 4.0}
+LANES = (("Sentinel", "sentinel", MODEL),
+         ("eCART-style GBM", "ecart", GRAY),
+         ("YAIB LightGBM", "yaib", COMP2))
+
+with tab_live:
+    if not HAS_COMP:
+        st.error(REBUILD_MSG)
+    else:
+        stays = bundle["stays"]
+        live_labels = [stay_label(s) for s in stays]
+        live_choice = st.selectbox("Stay", live_labels, label_visibility="collapsed",
+                                   key="live_stay")
+        l_stay = stays[live_labels.index(live_choice)]
+        l_hours = l_stay["hours"]
+        ss = st.session_state
+
+        if ss.get("live_sid") != str(l_stay["stay_id"]):
+            ss["live_sid"] = str(l_stay["stay_id"])
+            ss["live_state"], ss["live_i"] = "idle", -1
+            ss["live_fired"], ss["live_last_tick"] = set(), 0.0
+
+        def _play():
+            if ss["live_state"] == "finished":
+                ss["live_i"], ss["live_fired"] = -1, set()
+            ss["live_state"] = "playing"
+            ss["live_last_tick"] = 0.0          # first l_tick advances immediately
+
+        def _pause():
+            ss["live_state"] = "paused"
+
+        def _restart():
+            ss["live_state"], ss["live_i"] = "idle", -1
+            ss["live_fired"] = set()
+
+        c_speed, c_play, c_pause, c_restart, c_note = st.columns([1.6, .7, .8, .9, 3])
+        with c_speed:
+            st.segmented_control("pace", list(SPEEDS), default="2 s / h",
+                                 key="live_speed", label_visibility="collapsed")
+        playing = ss["live_state"] == "playing"
+        c_play.button("▶ Play", on_click=_play, disabled=playing)
+        c_pause.button("⏸ Pause", on_click=_pause, disabled=not playing)
+        c_restart.button("↺ Restart", on_click=_restart)
+        with c_note:
+            st.markdown('<div class="quiet">a replay of precomputed held-out scores at '
+                        'accelerated clock speed — not a live model run; all three models '
+                        'alarm at the same frozen volume</div>', unsafe_allow_html=True)
+
+        l_tick = SPEEDS.get(ss.get("live_speed") or "2 s / h", 2.0)
+        l_announce = alarm_announcements(
+            l_stay, {**bundle.get("comparator_labels", {}), "sentinel": "Sentinel"})
+        l_dom = (l_hours[0], max(l_hours[-1], l_stay.get("event_h") or 0) + 0.5)
+        run_every = l_tick if ss["live_state"] == "playing" else None
+
+        @st.fragment(run_every=run_every)
+        def live_panel():
+            now = time.monotonic()
+            if (ss["live_state"] == "playing"
+                    and now - ss["live_last_tick"] >= 0.8 * l_tick):
+                ss["live_i"] = min(ss["live_i"] + 1, len(l_hours) - 1)
+                ss["live_last_tick"] = now
+            if ss["live_state"] == "playing" and ss["live_i"] >= len(l_hours) - 1:
+                ss["live_state"] = "finished"
+                st.rerun()                      # re-applies the decorator: timer off
+
+            started = ss["live_i"] >= 0
+            i = max(ss["live_i"], 0)
+            sim_h = l_hours[i]
+            t = truncate_stay(l_stay, i + 1)
+
+            for h_a, name, msg in l_announce:
+                if started and h_a <= sim_h and name not in ss["live_fired"]:
+                    st.toast(msg, icon="🚨", duration="long")
+                    ss["live_fired"].add(name)
+
+            r1, r2, r3 = st.columns([1, 1.2, 2.2])
+            r1.markdown(f'<div class="bigread">h{sim_h}<span class="sub">simulated '
+                        f'hour</span></div>', unsafe_allow_html=True)
+            r2.markdown(f'<div class="bigread">{l_stay["risk"]["composite"][i]:.3f}'
+                        f'<span class="sub">Sentinel fused risk</span></div>',
+                        unsafe_allow_html=True)
+            status = " · ".join(
+                f"<b style='color:{color}'>{label} ALARM</b>"
+                if key in ss["live_fired"] else
+                f"<span style='opacity:.55'>{label} quiet</span>"
+                for label, key, color in LANES)
+            r3.markdown(f'<div style="padding-top:1.1rem">{status}</div>',
+                        unsafe_allow_html=True)
+
+            st.altair_chart(risk_chart(t, THR["thr_model"], sim_h, domain=l_dom),
+                            width="stretch")
+            lanes = [{"lane": label,
+                      "alarm_h": (l_stay["first_alarm"]["model"] if key == "sentinel"
+                                  else l_stay["comp_first_alarm"][key]),
+                      "color": color} for label, key, color in LANES]
+            st.altair_chart(race_strip(lanes, l_dom,
+                                       sim_h if started else l_hours[0] - 1,
+                                       event_h=t.get("event_h")), width="stretch")
+
+            for h_a, name, msg in l_announce:
+                if name in ss["live_fired"]:
+                    cls = "alarmbanner won" if name == "sentinel" else "alarmbanner"
+                    st.markdown(f'<div class="{cls}">🚨 {msg}</div>',
+                                unsafe_allow_html=True)
+
+            if "sentinel" in ss["live_fired"]:
+                card = l_stay["cards"].get(str(l_stay["first_alarm"]["model"]), "")
+                if card:
+                    st.markdown("**Why it fired — the model's reading at its alarm hour**")
+                    st.markdown(f'<div class="card">{card}</div>', unsafe_allow_html=True)
+
+            if ss["live_state"] == "finished":
+                event_h = l_stay.get("event_h")
+                if event_h is None:
+                    st.success("Stay complete — no deterioration event, and no alarm "
+                               "from any model. Silence is also a prediction.")
+                else:
+                    word = {"vent": "ventilation", "vaso": "vasopressors",
+                            "death": "death"}.get(l_stay.get("event_type"), "event")
+                    parts = []
+                    for label, key, _ in LANES:
+                        fa_h = (l_stay["first_alarm"]["model"] if key == "sentinel"
+                                else l_stay["comp_first_alarm"][key])
+                        if fa_h is None or fa_h > event_h:
+                            parts.append(f"{label} missed")
+                        else:
+                            parts.append(f"{label} warned {event_h - fa_h:.1f} h early")
+                    st.error(f"Event — {word} at hour {event_h:.1f} · " + " · ".join(parts))
+            elif not started:
+                st.caption("Press ▶ Play to replay this stay at the chosen pace. "
+                           "Alarms pop the moment each model's frozen threshold is crossed.")
+
+            st.markdown(vitals_table_html(l_stay, bundle["vitals"], i, sim_h),
+                        unsafe_allow_html=True)
+
+        live_panel()
 
 
 # --- Patient -------------------------------------------------------------------
@@ -151,23 +325,8 @@ with tab_patient:
 
     st.markdown("**Vital signs the model saw**")
     ctxh = stay["contexts"].get(str(hour), {})
-    trends = ctxh.get("trends", {})
-    rows = []
-    for v in bundle["vitals"]:
-        t = trends.get(v, {})
-        age = stay["vitals_hrs_since"][v][i]
-        digits = 1 if v == "temperature" else 0
-        word = {"unknown": "no 4 h history"}.get(t.get("word"), t.get("word", "—"))
-        rows.append(
-            f"<tr><td>{COMPONENT_LABELS.get(v, v)}</td>"
-            f"<td class='num'>{'n/a' if t.get('now') is None else f'{t['now']:.{digits}f}'}</td>"
-            f"<td class='num dim'>{'—' if age is None else f'{age:.0f} h ago'}</td>"
-            f"<td class='num'>{'—' if t.get('before') is None else f'{t['before']:.{digits}f}'}</td>"
-            f"<td class='{word}'>{word}</td></tr>")
-    st.markdown(
-        "<table class='vit'><thead><tr><th>vital</th><th class='num'>value</th>"
-        "<th class='num'>charted</th><th class='num'>4 h earlier</th><th>trend</th></tr></thead>"
-        "<tbody>" + "".join(rows) + "</tbody></table>", unsafe_allow_html=True)
+    st.markdown(vitals_table_html(stay, bundle["vitals"], i, hour),
+                unsafe_allow_html=True)
     st.markdown('<div class="quiet">the last value charted before this hour — the only '
                 'thing the model is allowed to see — with its age; "4 h earlier" is the '
                 'trend anchor the card refers to</div>', unsafe_allow_html=True)
@@ -199,6 +358,64 @@ with tab_patient:
             st.caption(f"generated live in {dt:.1f} s on the local GPU{same}")
 
 
+# --- Head-to-head ---------------------------------------------------------------
+
+with tab_h2h:
+    if not HAS_H2H:
+        st.error(REBUILD_MSG)
+    else:
+        h2 = cohort["h2h"]
+        lab = h2["labels"]
+        models = h2["models"]
+        vol = h2["alarm_rate_test"]
+        st.markdown(
+            '<div class="quiet">Every model spends the same alarm budget — thresholds '
+            f'frozen on the validation freeze half at a {h2["matched"]:.2%} alarm volume. '
+            'Achieved test volumes: '
+            + " · ".join(f"{lab.get(m, m)} {vol[m]:.2%}" for m in models)
+            + ".</div>", unsafe_allow_html=True)
+
+        st.markdown("**How often is the anomaly caught**")
+        mode_label = st.segmented_control(
+            "catch definition", ["any catch", "≥ 6 h warning", "mid-stay only"],
+            default="any catch", key="h2h_validity", label_visibility="collapsed")
+        mode = {"any catch": "any", "≥ 6 h warning": "lead6",
+                "mid-stay only": "midstay"}[mode_label or "any catch"]
+        st.altair_chart(funnel_chart(
+            [{"model": lab.get(m, m), "n": h2["funnel"][mode][m]["n"],
+              "pct": h2["funnel"][mode][m]["pct"], "flagship": m == models[0]}
+             for m in models]), width="stretch")
+        defs = {
+            "any": "first alarm at or before the event",
+            "lead6": f"first alarm at least {h2['min_lead_h']:g} h before the event",
+            "midstay": ("first alarm at or before the event AND strictly after the "
+                        "stay's first scored hour — a change detection, not an "
+                        "arrival-profile flag"),
+        }
+        st.caption(f"{h2['n_event_stays']:,} event stays · catch = {defs[mode]} · "
+                   f"{h2['n_missed_by_all']:,} event stays are missed by all three models")
+
+        st.markdown("**If it is caught, who catches it first** — jointly-caught stays")
+        st.altair_chart(race_chart(h2["race"], lab), width="stretch")
+        for r in h2["race"]:
+            st.markdown(
+                f"- vs **{lab.get(r['opponent'], r['opponent'])}** — exclusive catches "
+                f"**{r['only_flagship']} : {r['only_opponent']}** (only Sentinel : only "
+                f"the comparator) · median gap when they differ "
+                f"**{r['median_gap_h']:+.1f} h** (positive = Sentinel earlier) · "
+                f"{r['n_joint']:,} jointly-caught stays")
+
+        st.markdown("**Is it a valid catch — and what does it cost**")
+        cost = h2["cost"]
+        cols = st.columns(len(models))
+        for col, m in zip(cols, models):
+            col.metric(lab.get(m, m), f"{100 * cost['quiet_fp_rate'][m]:.1f}%")
+            col.caption(f"of never-deteriorating stays get ≥ 1 alarm · "
+                        f"{100 * cost['stay_precision'][m]:.0f}% of its alarmed stays "
+                        f"truly deteriorate")
+        st.markdown(f'<div class="quiet">{h2["caveat"]}</div>', unsafe_allow_html=True)
+
+
 # --- Cohort -----------------------------------------------------------------------
 
 with tab_cohort:
@@ -209,20 +426,26 @@ with tab_cohort:
                f"· CI clear of every comparator, 5/5 seeds")
     m2.metric("AUROC", f"{h['auroc_mean']:.3f}")
     m2.caption(f"death head alone {h['dhead_death_auroc_mean']:.3f} AUROC on death")
-    m3.metric("Lead vs NEWS2 · 2% budget", f"+{h['lead_2pct_mean_h']:.1f} h")
-    m3.caption(f"mean over five seeds · positive in {h['lead_positive_seeds']} · "
-               f"win rate {100 * h['win_rate_mean']:.0f}%")
+    if HAS_H2H:
+        f_any = cohort["h2h"]["funnel"]["any"]
+        best_comp = max(f_any[m]["pct"] for m in cohort["h2h"]["models"][1:])
+        m3.metric("Event stays caught · same alarm volume",
+                  f"{100 * f_any['sentinel']['pct']:.0f}%")
+        m3.caption(f"best published-spec GBM catches {100 * best_comp:.0f}% at the same "
+                   f"volume · see Head-to-head")
+    else:
+        m3.metric("Lead vs NEWS2 · 2% budget", f"+{h['lead_2pct_mean_h']:.1f} h")
+        m3.caption(f"mean over five seeds · positive in {h['lead_positive_seeds']} · "
+                   f"win rate {100 * h['win_rate_mean']:.0f}%")
     b = cohort["burden"]
     m4.metric("Alarm-burden spread across units", f"{b['spread_global_x']:.1f}× → {b['spread_standby_x']:.1f}×")
     m4.caption("one global threshold → seven per-unit thresholds, same model")
 
-    st.markdown("**Ranking and earliness are different axes**")
-    st.altair_chart(scatter_chart(cohort["scatter"]), width="stretch")
+    st.markdown("**Ranking quality, six systems**")
+    st.altair_chart(auprc_bar_chart(cohort["scatter"]), width="stretch")
     st.caption(f"{h['n_test_hours']:,} held-out patient-hours, {h['n_stays']:,} stays, prevalence "
-               f"{h['prevalence_pct']:.2f}%. Alarm volume matched to NEWS2's own rate; thresholds frozen "
-               f"on validation; paired first-alarm race on jointly-caught stays. Seed 42 shown; "
-               f"the five-seed mean lead is +{h['lead_2pct_mean_h']:.1f} h, positive in "
-               f"{h['lead_positive_seeds']} seeds.")
+               f"{h['prevalence_pct']:.2f}%. Thresholds frozen on validation; seed 42 shown for "
+               f"the flagship, the five-seed mean is {h['auprc_mean']:.3f}.")
 
     st.markdown("**Same model, seven thresholds**")
     st.altair_chart(burden_chart(b["units"], b["budget"]), width="stretch")

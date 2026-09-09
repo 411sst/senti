@@ -8,6 +8,8 @@ NEWS2 = "#eb6834"      # the deployed comparator
 EVENT = "#e34948"      # the deterioration event
 GRAY = "#8a8f98"       # thresholds, comparators
 INK = "#2b2f36"        # the selected hour
+COMP2 = "#5c6470"      # the second ML comparator lane
+TIE = "#c9cdd3"        # same-hour segment in the race bars
 
 _HOUR = alt.X("hour:Q", title="hour of stay")
 
@@ -50,9 +52,13 @@ def _domain(stay):
     return hours[0], hi + 0.5
 
 
-def risk_chart(stay, thr_model, hour, unit_thr=None, height=250):
-    """Composite risk over the stay: threshold, alarms, the event, the cursor."""
-    domain = _domain(stay)
+def risk_chart(stay, thr_model, hour, unit_thr=None, height=250, domain=None):
+    """Composite risk over the stay: threshold, alarms, the event, the cursor.
+
+    ``domain`` pins the x axis (the replay draws a growing series on the
+    full-stay domain); by default it is derived from the stay itself.
+    """
+    domain = tuple(domain) if domain is not None else _domain(stay)
     df = pd.DataFrame({"hour": stay["hours"], "risk": stay["risk"]["composite"],
                        "alarm": stay["alarm"]["model"]})
     y = alt.Y("risk:Q", title="fused risk (two-head composite)",
@@ -122,31 +128,122 @@ def attention_chart(stay, hour, agents, labels, height=270):
     return (bars + text).properties(height=height, width="container")
 
 
-def scatter_chart(points, height=300):
-    """Ranking (AUPRC) against earliness (median lead vs NEWS2 at matched volume)."""
-    df = pd.DataFrame(points)
-    df["kind"] = df["is_flagship"].map({True: "Sentinel", False: "comparator"})
-    df["win_pct"] = (df["win_rate"] * 100).round(0)
+def auprc_bar_chart(points, height=240):
+    """Ranking quality of the six systems, one bar each; the flagship in blue."""
+    df = pd.DataFrame(points).sort_values("auprc", ascending=False)
+    df["color"] = df["is_flagship"].map({True: MODEL, False: GRAY})
+    df["label"] = df["auprc"].map(lambda v: f"{v:.3f}")
+    order = df["name"].tolist()
     base = alt.Chart(df).encode(
-        x=alt.X("auprc:Q", title="ranking quality (AUPRC, held-out test)",
-                scale=alt.Scale(domain=[0.08, 0.34])),
-        y=alt.Y("median_lead_h:Q", title="median hours earlier than NEWS2",
-                scale=alt.Scale(domain=[-0.3, 1.5])),
+        y=alt.Y("name:N", sort=order, title=None,
+                axis=alt.Axis(labelLimit=260, labelOverlap=False, labelPadding=6)),
         tooltip=[alt.Tooltip("name:N", title="model"),
-                 alt.Tooltip("auprc:Q", format=".3f"), alt.Tooltip("auroc:Q", format=".3f"),
-                 alt.Tooltip("median_lead_h:Q", title="median lead (h)"),
-                 alt.Tooltip("win_pct:Q", title="win rate %"),
-                 alt.Tooltip("n_pair:Q", title="paired stays")])
-    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color=GRAY, strokeDash=[5, 4]).encode(y="y:Q")
-    pts = base.mark_point(filled=True, size=140).encode(
-        color=alt.Color("kind:N", scale=alt.Scale(domain=["Sentinel", "comparator"],
-                                                  range=[MODEL, GRAY]),
-                        legend=alt.Legend(title=None, orient="top-left")))
-    flag = df[df["is_flagship"]]
-    label = alt.Chart(flag).mark_text(align="right", dx=-10, dy=-2, color=MODEL,
-                                      fontWeight="bold", fontSize=12).encode(
-        x="auprc:Q", y="median_lead_h:Q", text="name:N")
-    return alt.layer(zero, pts, label).properties(height=height, width="container")
+                 alt.Tooltip("auprc:Q", format=".3f"),
+                 alt.Tooltip("auroc:Q", format=".3f")])
+    bars = base.mark_bar(size=16).encode(
+        x=alt.X("auprc:Q", title="ranking quality (AUPRC, held-out test)",
+                scale=alt.Scale(domain=[0, 0.36])),
+        color=alt.Color("color:N", scale=None))
+    text = base.mark_text(align="left", dx=5, color="#7d8792", fontSize=11).encode(
+        x="auprc:Q", text="label:N")
+    return (bars + text).properties(height=height, width="container")
+
+
+def funnel_chart(rows, height=170):
+    """Catch rate over the event stays, one bar per model at the same budget.
+
+    ``rows``: ``[{"model", "n", "pct", "flagship"}]`` in display order.
+    """
+    df = pd.DataFrame(rows)
+    df["rate"] = 100 * df["pct"]
+    df["color"] = df["flagship"].map({True: MODEL, False: GRAY})
+    df["label"] = [f"{r.n} stays · {100 * r.pct:.1f}%" for r in df.itertuples()]
+    order = df["model"].tolist()
+    base = alt.Chart(df).encode(
+        y=alt.Y("model:N", sort=order, title=None,
+                axis=alt.Axis(labelLimit=260, labelPadding=6)),
+        tooltip=[alt.Tooltip("model:N"), alt.Tooltip("n:Q", title="event stays caught"),
+                 alt.Tooltip("rate:Q", title="% of event stays", format=".1f")])
+    bars = base.mark_bar(size=20).encode(
+        x=alt.X("rate:Q", title="% of event stays caught",
+                scale=alt.Scale(domain=[0, 100])),
+        color=alt.Color("color:N", scale=None))
+    text = base.mark_text(align="left", dx=5, color="#7d8792", fontSize=11).encode(
+        x="rate:Q", text="label:N")
+    return (bars + text).properties(height=height, width="container")
+
+
+def race_chart(race_rows, labels, height=150):
+    """Who fires first among jointly-caught stays, one stacked bar per opponent."""
+    segs = ("Sentinel first", "same hour", "comparator first")
+    colors = {segs[0]: MODEL, segs[1]: TIE, segs[2]: COMP2}
+    rows = []
+    for r in race_rows:
+        opp = labels.get(r["opponent"], r["opponent"])
+        parts = [(segs[0], r["flagship_first"], r["flagship_first_pct"]),
+                 (segs[1], r["tie"], r["tie_pct"]),
+                 (segs[2], r["opponent_first"], r["opponent_first_pct"])]
+        left = 0.0
+        for seg, n, pct in parts:
+            rows.append({"opponent": f"vs {opp}", "segment": seg, "n": n,
+                         "pct": 100 * pct, "mid": 100 * (left + pct / 2),
+                         "label": f"{100 * pct:.0f}%" if pct >= 0.06 else ""})
+            left += pct
+    df = pd.DataFrame(rows)
+    order = list(dict.fromkeys(df["opponent"]))
+    y = alt.Y("opponent:N", sort=order, title=None,
+              axis=alt.Axis(labelLimit=260, labelPadding=6))
+    bars = alt.Chart(df).mark_bar(size=26).encode(
+        y=y, x=alt.X("pct:Q", title="% of jointly-caught event stays", stack="zero",
+                     scale=alt.Scale(domain=[0, 100])),
+        order=alt.Order("segment:N", sort="ascending"),
+        color=alt.Color("segment:N",
+                        scale=alt.Scale(domain=list(segs),
+                                        range=[colors[s] for s in segs]),
+                        legend=alt.Legend(title=None, orient="top")),
+        tooltip=[alt.Tooltip("opponent:N"), alt.Tooltip("segment:N"),
+                 alt.Tooltip("n:Q", title="stays"),
+                 alt.Tooltip("pct:Q", title="%", format=".1f")])
+    text = alt.Chart(df).mark_text(color="white", fontSize=11, fontWeight="bold").encode(
+        y=y, x="mid:Q", text="label:N")
+    return (bars + text).properties(height=height, width="container")
+
+
+def race_strip(lanes, domain, sim_hour, event_h=None, height=140):
+    """The replay's alarm race: one lane per model, a dot the moment it fires.
+
+    ``lanes``: ``[{"lane", "alarm_h", "color"}]`` in display order; a lane's dot
+    appears once ``sim_hour`` has reached its ``alarm_h``.
+    """
+    order = [l["lane"] for l in lanes]
+    colors = {l["lane"]: l["color"] for l in lanes}
+    y = alt.Y("lane:N", sort=order, title=None,
+              axis=alt.Axis(labelLimit=220, labelPadding=6))
+    base_df = pd.DataFrame({"lane": order})
+    track = alt.Chart(base_df).mark_rule(color="#e3e5e8", strokeWidth=2).encode(y=y)
+    fired = pd.DataFrame([
+        {"lane": l["lane"], "hour": l["alarm_h"], "label": f"h{l['alarm_h']:g}"}
+        for l in lanes if l["alarm_h"] is not None and l["alarm_h"] <= sim_hour])
+    layers = [track]
+    if len(fired):
+        pts = alt.Chart(fired).mark_point(filled=True, size=160).encode(
+            x=_x(domain), y=y,
+            color=alt.Color("lane:N", scale=alt.Scale(domain=order,
+                                                      range=[colors[k] for k in order]),
+                            legend=None),
+            tooltip=[alt.Tooltip("lane:N"), alt.Tooltip("hour:Q", title="alarm at hour")])
+        txt = alt.Chart(fired).mark_text(align="left", dx=10, dy=-1, fontSize=11,
+                                         fontWeight="bold", color=INK).encode(
+            x=_x(domain), y=y, text="label:N")
+        layers += [pts, txt]
+    else:
+        # keep the x scale on screen even before the first alarm
+        layers.append(alt.Chart(pd.DataFrame({"hour": [domain[0]], "lane": [order[0]]}))
+                      .mark_point(opacity=0).encode(x=_x(domain), y=y))
+    if event_h is not None:
+        layers.append(_vrule(event_h, "event", EVENT, domain))
+    layers.append(_vrule(sim_hour, "", INK, domain, dash=(1, 3)))
+    return alt.layer(*layers).properties(height=height, width="container")
 
 
 def burden_chart(units, budget, height=250):

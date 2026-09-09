@@ -7,9 +7,11 @@ import pandas as pd
 import pytest
 
 from demo_bundle import (
-    DEATH_ROLE, ROLES, assert_aggregate_only, assert_no_identifiers,
-    dumps_strict, first_alarm_hour, nan_to_none, select_demo_stays,
-    stay_label, stay_summary, t_head_from_composite, validate_bundle,
+    COMPARATOR_LABELS, DEATH_ROLE, ROLES, alarm_announcements,
+    assert_aggregate_only, assert_no_identifiers, dumps_strict,
+    first_alarm_hour, first_alarm_table, h2h_summary, nan_to_none,
+    select_demo_stays, stay_label, stay_summary, t_head_from_composite,
+    truncate_stay, validate_bundle,
 )
 
 
@@ -43,6 +45,73 @@ def test_stay_summary_lead_matches_the_paired_race():
     assert math.isnan(summary.set_index("stay_id").loc[2, "fa_model"])
     assert summary.set_index("stay_id").loc[3, "event_type"] is None
     assert summary.set_index("stay_id").loc[3, "n_hours"] == 3
+
+
+def test_first_alarm_table_generalizes_stay_summary_to_many_models():
+    frame = pd.concat([
+        _stay(1, [6, 7, 8, 9], [0.1, 0.3, 0.3, 0.3], [5, 12, 12, 12], 9.0, "vent"),
+        _stay(2, [6, 7, 8], [0.1, 0.1, 0.4], [5, 5, 5], np.nan, None),
+    ], ignore_index=True)
+    frame["third"] = [0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.9]
+    table = first_alarm_table(
+        frame, {"m": frame["m"], "n2": frame["n2"], "third": frame["third"]},
+        {"m": 0.25, "n2": 11.0, "third": 0.5})
+    row = table.set_index("stay_id")
+    assert row.loc[1, "fa_m"] == 7.0 and row.loc[1, "fa_n2"] == 7.0
+    assert row.loc[1, "fa_third"] == 6.0 and row.loc[2, "fa_third"] == 8.0
+    assert math.isnan(row.loc[2, "fa_n2"])
+    # the two-scorer summary is the same table under its historical names
+    summary = stay_summary(frame, frame["m"], frame["n2"], 0.25, 11.0)
+    renamed = table.rename(columns={"fa_m": "fa_model", "fa_n2": "fa_news2"})
+    pd.testing.assert_frame_equal(summary, renamed[summary.columns])
+
+
+def _h2h_table(ids):
+    """Nine event stays + two quiet ones with a designed catch geometry."""
+    rows = [
+        # (h0, event_h, fa_sent, fa_opp)
+        (6, 30.0, 10, 14),        # joint, flagship 4 h first
+        (6, 30.0, 12, 12),        # joint, same hour
+        (6, 30.0, 20, 15),        # joint, opponent 5 h first
+        (6, 30.0, 10, np.nan),    # only the flagship catches
+        (6, 30.0, np.nan, 10),    # only the opponent catches
+        (6, 30.0, np.nan, np.nan),  # missed by all
+        (6, 30.0, 6, 6),          # caught at h0 -> excluded from midstay
+        (6, 30.0, 27, 27),        # 3 h warning -> excluded from lead6
+        (6, 30.0, 32, np.nan),    # alarm after the event: not a catch
+        (6, np.nan, np.nan, 10),  # quiet stay, opponent false alarm
+        (6, np.nan, np.nan, np.nan),  # clean quiet stay
+    ]
+    return pd.DataFrame(
+        [(sid, h0, 40, 35, e, "vent" if not math.isnan(e) else None, fs, fo)
+         for sid, (h0, e, fs, fo) in zip(ids, rows)],
+        columns=("stay_id", "h0", "h1", "n_hours", "event_h", "event_type",
+                 "fa_sent", "fa_opp"))
+
+
+def test_h2h_summary_counts_catches_races_exclusives_and_quiet_cost():
+    h2h = h2h_summary(_h2h_table(range(1, 12)), "sent", ["opp"])
+    assert h2h["n_event_stays"] == 9 and h2h["n_quiet_stays"] == 2
+    assert h2h["n_missed_by_all"] == 2               # never caught + too late
+    assert h2h["funnel"]["any"]["sent"] == {"n": 6, "pct": 6 / 9}
+    assert h2h["funnel"]["any"]["opp"] == {"n": 6, "pct": 6 / 9}
+    assert h2h["funnel"]["lead6"]["sent"]["n"] == 5   # the 3 h catch drops out
+    assert h2h["funnel"]["midstay"]["sent"]["n"] == 5  # the h0 catch drops out
+    race, = h2h["race"]
+    assert race["opponent"] == "opp" and race["n_joint"] == 5
+    assert (race["flagship_first"], race["tie"], race["opponent_first"]) == (1, 3, 1)
+    assert race["flagship_first_pct"] == race["opponent_first_pct"] == 1 / 5
+    assert (race["only_flagship"], race["only_opponent"]) == (1, 1)
+    assert race["median_gap_h"] == -0.5              # signed, over non-zero gaps
+    assert h2h["cost"]["quiet_fp_rate"] == {"sent": 0.0, "opp": 0.5}
+    assert h2h["cost"]["stay_precision"]["sent"] == 6 / 7  # the late alarm hurts
+    assert h2h["cost"]["stay_precision"]["opp"] == 6 / 7   # the quiet FP hurts
+
+
+def test_h2h_summary_output_passes_the_aggregate_gate():
+    """Even fed real-range stay ids, no id can leak into the h2h block."""
+    table = _h2h_table(range(30000001, 30000012))
+    assert assert_aggregate_only(h2h_summary(table, "sent", ["opp"]), "h2h")
 
 
 def test_t_head_round_trips_and_survives_a_certain_death_head():
@@ -130,7 +199,8 @@ def _bundle(n=3):
     arr = [0.1] * n
     return {
         "agents": ["a", "b"], "news2_components": ["resp_rate"],
-        "thresholds": {"thr_model": 0.28, "thr_news2": 11.0},
+        "thresholds": {"thr_model": 0.28, "thr_news2": 11.0,
+                       "thr_ecart": 0.84, "thr_yaib": 0.23},
         "attention_source": "single-head refit",
         "stays": [{
             "hours": hours,
@@ -142,6 +212,9 @@ def _bundle(n=3):
             "agent_risk": {"a": list(arr), "b": list(arr)},
             "attention": {"a": [0.5] * n, "b": [0.5] * n},
             "alarm": {"model": [False] * n, "news2": [False] * n},
+            "comp_risk": {"ecart": list(arr), "yaib": list(arr)},
+            "comp_alarm": {"ecart": [False] * n, "yaib": [False] * n},
+            "comp_first_alarm": {"ecart": None, "yaib": None},
             "contexts": {str(hours[0]): {}}, "cards": {str(hours[0]): "x"},
         }],
     }
@@ -161,6 +234,59 @@ def test_validate_bundle_accepts_a_minimal_bundle_and_rejects_defects():
     stray = _bundle(); stray["stays"][0]["cards"]["99"] = "x"
     with pytest.raises(ValueError, match="cards"):
         validate_bundle(stray)
+
+
+def test_validate_bundle_checks_comparator_alignment_and_consistency():
+    short = _bundle(); short["stays"][0]["comp_risk"]["ecart"] = [0.1, 0.1]
+    with pytest.raises(ValueError, match="comp_risk.ecart"):
+        validate_bundle(short)
+    keys = _bundle(); del keys["stays"][0]["comp_first_alarm"]["yaib"]
+    with pytest.raises(ValueError, match="comp_first_alarm keys"):
+        validate_bundle(keys)
+    outside = _bundle()
+    outside["stays"][0]["comp_alarm"]["ecart"] = [False, False, True]
+    outside["stays"][0]["comp_first_alarm"]["ecart"] = 99
+    with pytest.raises(ValueError, match="outside the stay"):
+        validate_bundle(outside)
+    disagree = _bundle()
+    disagree["stays"][0]["comp_alarm"]["ecart"] = [False, True, False]
+    with pytest.raises(ValueError, match="disagrees with comp_alarm"):
+        validate_bundle(disagree)   # first_alarm still says None
+    unthresholded = _bundle(); del unthresholded["thresholds"]["thr_ecart"]
+    with pytest.raises(ValueError, match="thr_ecart"):
+        validate_bundle(unthresholded)
+
+
+# --- live replay -----------------------------------------------------------------
+
+def test_truncate_stay_cuts_every_aligned_array_and_hides_the_future_event():
+    stay = _bundle(3)["stays"][0]
+    stay["event_h"], stay["event_type"] = 8.9, "vent"     # hours are 6, 7, 8
+    cut = truncate_stay(stay, 2)
+    assert cut["hours"] == [6, 7]
+    for group in ("risk", "agent_risk", "attention", "alarm", "comp_risk",
+                  "comp_alarm", "vitals_observed", "vitals_model_view",
+                  "vitals_hrs_since"):
+        assert all(len(arr) == 2 for arr in cut[group].values()), group
+    assert len(cut["news2"]["total"]) == 2
+    assert all(len(a) == 2 for a in cut["news2"]["subscores"].values())
+    assert cut["event_h"] is None and cut["event_type"] is None  # 8.9 > 7 + 1
+    assert cut["cards"] == stay["cards"] and cut["contexts"] == stay["contexts"]
+    full = truncate_stay(stay, 3)
+    assert full["event_h"] == 8.9                # within an hour of the window
+    peek = truncate_stay(stay, 2, hide_event=False)
+    assert peek["event_h"] == 8.9
+    assert stay["hours"] == [6, 7, 8]            # the original is untouched
+
+
+def test_alarm_announcements_are_sorted_and_skip_models_that_never_fire():
+    stay = {"first_alarm": {"model": 23, "news2": 30, "lead_h": 7.0},
+            "comp_first_alarm": {"ecart": 14, "yaib": None}}
+    out = alarm_announcements(stay, COMPARATOR_LABELS)
+    assert [(h, name) for h, name, _ in out] == [(14.0, "ecart"), (23.0, "sentinel")]
+    assert "eCART" in out[0][2] and "hour 14" in out[0][2]
+    assert not any(name == "yaib" for _, name, _ in out)
+    assert alarm_announcements({"first_alarm": {}}, {}) == []
 
 
 def test_assert_aggregate_only_catches_ids_at_any_depth():

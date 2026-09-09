@@ -24,6 +24,14 @@ import pandas as pd
 ROLES = ("vent-model-first", "vaso-model-first", "news2-first", "quiet")
 DEATH_ROLE = "death-model-first"
 
+# The two published-spec ML baselines the head-to-head story races against.
+COMPARATORS = ("ecart", "yaib")
+COMPARATOR_LABELS = {
+    "sentinel": "Sentinel two-head",
+    "ecart": "eCART-style GBM (published spec)",
+    "yaib": "YAIB LightGBM (published spec)",
+}
+
 # Keys that can only exist on patient-level material.
 ID_KEYS = frozenset({"stay_id", "stay_ids", "patient_id", "subject_id", "hour"})
 # MIMIC-IV stay ids are 8-digit integers starting with 3.
@@ -46,26 +54,112 @@ def first_alarm_hour(hours, scores, threshold):
     return float(crossed[0]) if crossed.size else float("nan")
 
 
+def first_alarm_table(test_ordered, scores_by_name, thr_by_name):
+    """One row per stay: extent, event, and ``fa_<name>`` per scorer.
+
+    Generalizes the two-scorer summary to any number of models; every value in
+    ``scores_by_name`` must be aligned to ``test_ordered``'s rows, and the
+    crossing rule is :func:`first_alarm_hour`'s.
+    """
+    tmp = test_ordered[["stay_id", "hour", "event_h", "event_type"]].copy()
+    tmp["hour"] = tmp["hour"].astype(float)
+    aggs = dict(h0=("hour", "min"), h1=("hour", "max"), n_hours=("hour", "size"),
+                event_h=("event_h", "first"), event_type=("event_type", "first"))
+    for name, scores in scores_by_name.items():
+        crossed = np.asarray(scores, dtype=float) >= thr_by_name[name]
+        tmp[f"_c_{name}"] = np.where(crossed, tmp["hour"], np.nan)
+        aggs[f"fa_{name}"] = (f"_c_{name}", "min")
+    out = tmp.groupby("stay_id", sort=True).agg(**aggs).reset_index()
+    out["event_h"] = out["event_h"].astype(float)
+    out["event_type"] = out["event_type"].where(out["event_h"].notna(), None)
+    return out
+
+
 def stay_summary(test_ordered, s_model, s_news2, thr_model, thr_news2):
     """One row per stay: first alarms, event, extent.
 
     ``test_ordered`` must be sorted by ``(stay_id, hour)`` with ``s_model`` and
     ``s_news2`` aligned to it.
     """
-    tmp = test_ordered[["stay_id", "hour", "event_h", "event_type"]].copy()
-    tmp["hour"] = tmp["hour"].astype(float)
-    m = np.asarray(s_model, dtype=float) >= thr_model
-    n2 = np.asarray(s_news2, dtype=float) >= thr_news2
-    tmp["m_cross"] = np.where(m, tmp["hour"], np.nan)
-    tmp["n2_cross"] = np.where(n2, tmp["hour"], np.nan)
-    g = tmp.groupby("stay_id", sort=True)
-    out = g.agg(h0=("hour", "min"), h1=("hour", "max"), n_hours=("hour", "size"),
-                fa_model=("m_cross", "min"), fa_news2=("n2_cross", "min"),
-                event_h=("event_h", "first"),
-                event_type=("event_type", "first")).reset_index()
-    out["event_h"] = out["event_h"].astype(float)
-    out["event_type"] = out["event_type"].where(out["event_h"].notna(), None)
-    return out
+    out = first_alarm_table(test_ordered,
+                            {"model": s_model, "news2": s_news2},
+                            {"model": thr_model, "news2": thr_news2})
+    return out[["stay_id", "h0", "h1", "n_hours", "fa_model", "fa_news2",
+                "event_h", "event_type"]]
+
+
+def h2h_summary(table, flagship, opponents, min_lead_h=6.0):
+    """Aggregate head-to-head block for ``cohort.json``.
+
+    ``table`` is :func:`first_alarm_table` output carrying ``fa_<flagship>``
+    and ``fa_<opponent>`` columns. Catch definitions, per model over the event
+    stays: ``any`` = first alarm at or before the event; ``lead6`` = at least
+    ``min_lead_h`` hours before it; ``midstay`` = an any-catch whose first
+    alarm falls strictly after the stay's first scored hour (i.e. a change
+    detection, not an arrival-profile flag). Everything returned is a count or
+    a fraction -- the output must pass :func:`assert_aggregate_only`.
+    """
+    is_event = table["event_h"].notna()
+    ev, qt = table[is_event], table[~is_event]
+    n_ev, n_qt = int(len(ev)), int(len(qt))
+    models = [flagship, *opponents]
+
+    def catches(name, mode):
+        fa = ev[f"fa_{name}"]
+        if mode == "lead6":
+            return fa.notna() & (fa <= ev["event_h"] - min_lead_h)
+        any_c = fa.notna() & (fa <= ev["event_h"])
+        if mode == "midstay":
+            return any_c & (fa > ev["h0"])
+        return any_c
+
+    funnel = {}
+    for mode in ("any", "lead6", "midstay"):
+        funnel[mode] = {
+            m: {"n": int(catches(m, mode).sum()),
+                "pct": float(catches(m, mode).sum() / n_ev) if n_ev else 0.0}
+            for m in models}
+
+    caught = {m: catches(m, "any") for m in models}
+    race = []
+    for opp in opponents:
+        both = caught[flagship] & caught[opp]
+        n_joint = int(both.sum())
+        d = (ev[f"fa_{opp}"] - ev[f"fa_{flagship}"])[both]
+        wins, losses = int((d > 0).sum()), int((d < 0).sum())
+        nz = d[d != 0]
+        race.append({
+            "opponent": opp, "n_joint": n_joint,
+            "flagship_first": wins, "tie": n_joint - wins - losses,
+            "opponent_first": losses,
+            "flagship_first_pct": float(wins / n_joint) if n_joint else 0.0,
+            "tie_pct": float((n_joint - wins - losses) / n_joint) if n_joint else 0.0,
+            "opponent_first_pct": float(losses / n_joint) if n_joint else 0.0,
+            "only_flagship": int((caught[flagship] & ~caught[opp]).sum()),
+            "only_opponent": int((caught[opp] & ~caught[flagship]).sum()),
+            "median_gap_h": float(nz.median()) if len(nz) else 0.0,
+        })
+
+    cost = {"quiet_fp_rate": {}, "stay_precision": {}}
+    for m in models:
+        fa_all = table[f"fa_{m}"]
+        alarmed = fa_all.notna()
+        valid = alarmed & (fa_all <= table["event_h"])  # NaN event -> False
+        cost["quiet_fp_rate"][m] = (
+            float(qt[f"fa_{m}"].notna().mean()) if n_qt else 0.0)
+        cost["stay_precision"][m] = (
+            float(valid.sum() / alarmed.sum()) if alarmed.any() else 0.0)
+
+    caught_by_any = np.zeros(n_ev, dtype=bool)
+    for m in models:
+        caught_by_any |= caught[m].to_numpy()
+    return {
+        "models": models,
+        "n_event_stays": n_ev, "n_quiet_stays": n_qt,
+        "n_missed_by_all": int((~caught_by_any).sum()),
+        "min_lead_h": float(min_lead_h),
+        "funnel": funnel, "race": race, "cost": cost,
+    }
 
 
 def select_demo_stays(summary, seed=42, pick_index=0, with_death=False,
@@ -186,8 +280,55 @@ _ALIGNED = {
     "risk": ("composite", "t_head", "d_head", "single_head"),
     "agent_risk": None, "attention": None,
     "alarm": ("model", "news2"),
+    "comp_risk": None, "comp_alarm": None,
 }
 _ALIGNED_NULLABLE = ("vitals_observed", "vitals_model_view", "vitals_hrs_since")
+
+
+# --- live replay ----------------------------------------------------------------
+
+def truncate_stay(stay, n, hide_event=True):
+    """Copy of a stay dict cut to its first ``n`` hours, for the live replay.
+
+    Slices ``hours``, every aligned per-hour array, and the NEWS2 block; the
+    event is hidden while it still lies more than an hour past the truncated
+    window (the replay must not foreshadow it), and ``contexts``/``cards``/
+    ``first_alarm`` are left whole -- the caller indexes those by hour.
+    """
+    t = dict(stay)
+    hours = list(stay["hours"][:n])
+    t["hours"] = hours
+    for group in (*_ALIGNED, *_ALIGNED_NULLABLE):
+        block = stay.get(group)
+        if block:
+            t[group] = {name: arr[:n] for name, arr in block.items()}
+    t["news2"] = {"total": stay["news2"]["total"][:n],
+                  "subscores": {c: arr[:n]
+                                for c, arr in stay["news2"]["subscores"].items()}}
+    event_h = stay.get("event_h")
+    if hide_event and event_h is not None and event_h > hours[-1] + 1.0:
+        t["event_h"] = None
+        t["event_type"] = None
+    return t
+
+
+def alarm_announcements(stay, labels):
+    """Sorted ``[(alarm_hour, name, message)]`` for the replay's popups.
+
+    ``sentinel`` comes from ``first_alarm["model"]``, the comparators from
+    ``comp_first_alarm``; models that never fire are omitted.
+    """
+    out = []
+    fa = (stay.get("first_alarm") or {}).get("model")
+    if fa is not None:
+        out.append((float(fa), "sentinel",
+                    f"{labels.get('sentinel', 'Sentinel')} — alarm at hour {fa:g}"))
+    for name, h in (stay.get("comp_first_alarm") or {}).items():
+        if h is not None:
+            out.append((float(h), name,
+                        f"{labels.get(name, name)} — alarm at hour {h:g}"))
+    out.sort(key=lambda item: (item[0], item[1]))
+    return out
 
 
 def validate_bundle(bundle):
@@ -230,6 +371,22 @@ def validate_bundle(bundle):
             extra = set(stay[group]) - hour_keys
             if extra:
                 raise ValueError(f"{group} has hours outside the stay: {sorted(extra)[:3]}")
+
+        comp_fa = stay.get("comp_first_alarm")
+        if comp_fa is None or set(comp_fa) != set(stay["comp_risk"]):
+            raise ValueError("comp_first_alarm keys do not match comp_risk")
+        for name, h in comp_fa.items():
+            if h is not None and h not in hours:
+                raise ValueError(f"comp_first_alarm.{name} is outside the stay")
+            first = next((hr for hr, hit in zip(hours, stay["comp_alarm"][name])
+                          if hit), None)
+            if h != first:
+                raise ValueError(f"comp_first_alarm.{name} disagrees with comp_alarm")
+
+    comp_names = {n for stay in bundle["stays"] for n in stay["comp_risk"]}
+    for name in sorted(comp_names):
+        if f"thr_{name}" not in bundle["thresholds"]:
+            raise ValueError(f"thresholds is missing thr_{name}")
     return True
 
 

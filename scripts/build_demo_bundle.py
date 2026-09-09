@@ -45,8 +45,9 @@ torch.set_num_threads(1)
 
 from baselines_mimic import load_splits  # noqa: E402
 from demo_bundle import (  # noqa: E402
-    assert_aggregate_only, dumps_strict, select_demo_stays, stay_summary,
-    t_head_from_composite, validate_bundle,
+    COMPARATOR_LABELS, COMPARATORS, assert_aggregate_only, dumps_strict,
+    first_alarm_hour, first_alarm_table, h2h_summary, select_demo_stays,
+    stay_summary, t_head_from_composite, validate_bundle,
 )
 from explain.drivers import build_contexts  # noqa: E402
 from explain.faithfulness import column_spans, restrict_bank  # noqa: E402
@@ -127,12 +128,19 @@ def _aligned(keys, sub):
             and (keys["hour"].to_numpy().astype(np.int64) == sub["hour"].to_numpy().astype(np.int64)).all())
 
 
-def build_stay(role, sid, ctx, z, bank, orch, strata, unit_thresholds, raw, summary, thr):
+def build_stay(role, sid, ctx, z, bank, orch, strata, unit_thresholds, raw, summary,
+               thr, lit_test, thr_comp):
     te = ctx.test_ordered
     mask = (te["stay_id"] == sid).to_numpy()
     sub = te[mask].reset_index(drop=True)
     idx = np.flatnonzero(mask)
     hours = sub["hour"].to_numpy(dtype=int)
+
+    comp_risk = {n: lit_test[n][idx] for n in COMPARATORS}
+    comp_fa = {}
+    for n in COMPARATORS:
+        fa = first_alarm_hour(hours, comp_risk[n], thr_comp[n])
+        comp_fa[n] = None if np.isnan(fa) else int(fa)
 
     comp = z["test_s42"][idx].astype(float)
     d = z["dhead_test_s42"][idx].astype(float)
@@ -186,6 +194,9 @@ def build_stay(role, sid, ctx, z, bank, orch, strata, unit_thresholds, raw, summ
         "attention": {a: attn[:, i].astype(float) for i, a in enumerate(AGENTS)},
         "alarm": {"model": (comp >= thr["model"]).tolist(),
                   "news2": (sub["news2"].to_numpy(dtype=float) >= thr["news2"]).tolist()},
+        "comp_risk": comp_risk,
+        "comp_alarm": {n: (comp_risk[n] >= thr_comp[n]).tolist() for n in COMPARATORS},
+        "comp_first_alarm": comp_fa,
         "contexts": {str(c["hour"]): c for c in contexts},
         "cards": {},
         "_contexts_list": contexts,
@@ -256,7 +267,7 @@ def footprint(orch, ctx, first_stay_sub, runner, contexts):
 llm_loop = {"n": 0, "s": 0.0}
 
 
-def cohort_json(ctx, z, meta, thr, fp):
+def cohort_json(ctx, z, meta, thr, fp, h2h):
     metrics = json.load(open(CACHE / "metrics_table.json"))
     by_name = {r["model"].strip(): r for r in metrics}
     two = by_name["TWO-HEAD ALL-8"]
@@ -323,6 +334,7 @@ def cohort_json(ctx, z, meta, thr, fp):
                 for u, r in sorted(units.items(), key=lambda kv: -kv[1]["hours"])],
         },
         "footprint": fp,
+        "h2h": h2h,
         "caveats": CAVEATS,
     }
     assert_aggregate_only(cohort)
@@ -353,6 +365,14 @@ def main():
         raise RuntimeError("two_head.npz does not align with the cohort test rows")
     meta = json.loads(str(z["meta_json"]))
 
+    zl = np.load(CACHE / "lit_gbm_scores.npz")
+    if not ((zl["test_stay_id"] == ctx.test_ordered["stay_id"].to_numpy()).all()
+            and (zl["test_hour"] == ctx.test_ordered["hour"].to_numpy()).all()):
+        raise RuntimeError("lit_gbm_scores.npz does not align with the cohort test rows")
+    if not ((zl["val_stay_id"] == ctx.val_ordered["stay_id"].to_numpy()).all()
+            and (zl["val_hour"] == ctx.val_ordered["hour"].to_numpy()).all()):
+        raise RuntimeError("lit_gbm_scores.npz does not align with the cohort val rows")
+
     fm = ctx.freeze_mask
     thr_n2, thr_m, matched = frozen_thresholds(
         ctx.news2_val[fm], z["val_s42"].astype(float)[fm], ctx.alertable_val[fm], BUDGET)
@@ -361,24 +381,58 @@ def main():
     if abs(g["thr_model"] - thr_m) > 1e-9 or abs(g["thr_news2"] - thr_n2) > 1e-9:
         raise RuntimeError("demo thresholds differ from the published standby report")
     thr = {"model": thr_m, "news2": thr_n2, "matched": matched}
-    comp_test = z["test_s42"].astype(float)
+    flag_test = z["test_s42"].astype(float)
     print(f"[thresholds] budget {BUDGET:.0%}: NEWS2 >= {thr_n2:g}, model >= {thr_m:.6f} "
           f"(matched {matched:.4f}); test rates model "
-          f"{(comp_test >= thr_m).mean():.4f} / NEWS2 {(ctx.news2_test >= thr_n2).mean():.4f}")
+          f"{(flag_test >= thr_m).mean():.4f} / NEWS2 {(ctx.news2_test >= thr_n2).mean():.4f}")
 
-    summary = stay_summary(ctx.test_ordered, comp_test, ctx.news2_test, thr_m, thr_n2)
+    # Comparators frozen on the same V_freeze half at the same matched volume,
+    # so every model on the head-to-head tab spends the same alarm budget.
+    av = ctx.alertable_val[fm]
+    thr_comp = {n: float(np.quantile(zl[f"val_{n}"].astype(float)[fm][av], 1.0 - matched))
+                for n in COMPARATORS}
+    lit_test = {n: zl[f"test_{n}"].astype(float) for n in COMPARATORS}
+    for n in COMPARATORS:
+        print(f"[thresholds] {n} >= {thr_comp[n]:.6f}; test rate "
+              f"{(lit_test[n] >= thr_comp[n]).mean():.4f}")
+
+    summary = stay_summary(ctx.test_ordered, flag_test, ctx.news2_test, thr_m, thr_n2)
+
+    h2h_table = first_alarm_table(
+        ctx.test_ordered,
+        {"sentinel": flag_test, **lit_test},
+        {"sentinel": thr_m, **thr_comp})
+    h2h = h2h_summary(h2h_table, "sentinel", list(COMPARATORS))
+    h2h.update({
+        "budget": BUDGET, "matched": matched, "labels": dict(COMPARATOR_LABELS),
+        "thresholds": {"sentinel": thr_m, **thr_comp},
+        "alarm_rate_test": {
+            "sentinel": float((flag_test >= thr_m).mean()),
+            **{n: float((lit_test[n] >= thr_comp[n]).mean()) for n in COMPARATORS}},
+        "caveat": ("published feature specs retrained on our cohort, "
+                   "not the commercial products"),
+    })
+    f_any = h2h["funnel"]["any"]
+    print("[h2h] catch " + " / ".join(f"{m} {f_any[m]['pct']:.1%}" for m in h2h["models"])
+          + "; race " + "; ".join(
+              f"vs {r['opponent']}: {r['flagship_first']}-{r['tie']}-{r['opponent_first']}"
+              f" (only {r['only_flagship']}:{r['only_opponent']})" for r in h2h["race"])
+          + "; quiet FP " + " / ".join(
+              f"{h2h['cost']['quiet_fp_rate'][m]:.1%}" for m in h2h["models"]))
     chosen = select_demo_stays(summary, seed=args.seed, pick_index=args.pick_index,
                                with_death=args.with_death)
     print("[stays] " + ", ".join(f"{role}={sid}" for role, sid in chosen.items()))
 
     raw = observed_vitals(list(chosen.values()))
     stays = [build_stay(role, sid, ctx, z, bank, orch, strata, standby["thresholds"],
-                        raw, summary, thr) for role, sid in chosen.items()]
+                        raw, summary, thr, lit_test, thr_comp)
+             for role, sid in chosen.items()]
     for s in stays:
         fa = s["first_alarm"]
+        comps = " / ".join(f"{n} {s['comp_first_alarm'][n]}" for n in COMPARATORS)
         print(f"  {s['role']:<18} {s['unit_group']:<11} hours {s['hours'][0]}-{s['hours'][-1]}"
               f"  event {s['event_type']} @ {s['event_h']}  first alarm model {fa['model']}"
-              f" / NEWS2 {fa['news2']}  lead {fa['lead_h']}")
+              f" / NEWS2 {fa['news2']} / {comps}  lead {fa['lead_h']}")
     check_prompt_pin(stays)
 
     contexts = [c for s in stays for c in s["_contexts_list"]]
@@ -417,7 +471,12 @@ def main():
         "vitals": list(VITALS), "llm": LLM,
         "thresholds": {"budget": BUDGET, "thr_news2": thr_n2, "thr_model": thr_m,
                        "matched": matched,
-                       "source": "two_head.npz val_s42 on the V_freeze half"},
+                       **{f"thr_{n}": thr_comp[n] for n in COMPARATORS},
+                       "source": "two_head.npz val_s42 on the V_freeze half",
+                       "comparator_source": ("lit_gbm_scores.npz val on the "
+                                             "V_freeze half at the matched volume")},
+        "comparators": list(COMPARATORS),
+        "comparator_labels": dict(COMPARATOR_LABELS),
         "risk_source": "two-head ALL-8 composite, seed 42 (data/cache/two_head.npz)",
         "attention_source": ("single-head ALL-8 refit, seed 42 "
                              "(models/orchestrator/all8_s42.pt); the composite's "
@@ -428,7 +487,7 @@ def main():
     validate_bundle(bundle)
     (OUT_DIR / "bundle.json").write_text(dumps_strict(bundle))
 
-    cohort = cohort_json(ctx, z, meta, thr, fp)
+    cohort = cohort_json(ctx, z, meta, thr, fp, h2h)
     (OUT_DIR / "cohort.json").write_text(dumps_strict(cohort))
     print(f"[saved] {OUT_DIR / 'bundle.json'} and cohort.json in "
           f"{time.perf_counter() - t_all:.0f}s")

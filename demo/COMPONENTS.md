@@ -6,8 +6,46 @@ on the laptop) and `data/cache/demo/cohort.json` (aggregate-only). Nothing on th
 computed live except the optional explanation-card regeneration. Every number is
 held-out MIMIC-IV test data under thresholds frozen on validation.
 
-Three tabs: **Patient** (why an alarm fired), **Cohort** (does it hold up), **Footprint**
-(what it costs to run).
+Five tabs: **Live** (a replay of one stay with alarms popping in real time), **Patient**
+(why an alarm fired), **Head-to-head** (Sentinel vs the two published-spec ML baselines at
+the same alarm volume), **Cohort** (does it hold up), **Footprint** (what it costs to run).
+
+---
+
+## Live tab
+
+A replay of one curated stay at accelerated clock speed — **precomputed held-out scores,
+not a live model run** (the honesty line sits next to the controls). All three models —
+Sentinel, the eCART-style GBM and the YAIB LightGBM — alarm at thresholds frozen on the
+validation freeze half at the same alarm volume, so the race is budget-fair by construction.
+NEWS2 does not appear on this tab.
+
+### Controls
+Stay selector (same labels as the Patient tab), a pace control (1 / 2 / 4 seconds per
+simulated hour), and **Play / Pause / Restart**. The replay has four states — idle,
+playing, paused, finished — and a stay change or Restart resets everything. Pressing Play
+after a finished run starts over.
+
+### What happens while it plays
+Each tick advances one simulated hour: the fused-risk line grows on a fixed full-stay
+axis, the big readouts (simulated hour, current risk, per-model alarm status) update, and
+the model-view vitals table tracks the current hour. The moment a model's frozen threshold
+is crossed, a toast pops, a persistent banner appears (blue-edged for Sentinel, red-edged
+for the comparators), and its dot lands on the **race strip** — three lanes, one per
+model, with the alarm hour labelled. When Sentinel fires, its cached explanation card for
+that exact hour slides in ("why it fired", no click needed). Each alarm announces exactly
+once per run, tracked in session state, so pausing, resuming, or touching another widget
+never re-fires a toast.
+
+### End of stay
+On an event stay the replay ends with the event banner: the event type and hour, and per
+model either "warned N h early" or "missed". On the quiet stay it ends with "no
+deterioration event, and no alarm from any model — silence is also a prediction."
+
+### One operational note
+The tick timer belongs to the page, not the tab: if the replay is left playing while
+another tab is selected, it keeps advancing and its toasts still pop. **Pause before
+switching tabs** during a presentation.
 
 ---
 
