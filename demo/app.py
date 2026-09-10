@@ -408,27 +408,40 @@ with tab_h2h:
                 f"**{r['only_flagship']} : {r['only_opponent']}** (only Sentinel : only "
                 f"the comparator){differ} · {r['n_joint']:,} jointly-caught stays")
         if "lead" in h2:
-            depth = " · ".join(
-                f"{lab.get(m, m)} median **{h2['lead'][m]['median_h']:.1f} h** "
-                f"(mean {h2['lead'][m]['mean_h']:.1f}) over {h2['lead'][m]['n']:,} catches"
-                for m in models)
-            seed_note = ""
+            st.markdown("**How early — warning depth before the event**")
+            ld = h2["lead"]
+            short = {m: lab.get(m, m).replace(" (published spec)", "")
+                     for m in models}
+            lcols = st.columns(4 if "seeds" in h2 else 2)
+            lcols[0].metric("Median warning · Sentinel",
+                            f"{ld[models[0]]['median_h']:.1f} h")
+            lcols[0].caption(
+                " · ".join(f"{short[m]} {ld[m]['median_h']:.1f} h" for m in models[1:])
+                + f" — same depth; {ld[models[0]]['n']:,} catches vs "
+                + " / ".join(f"{ld[m]['n']:,}" for m in models[1:]))
+            lcols[1].metric("Sentinel earlier when alarms differ",
+                            " · ".join(f"{r['earlier_pct']:.0%}" for r in h2["race"]))
+            lcols[1].caption(" · ".join(
+                f"vs {short[r['opponent']]}: {r['n_differ']} pairs, median gap "
+                f"{r['median_abs_gap_h']:.1f} h" for r in h2["race"]))
             if "seeds" in h2:
                 sd = h2["seeds"]
                 lm = sd["lead_median_h"]
-                seed_note = (
-                    f" Across {sd['n_seeds']} training seeds the flagship's median "
-                    f"warning is {lm['mean']:.1f} h (range {lm['min']:.1f}–"
-                    f"{lm['max']:.1f}) and earlier-when-differ holds at sign p<0.05 on "
-                    + ", ".join(
-                        f"{sd['earlier'][n]['sig_seeds']}/{sd['n_seeds']} seeds vs "
-                        f"{lab.get(n, n)} (mean {sd['earlier'][n]['mean_pct']:.0%})"
-                        for n in sd["earlier"]) + ".")
-            st.caption(f"Warning depth on the stays each model catches: {depth}. "
-                       f"The depth is the same for everyone — Sentinel's edge is giving "
-                       f"that warning on more events, and being the earlier alarm when "
-                       f"the two disagree (the means are tail-driven by long "
-                       f"arrival-profile leads; quote the medians).{seed_note}")
+                lcols[2].metric(f"Median warning · {sd['n_seeds']} seeds",
+                                f"{lm['mean']:.1f} h")
+                lcols[2].caption(f"range {lm['min']:.1f}–{lm['max']:.1f} h across "
+                                 f"training seeds — not a seed-42 artifact")
+                lcols[3].metric("Seeds significant",
+                                " · ".join(f"{sd['earlier'][n]['sig_seeds']}/{sd['n_seeds']}"
+                                           for n in sd["earlier"]))
+                lcols[3].caption("Sentinel-earlier at sign p<0.05 — "
+                                 + " · ".join(f"vs {short[n]} (mean "
+                                              f"{sd['earlier'][n]['mean_pct']:.0%})"
+                                              for n in sd["earlier"]))
+            means = [ld[m]["mean_h"] for m in models]
+            st.caption(f"The mean warning ({min(means):.0f}–{max(means):.0f} h for every "
+                       f"model) is tail-driven by long arrival-profile leads — the "
+                       f"medians are the robust numbers.")
 
         st.markdown("**Is it a valid catch — and what does it cost**")
         cost = h2["cost"]

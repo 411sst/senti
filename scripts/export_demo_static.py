@@ -116,45 +116,54 @@ def render(c):
               "flagship": m == models[0]} for m in models],
             height=170).configure(**CHART_CONFIG).to_json()
         race_json = race_chart(h2["race"], lab, height=210).configure(**CHART_CONFIG).to_json()
+        short = {m: html.escape(lab.get(m, m).replace(" (published spec)", ""))
+                 for m in models}
         excl = " and ".join(
             f"{r['only_flagship']}:{r['only_opponent']} vs the "
-            f"{html.escape(lab.get(r['opponent'], r['opponent']))}" for r in h2["race"])
-        gaps = "; ".join(
-            f"median gap when they differ {r['median_gap_h']:+.1f} h vs the "
-            f"{html.escape(lab.get(r['opponent'], r['opponent']))}" for r in h2["race"])
+            f"{short[r['opponent']]}" for r in h2["race"])
         comp_fp = " · ".join(
             f"{html.escape(lab.get(m, m))} {100 * cost['quiet_fp_rate'][m]:.1f}%"
             for m in models[1:])
         comp_prec = " · ".join(
             f"{html.escape(lab.get(m, m))} {100 * cost['stay_precision'][m]:.0f}%"
             for m in models[1:])
-        lead_cap = ""
+        lead_tiles, tail_note = "", ""
         if "lead" in h2:
-            depth = "; ".join(
-                f"{html.escape(lab.get(m, m))} median {h2['lead'][m]['median_h']:.1f} h, "
-                f"mean {h2['lead'][m]['mean_h']:.1f} h over {h2['lead'][m]['n']:,} catches"
-                for m in models)
-            wtd = "; ".join(
-                f"earlier {r['earlier_pct']:.0%} of the {r['n_differ']} differing pairs "
-                f"vs the {html.escape(lab.get(r['opponent'], r['opponent']))} "
-                f"(median gap {r['median_abs_gap_h']:.1f} h, mean {r['mean_gap_h']:+.1f})"
-                for r in h2["race"] if "earlier_pct" in r)
-            lead_cap = (f" Warning depth on caught stays is the same for every model "
-                        f"({depth}) — the edge is catching more events, and being the "
-                        f"earlier alarm when the two disagree: Sentinel {wtd}; the means "
-                        f"are tail-driven by long arrival-profile leads.")
+            ld = h2["lead"]
+            means = [ld[m]["mean_h"] for m in models]
+            tiles = [
+                stat(f"{ld[models[0]]['median_h']:.1f} h",
+                     f"median warning before the event on Sentinel's "
+                     f"{ld[models[0]]['n']:,} catches · "
+                     + " · ".join(f"{short[m]} {ld[m]['median_h']:.1f} h "
+                                  f"({ld[m]['n']:,})" for m in models[1:])
+                     + " — same depth, more events", green=True),
+                stat(" · ".join(f"{r['earlier_pct']:.0%}" for r in h2["race"]),
+                     "Sentinel fires first when jointly-caught alarms differ — "
+                     + " · ".join(f"vs {short[r['opponent']]}: {r['n_differ']} pairs, "
+                                  f"median gap {r['median_abs_gap_h']:.1f} h"
+                                  for r in h2["race"]), green=True),
+            ]
             if "seeds" in h2:
                 sd = h2["seeds"]
                 lm = sd["lead_median_h"]
-                lead_cap += (
-                    f" Across {sd['n_seeds']} training seeds the flagship's median "
-                    f"warning is {lm['mean']:.1f} h (range {lm['min']:.1f}–"
-                    f"{lm['max']:.1f}), and earlier-when-differ holds at sign p&lt;0.05 on "
-                    + ", ".join(
-                        f"{sd['earlier'][n]['sig_seeds']}/{sd['n_seeds']} seeds vs the "
-                        f"{html.escape(lab.get(n, n))} "
-                        f"(mean {sd['earlier'][n]['mean_pct']:.0%})"
-                        for n in sd["earlier"]) + ".")
+                tiles.append(stat(
+                    f"{lm['mean']:.1f} h",
+                    f"median warning across all {sd['n_seeds']} training seeds "
+                    f"(range {lm['min']:.1f}–{lm['max']:.1f} h) — not a seed-42 artifact",
+                    green=True))
+                tiles.append(stat(
+                    " · ".join(f"{sd['earlier'][n]['sig_seeds']}/{sd['n_seeds']}"
+                               for n in sd["earlier"]),
+                    "seeds where Sentinel-earlier holds at sign p<0.05 — "
+                    + " · ".join(f"vs {short[n]} (mean "
+                                 f"{sd['earlier'][n]['mean_pct']:.0%})"
+                                 for n in sd["earlier"]), green=True))
+            lead_tiles = ('<div class="stats" style="margin-top:16px">'
+                          + "".join(tiles) + "</div>")
+            tail_note = (f" The mean warning ({min(means):.0f}–{max(means):.0f} h for "
+                         f"every model) is tail-driven by long arrival-profile leads — "
+                         f"the medians are the robust numbers.")
         if "sweep" in h2:
             sweep_json = sweep_chart(h2["sweep"], lab,
                                      height=260).configure(**CHART_CONFIG).to_json()
@@ -191,10 +200,11 @@ def render(c):
           f"of Sentinel's alarmed stays truly deteriorate · {comp_prec}")}
   </div>
   <div class="panel" style="margin-top:16px"><div id="funnel" class="vis" style="min-height:190px"></div></div>
-  <div class="panel" style="margin-top:16px"><div id="race" class="vis" style="min-height:170px"></div></div>
+  <div class="panel" style="margin-top:16px"><div id="race" class="vis" style="min-height:230px"></div></div>
+  {lead_tiles}
   <p class="cap">Top: share of event stays caught at the same alarm volume. Bottom: among
-  jointly-caught stays, who fires first ({gaps}; positive = Sentinel earlier). Exclusive
-  catches are {excl}.{lead_cap} {html.escape(h2['caveat'].capitalize())}.</p>
+  jointly-caught stays, who fires first (blue = Sentinel first). Exclusive catches are
+  {excl}.{tail_note} {html.escape(h2['caveat'].capitalize())}.</p>
   {sweep_panel}
 </section>
 """
