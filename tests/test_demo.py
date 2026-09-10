@@ -103,9 +103,26 @@ def test_h2h_summary_counts_catches_races_exclusives_and_quiet_cost():
     assert race["flagship_first_pct"] == race["opponent_first_pct"] == 1 / 5
     assert (race["only_flagship"], race["only_opponent"]) == (1, 1)
     assert race["median_gap_h"] == -0.5              # signed, over non-zero gaps
+    assert race["n_differ"] == 2 and race["earlier_pct"] == 0.5
+    assert race["median_abs_gap_h"] == 4.5 and race["mean_gap_h"] == -0.5
+    # warning depth (event_h - fa) over each model's catches
+    assert h2h["lead"]["sent"]["n"] == 6
+    assert h2h["lead"]["sent"]["median_h"] == 19.0   # leads 3,10,18,20,20,24
+    assert h2h["lead"]["sent"]["mean_h"] == pytest.approx(95 / 6)
+    assert h2h["lead"]["opp"]["median_h"] == 17.0    # leads 3,15,16,18,20,24
+    assert h2h["lead"]["opp"]["mean_h"] == pytest.approx(16.0)
     assert h2h["cost"]["quiet_fp_rate"] == {"sent": 0.0, "opp": 0.5}
     assert h2h["cost"]["stay_precision"]["sent"] == 6 / 7  # the late alarm hurts
     assert h2h["cost"]["stay_precision"]["opp"] == 6 / 7   # the quiet FP hurts
+
+
+def test_lead_stats_measures_warning_depth_over_catches_only():
+    row = h2h_summary(_h2h_table(range(1, 12)), "sent", ["opp"])  # sanity anchor
+    from demo_bundle import lead_stats
+    direct = lead_stats(_h2h_table(range(1, 12)), "sent")
+    assert direct == row["lead"]["sent"]
+    assert direct["n"] == 6                    # the h32 late alarm is not a catch
+    assert direct["median_h"] == 19.0 and direct["mean_h"] == pytest.approx(95 / 6)
 
 
 def test_budget_sweep_row_reports_catch_and_quiet_fp_per_model():

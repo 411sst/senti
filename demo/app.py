@@ -398,12 +398,37 @@ with tab_h2h:
         st.markdown("**If it is caught, who catches it first** — jointly-caught stays")
         st.altair_chart(race_chart(h2["race"], lab), width="stretch")
         for r in h2["race"]:
+            differ = (f" · when they differ ({r['n_differ']} stays) Sentinel is earlier "
+                      f"**{r['earlier_pct']:.0%}** of the time, median gap "
+                      f"{r['median_abs_gap_h']:.1f} h, mean {r['mean_gap_h']:+.1f} h"
+                      if "earlier_pct" in r else
+                      f" · median gap when they differ **{r['median_gap_h']:+.1f} h**")
             st.markdown(
                 f"- vs **{lab.get(r['opponent'], r['opponent'])}** — exclusive catches "
                 f"**{r['only_flagship']} : {r['only_opponent']}** (only Sentinel : only "
-                f"the comparator) · median gap when they differ "
-                f"**{r['median_gap_h']:+.1f} h** (positive = Sentinel earlier) · "
-                f"{r['n_joint']:,} jointly-caught stays")
+                f"the comparator){differ} · {r['n_joint']:,} jointly-caught stays")
+        if "lead" in h2:
+            depth = " · ".join(
+                f"{lab.get(m, m)} median **{h2['lead'][m]['median_h']:.1f} h** "
+                f"(mean {h2['lead'][m]['mean_h']:.1f}) over {h2['lead'][m]['n']:,} catches"
+                for m in models)
+            seed_note = ""
+            if "seeds" in h2:
+                sd = h2["seeds"]
+                lm = sd["lead_median_h"]
+                seed_note = (
+                    f" Across {sd['n_seeds']} training seeds the flagship's median "
+                    f"warning is {lm['mean']:.1f} h (range {lm['min']:.1f}–"
+                    f"{lm['max']:.1f}) and earlier-when-differ holds at sign p<0.05 on "
+                    + ", ".join(
+                        f"{sd['earlier'][n]['sig_seeds']}/{sd['n_seeds']} seeds vs "
+                        f"{lab.get(n, n)} (mean {sd['earlier'][n]['mean_pct']:.0%})"
+                        for n in sd["earlier"]) + ".")
+            st.caption(f"Warning depth on the stays each model catches: {depth}. "
+                       f"The depth is the same for everyone — Sentinel's edge is giving "
+                       f"that warning on more events, and being the earlier alarm when "
+                       f"the two disagree (the means are tail-driven by long "
+                       f"arrival-profile leads; quote the medians).{seed_note}")
 
         st.markdown("**Is it a valid catch — and what does it cost**")
         cost = h2["cost"]

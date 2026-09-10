@@ -46,7 +46,7 @@ torch.set_num_threads(1)
 from baselines_mimic import load_splits  # noqa: E402
 from demo_bundle import (  # noqa: E402
     COMPARATOR_LABELS, COMPARATORS, assert_aggregate_only, budget_sweep_row,
-    dumps_strict, first_alarm_hour, first_alarm_table, h2h_summary,
+    dumps_strict, first_alarm_hour, first_alarm_table, h2h_summary, lead_stats,
     select_demo_stays, stay_summary, t_head_from_composite, validate_bundle,
 )
 from explain.drivers import build_contexts  # noqa: E402
@@ -412,6 +412,56 @@ def main():
         "caveat": ("published feature specs retrained on our cohort, "
                    "not the commercial products"),
     })
+    # Ten-seed lead-time consistency: the flagship refrozen per seed at the
+    # matched volume. The GBM baselines are deterministic single fits, so only
+    # the flagship's warning depth and the discordant race vary by seed.
+    from scipy.stats import binomtest
+    seed_list = sorted({int(k.split("_s")[1]) for k in z.files
+                        if k.startswith("test_s")})
+    per_seed, earlier = [], {n: [] for n in COMPARATORS}
+    for s_ in seed_list:
+        thr_s = float(np.quantile(z[f"val_s{s_}"].astype(float)[fm][av],
+                                  1.0 - matched))
+        tab_s = first_alarm_table(
+            ctx.test_ordered,
+            {"sentinel": z[f"test_s{s_}"].astype(float), **lit_test},
+            {"sentinel": thr_s, **thr_comp})
+        ls = lead_stats(tab_s, "sentinel")
+        per_seed.append({"seed": s_, "n": ls["n"], "median_h": ls["median_h"],
+                         "mean_h": ls["mean_h"]})
+        ev_s = tab_s[tab_s["event_h"].notna()]
+        c_sent = ev_s["fa_sentinel"].notna() & (ev_s["fa_sentinel"] <= ev_s["event_h"])
+        for n in COMPARATORS:
+            c_opp = ev_s[f"fa_{n}"].notna() & (ev_s[f"fa_{n}"] <= ev_s["event_h"])
+            d = (ev_s[f"fa_{n}"] - ev_s["fa_sentinel"])[c_sent & c_opp]
+            nz = d[d != 0]
+            p = binomtest(int((nz > 0).sum()), len(nz), 0.5).pvalue if len(nz) else 1.0
+            earlier[n].append({
+                "seed": s_, "n_differ": int(len(nz)),
+                "earlier_pct": float((nz > 0).mean()) if len(nz) else 0.0,
+                "sig": bool(p < 0.05)})
+    meds = [r["median_h"] for r in per_seed]
+    h2h["seeds"] = {
+        "n_seeds": len(seed_list),
+        "sentinel_lead": per_seed,
+        "lead_median_h": {"mean": float(np.mean(meds)), "min": float(min(meds)),
+                          "max": float(max(meds))},
+        "lead_mean_h": {"mean": float(np.mean([r["mean_h"] for r in per_seed]))},
+        "earlier": {n: {
+            "per_seed": earlier[n],
+            "mean_pct": float(np.mean([r["earlier_pct"] for r in earlier[n]])),
+            "min_pct": float(min(r["earlier_pct"] for r in earlier[n])),
+            "max_pct": float(max(r["earlier_pct"] for r in earlier[n])),
+            "sig_seeds": int(sum(r["sig"] for r in earlier[n]))}
+            for n in COMPARATORS},
+    }
+    print(f"[seeds] flagship lead median {np.mean(meds):.2f} h across "
+          f"{len(seed_list)} seeds (range {min(meds):.2f}-{max(meds):.2f}); "
+          f"earlier-when-differ "
+          + "; ".join(f"{n} {h2h['seeds']['earlier'][n]['mean_pct']:.1%} "
+                      f"(sig {h2h['seeds']['earlier'][n]['sig_seeds']}/{len(seed_list)})"
+                      for n in COMPARATORS))
+
     # Budget sweep: the same frozen-threshold head-to-head at seven nominal
     # budgets plus the demo's own operating point (the matched volume), so the
     # "does 2% matter?" question is answered on screen.

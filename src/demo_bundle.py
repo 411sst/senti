@@ -121,6 +121,8 @@ def h2h_summary(table, flagship, opponents, min_lead_h=6.0):
             for m in models}
 
     caught = {m: catches(m, "any") for m in models}
+    lead = {m: lead_stats(table, m) for m in models}
+
     race = []
     for opp in opponents:
         both = caught[flagship] & caught[opp]
@@ -138,6 +140,10 @@ def h2h_summary(table, flagship, opponents, min_lead_h=6.0):
             "only_flagship": int((caught[flagship] & ~caught[opp]).sum()),
             "only_opponent": int((caught[opp] & ~caught[flagship]).sum()),
             "median_gap_h": float(nz.median()) if len(nz) else 0.0,
+            "n_differ": int(len(nz)),
+            "earlier_pct": float((nz > 0).mean()) if len(nz) else 0.0,
+            "median_abs_gap_h": float(nz.abs().median()) if len(nz) else 0.0,
+            "mean_gap_h": float(nz.mean()) if len(nz) else 0.0,
         })
 
     cost = {"quiet_fp_rate": {}, "stay_precision": {}}
@@ -158,7 +164,25 @@ def h2h_summary(table, flagship, opponents, min_lead_h=6.0):
         "n_event_stays": n_ev, "n_quiet_stays": n_qt,
         "n_missed_by_all": int((~caught_by_any).sum()),
         "min_lead_h": float(min_lead_h),
-        "funnel": funnel, "race": race, "cost": cost,
+        "funnel": funnel, "lead": lead, "race": race, "cost": cost,
+    }
+
+
+def lead_stats(table, name):
+    """Warning depth (event_h - first alarm) over one model's any-catches.
+
+    ``table`` is :func:`first_alarm_table` output; aggregate-only by
+    construction.
+    """
+    ev = table[table["event_h"].notna()]
+    fa = ev[f"fa_{name}"]
+    lh = (ev["event_h"] - fa)[fa.notna() & (fa <= ev["event_h"])]
+    return {
+        "n": int(len(lh)),
+        "median_h": float(lh.median()) if len(lh) else 0.0,
+        "mean_h": float(lh.mean()) if len(lh) else 0.0,
+        "p25_h": float(lh.quantile(0.25)) if len(lh) else 0.0,
+        "p75_h": float(lh.quantile(0.75)) if len(lh) else 0.0,
     }
 
 

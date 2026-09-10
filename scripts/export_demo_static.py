@@ -128,7 +128,33 @@ def render(c):
         comp_prec = " · ".join(
             f"{html.escape(lab.get(m, m))} {100 * cost['stay_precision'][m]:.0f}%"
             for m in models[1:])
-        sweep_panel, sweep_embed = "", ""
+        lead_cap = ""
+        if "lead" in h2:
+            depth = "; ".join(
+                f"{html.escape(lab.get(m, m))} median {h2['lead'][m]['median_h']:.1f} h, "
+                f"mean {h2['lead'][m]['mean_h']:.1f} h over {h2['lead'][m]['n']:,} catches"
+                for m in models)
+            wtd = "; ".join(
+                f"earlier {r['earlier_pct']:.0%} of the {r['n_differ']} differing pairs "
+                f"vs the {html.escape(lab.get(r['opponent'], r['opponent']))} "
+                f"(median gap {r['median_abs_gap_h']:.1f} h, mean {r['mean_gap_h']:+.1f})"
+                for r in h2["race"] if "earlier_pct" in r)
+            lead_cap = (f" Warning depth on caught stays is the same for every model "
+                        f"({depth}) — the edge is catching more events, and being the "
+                        f"earlier alarm when the two disagree: Sentinel {wtd}; the means "
+                        f"are tail-driven by long arrival-profile leads.")
+            if "seeds" in h2:
+                sd = h2["seeds"]
+                lm = sd["lead_median_h"]
+                lead_cap += (
+                    f" Across {sd['n_seeds']} training seeds the flagship's median "
+                    f"warning is {lm['mean']:.1f} h (range {lm['min']:.1f}–"
+                    f"{lm['max']:.1f}), and earlier-when-differ holds at sign p&lt;0.05 on "
+                    + ", ".join(
+                        f"{sd['earlier'][n]['sig_seeds']}/{sd['n_seeds']} seeds vs the "
+                        f"{html.escape(lab.get(n, n))} "
+                        f"(mean {sd['earlier'][n]['mean_pct']:.0%})"
+                        for n in sd["earlier"]) + ".")
         if "sweep" in h2:
             sweep_json = sweep_chart(h2["sweep"], lab,
                                      height=260).configure(**CHART_CONFIG).to_json()
@@ -168,7 +194,7 @@ def render(c):
   <div class="panel" style="margin-top:16px"><div id="race" class="vis" style="min-height:170px"></div></div>
   <p class="cap">Top: share of event stays caught at the same alarm volume. Bottom: among
   jointly-caught stays, who fires first ({gaps}; positive = Sentinel earlier). Exclusive
-  catches are {excl}. {html.escape(h2['caveat'].capitalize())}.</p>
+  catches are {excl}.{lead_cap} {html.escape(h2['caveat'].capitalize())}.</p>
   {sweep_panel}
 </section>
 """

@@ -238,8 +238,13 @@ first — vs the eCART-style GBM 28% / 62% / 10% (762 joint stays), vs YAIB 26% 
 (+2.0 h, positive = Sentinel earlier).
 
 **What it indicates.** Most joint catches are same-hour ties; when the models disagree
-Sentinel is earlier roughly 3:1, and the exclusive-catch ratio is ~4:1 — the asymmetry is
-the persuasive number, not the median.
+Sentinel is earlier roughly 3:1 (73% vs eCART over 292 differing pairs, 67% vs YAIB over
+285; median gap ~5 h), and the exclusive-catch ratio is ~4:1 — the asymmetry is the
+persuasive number, not the median. A caption under the bullets gives **warning depth** on
+each model's own catches: median 7.3 / 6.9 / 6.7 h — the same depth for everyone, so the
+edge is *how many* events get that warning, not how deep it is. The means (45–49 h, also
+shown) are tail-driven by arrival-hour flags on stays that deteriorate days later — quote
+the medians.
 
 ### Is it a valid catch — and what does it cost (metrics row)
 **What it is.** Per model: the share of never-deteriorating stays that get at least one
