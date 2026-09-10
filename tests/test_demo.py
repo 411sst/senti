@@ -82,11 +82,15 @@ def _h2h_table(ids):
         (6, np.nan, np.nan, 10),  # quiet stay, opponent false alarm
         (6, np.nan, np.nan, np.nan),  # clean quiet stay
     ]
-    return pd.DataFrame(
+    df = pd.DataFrame(
         [(sid, h0, 40, 35, e, "vent" if not math.isnan(e) else None, fs, fo)
          for sid, (h0, e, fs, fo) in zip(ids, rows)],
         columns=("stay_id", "h0", "h1", "n_hours", "event_h", "event_type",
                  "fa_sent", "fa_opp"))
+    for n in ("sent", "opp"):
+        df[f"ah_{n}"] = np.where(df[f"fa_{n}"].notna(), 3, 0)
+    df.loc[df.index[9], "ah_opp"] = 4          # the quiet false alarm lasts 4 h
+    return df
 
 
 def test_h2h_summary_counts_catches_races_exclusives_and_quiet_cost():
@@ -114,6 +118,8 @@ def test_h2h_summary_counts_catches_races_exclusives_and_quiet_cost():
     assert h2h["cost"]["quiet_fp_rate"] == {"sent": 0.0, "opp": 0.5}
     assert h2h["cost"]["stay_precision"]["sent"] == 6 / 7  # the late alarm hurts
     assert h2h["cost"]["stay_precision"]["opp"] == 6 / 7   # the quiet FP hurts
+    assert h2h["cost"]["quiet_alarm_h_mean"] == {"sent": 0.0, "opp": 4.0}
+    assert h2h["cost"]["quiet_alarm_h_median"]["opp"] == 4.0
 
 
 def test_lead_stats_measures_warning_depth_over_catches_only():

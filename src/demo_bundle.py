@@ -69,6 +69,7 @@ def first_alarm_table(test_ordered, scores_by_name, thr_by_name):
         crossed = np.asarray(scores, dtype=float) >= thr_by_name[name]
         tmp[f"_c_{name}"] = np.where(crossed, tmp["hour"], np.nan)
         aggs[f"fa_{name}"] = (f"_c_{name}", "min")
+        aggs[f"ah_{name}"] = (f"_c_{name}", "count")   # alarm-hours per stay
     out = tmp.groupby("stay_id", sort=True).agg(**aggs).reset_index()
     out["event_h"] = out["event_h"].astype(float)
     out["event_type"] = out["event_type"].where(out["event_h"].notna(), None)
@@ -155,6 +156,12 @@ def h2h_summary(table, flagship, opponents, min_lead_h=6.0):
             float(qt[f"fa_{m}"].notna().mean()) if n_qt else 0.0)
         cost["stay_precision"][m] = (
             float(valid.sum() / alarmed.sum()) if alarmed.any() else 0.0)
+        if f"ah_{m}" in table:                 # how heavy is a quiet false alarm
+            qa = qt[f"ah_{m}"][qt[f"ah_{m}"] > 0]
+            cost.setdefault("quiet_alarm_h_mean", {})[m] = (
+                float(qa.mean()) if len(qa) else 0.0)
+            cost.setdefault("quiet_alarm_h_median", {})[m] = (
+                float(qa.median()) if len(qa) else 0.0)
 
     caught_by_any = np.zeros(n_ev, dtype=bool)
     for m in models:

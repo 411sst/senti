@@ -448,9 +448,18 @@ with tab_h2h:
         cols = st.columns(len(models))
         for col, m in zip(cols, models):
             col.metric(lab.get(m, m), f"{100 * cost['quiet_fp_rate'][m]:.1f}%")
+            ah = ""
+            if "quiet_alarm_h_mean" in cost:
+                ah = (f" · {cost['quiet_alarm_h_mean'][m]:.1f} alarm-h per touched "
+                      f"quiet stay (median {cost['quiet_alarm_h_median'][m]:.0f})")
             col.caption(f"of never-deteriorating stays get ≥ 1 alarm · "
                         f"{100 * cost['stay_precision'][m]:.0f}% of its alarmed stays "
-                        f"truly deteriorate")
+                        f"truly deteriorate{ah}")
+        if "quiet_alarm_h_mean" in cost:
+            st.caption("Every model spends the same alarm-hours; Sentinel spreads "
+                       "shorter alarms across more quiet stays where the baselines "
+                       "re-alarm longer on fewer — the stay-level rate counts "
+                       "\"touched at all\", not alarm burden.")
 
         if "sweep" in h2:
             st.markdown("**Does it hold at other budgets?**")

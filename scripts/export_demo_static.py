@@ -127,6 +127,12 @@ def render(c):
         comp_prec = " · ".join(
             f"{html.escape(lab.get(m, m))} {100 * cost['stay_precision'][m]:.0f}%"
             for m in models[1:])
+        ah_note = ""
+        if "quiet_alarm_h_mean" in cost:
+            ahm = cost["quiet_alarm_h_mean"]
+            ah_note = (" — but same total alarm-hours: Sentinel's quiet alarms are "
+                       f"shorter, {ahm[models[0]]:.1f} alarm-h per touched stay vs "
+                       + " / ".join(f"{ahm[m]:.1f}" for m in models[1:]))
         lead_tiles, tail_note = "", ""
         if "lead" in h2:
             ld = h2["lead"]
@@ -195,7 +201,7 @@ def render(c):
           f"exclusive catches vs the {lab.get(h2['race'][0]['opponent'], '')} "
           "(only Sentinel : only the comparator)", green=True)}
     {stat(f"{100 * cost['quiet_fp_rate'][models[0]]:.1f}%",
-          f"of never-deteriorating stays get ≥ 1 Sentinel alarm · {comp_fp}")}
+          f"of never-deteriorating stays get ≥ 1 Sentinel alarm · {comp_fp}{ah_note}")}
     {stat(f"{100 * cost['stay_precision'][models[0]]:.0f}%",
           f"of Sentinel's alarmed stays truly deteriorate · {comp_prec}")}
   </div>
