@@ -115,7 +115,7 @@ def render(c):
             [{"model": lab.get(m, m), "n": f_any[m]["n"], "pct": f_any[m]["pct"],
               "flagship": m == models[0]} for m in models],
             height=170).configure(**CHART_CONFIG).to_json()
-        race_json = race_chart(h2["race"], lab, height=150).configure(**CHART_CONFIG).to_json()
+        race_json = race_chart(h2["race"], lab, height=210).configure(**CHART_CONFIG).to_json()
         excl = " and ".join(
             f"{r['only_flagship']}:{r['only_opponent']} vs the "
             f"{html.escape(lab.get(r['opponent'], r['opponent']))}" for r in h2["race"])

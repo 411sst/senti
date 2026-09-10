@@ -173,7 +173,7 @@ def funnel_chart(rows, height=170):
     return (bars + text).properties(height=height, width="container")
 
 
-def race_chart(race_rows, labels, height=150):
+def race_chart(race_rows, labels, height=210):
     """Who fires first among jointly-caught stays, one stacked bar per opponent."""
     segs = ("Sentinel first", "same hour", "comparator first")
     colors = {segs[0]: MODEL, segs[1]: TIE, segs[2]: COMP2}
@@ -184,9 +184,9 @@ def race_chart(race_rows, labels, height=150):
                  (segs[1], r["tie"], r["tie_pct"]),
                  (segs[2], r["opponent_first"], r["opponent_first_pct"])]
         left = 0.0
-        for seg, n, pct in parts:
-            rows.append({"opponent": f"vs {opp}", "segment": seg, "n": n,
-                         "pct": 100 * pct, "mid": 100 * (left + pct / 2),
+        for k, (seg, n, pct) in enumerate(parts):
+            rows.append({"opponent": f"vs {opp}", "segment": seg, "seg_order": k,
+                         "n": n, "pct": 100 * pct, "mid": 100 * (left + pct / 2),
                          "label": f"{100 * pct:.0f}%" if pct >= 0.06 else ""})
             left += pct
     df = pd.DataFrame(rows)
@@ -196,7 +196,7 @@ def race_chart(race_rows, labels, height=150):
     bars = alt.Chart(df).mark_bar(size=26).encode(
         y=y, x=alt.X("pct:Q", title="% of jointly-caught event stays", stack="zero",
                      scale=alt.Scale(domain=[0, 100])),
-        order=alt.Order("segment:N", sort="ascending"),
+        order=alt.Order("seg_order:O"),
         color=alt.Color("segment:N",
                         scale=alt.Scale(domain=list(segs),
                                         range=[colors[s] for s in segs]),
