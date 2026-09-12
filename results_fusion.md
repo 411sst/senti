@@ -1659,9 +1659,50 @@ published results corpus is paired against. The evidence for the flip is in
 T8; the flip itself is a team decision, and the configs are now in place to
 execute it in one line.
 
+## T20 — Text-passing fusion vs latent fusion, re-pinned on the current cohort
+
+The architectural choice at the root of the system — agents passing *latents*
+to a learned fuser rather than passing LLM-written *text* — was settled early
+and its numbers had never been written down here. Re-run 2026-09-12 on the
+current extract so the published claim has a log behind it.
+
+**Conditions** (`scripts/run_text_arm.py --stays 150`): 6,185 patient-hours,
+150 whole stays sampled by stay, 4.41% positive; three agents (`vitals_tcn`,
+`news2`, `labs`) — the only configuration both arms can express; text fuser
+`llama3.1:8b` local, 4 h window, temperature 0; both arms isotonic-calibrated
+on the same val slice and scored on identical rows. 2,698 s, 0.31 s per
+patient-hour, 0 unparsed replies.
+
+| arm | AUPRC raw | AUPRC cal | AUROC | ECE raw | ECE cal |
+|---|---|---|---|---|---|
+| TEXT (LLM fusion) | 0.100 | 0.090 | 0.732 | 0.5099 | 0.0071 |
+| **LATENT (orchestrator)** | **0.244** | **0.244** | **0.787** | **0.0044** | **0.0044** |
+| NEWS2 | 0.119 | 0.119 | 0.615 | 0.8692 | 0.8692 |
+| random | 0.044 | | 0.500 | | |
+
+Per-component AUPRC, text vs latent: vent 0.065/0.143, vaso 0.060/0.135,
+death 0.025/0.193 — the text arm is worst exactly where physiology, not
+phrasing, carries the signal.
+
+**The honest reading.** The *ranking* gap is the robust claim: 2.4× AUPRC,
+and calibration does not rescue it (0.090 calibrated). The raw ECE gap
+(0.51 vs 0.004) is real but asymmetric by construction — the orchestrator's
+output is isotonic-calibrated by design, while the text arm's raw number is
+whatever the LLM typed; post-hoc isotonic fixes the text arm's ECE to 0.0071
+without fixing its ranking. Quote AUPRC as the argument and ECE as the
+colour, not the reverse.
+
+**Drift vs the original run.** The first pass (pre-h6-fix extract) reported
+text 0.097 / 0.5116 and latent 0.219 / 0.0047. Direction, magnitude and
+conclusion are unchanged; the latent arm moved most (0.219 → 0.244) because
+the cohort's hour grid changed under it. These are the numbers to publish.
+
 ## Reproduce
 
 ```bash
+# T20 text-arm A/B (re-pinned 2026-09-12; ~45 min, local ollama)
+OLLAMA_KEEP_ALIVE=2h .venv/bin/python scripts/run_text_arm.py --stays 150
+
 # Phase 0 — substrate (flagship chain re-run at 5 seeds on 2026-08-27;
 # seeds 42/1/2 reproduce the published arrays bit-identically)
 .venv/bin/python src/baselines_fair.py --variants FAIR,FAIR+TRAJ --device cuda --reps 1000
