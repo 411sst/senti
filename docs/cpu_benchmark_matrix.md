@@ -2,14 +2,14 @@
 
 **Purpose.** Intel's review comment #2 asks whether Sentinel can run on a single
 compute node of "i7 category with integrated GPU", without data-centre compute.
-Two machines have been measured so far and **neither is an i7**. This file is
-both the *specification* — every measurement a comparable run must produce — and
-the *results matrix* so far.
+Two machines have been measured and **neither is an i7**. This file is both the
+*specification* — every measurement a comparable run must produce — and the
+*results matrix* so far.
 
-The two existing runs measured **different halves** of the problem and used
-different batch shapes, which makes some of their numbers look contradictory
-until the protocol is pinned. Section 6 reconciles them; section 5 is the
-protocol that keeps a third run comparable.
+**Status: the two reports now agree on every material figure.** Machine B's
+revision B (13 Sep) corrected four of its own numbers after cross-review, and
+one of those corrections invalidated a machine-A measurement too (§3.2). What
+remains unexplained is one LLM throughput gap (§4).
 
 ---
 
@@ -22,119 +22,132 @@ protocol that keeps a third run comparable.
 | Cores | 24 logical | 14 physical / 20 logical | ≥ 4 physical |
 | RAM | 32 GB (+50 GB swap) | 31.7 GB | ≥ 8 GB |
 | GPU present | RTX 5070 Ti Laptop, 12 GB | RTX 4050 | integrated |
-| GPU used in benchmark | **no** (`CUDA_VISIBLE_DEVICES=`) | **no** (`+cpu` torch build) | **no** |
-| Torch | 2.11.0+cu128 | 2.14.0+cpu | any |
+| GPU used | **no** (`CUDA_VISIBLE_DEVICES=`) | **no** (`+cpu` wheel, no CUDA) | **no** |
+| Torch | 2.11.0+cu128 | **2.14.0+cpu** | prefer `+cpu` |
 | Python | 3.12.3 | 3.12.10 | 3.12 |
-| Thread setting | 1 (serving) / 1–14 (sweep) | `OMP_NUM_THREADS=8` | both |
-| Source | `results_fusion.md` T21 | HW compatibility report, 13 Sep 2026 | — |
+| Source | `results_fusion.md` T21 + this file | HW compatibility report **rev B** | — |
 
 ---
 
 ## 2. Part A — Serving path (answers "can it run at the bedside")
 
-The deployment question: one patient, one hour, scored on demand.
-
 | Measurement | A · Ultra 9 275HX | B · i5-13500HX | C · i7 |
 |---|---|---|---|
-| Learned parameters, whole path | 96,605 | not measured | — |
-| Fusion checkpoint on disk | 121 KB | not measured | — |
-| Latency, 1 patient-hour, 29 h context, **1 thread** | **0.832 ms** | not measured | — |
+| Learned parameters, whole path | 96,605 | — | — |
+| Fusion checkpoint on disk | 121 KB | — | — |
+| **End-to-end** 1 patient-hour, 29 h ctx, 1 thread | **0.832 ms** | not measured | — |
 | …2 / 4 / 8 threads | 0.850 / 0.888 / 0.907 ms | not measured | — |
+| **Vitals-TCN alone**, 1 × 29 h, 1 thread | **0.207 ms** | **0.418 ms** | — |
+| …2 / 4 / 8 / 14 threads | 0.216 / 0.224 / 0.224 / 0.230 ms | 0.457 / 0.459 / 0.567 / 0.596 ms | — |
+| …degradation at max threads | 0.90× | 0.70× | — |
 | Batched throughput (256 × 29 h), 1 thread | 253,194 patient-hours/s | not measured | — |
-| Model contribution to RSS | **3.5 MB** | not measured | — |
-| Python + torch RSS floor | 638 MB | not measured | — |
-| 20-bed unit, hourly, prediction only | 17 ms CPU/hour | not measured | — |
-| 20-bed unit, incl. explanation cards | **≈ 0.16% of one core** | not measured | — |
+| Model contribution to RSS | 3.5 MB | not measured | — |
+| 20-bed unit, incl. cards | ≈ 0.16% of one core | not measured | — |
 
-**Finding (A):** additional cores do not help at batch 1 — latency *rises* from
-0.832 to 0.907 ms going 1 → 8 threads, because dispatch overhead exceeds the
-arithmetic. The serving unit is one core.
+> **Do not put A's 0.832 ms next to B's 0.418 ms.** They measure different
+> things: A's is the **whole path** (six agent forwards + two fusion heads);
+> B's is the **vitals-TCN alone**. The like-for-like row is TCN-only, where A is
+> 0.207 ms against B's 0.418 ms — about 2× faster, as expected.
+
+**Both machines independently confirm:** at batch 1, adding threads makes
+latency *worse*. The serving unit is one core, and the repository's pinned
+`OMP_NUM_THREADS=1` is the correct setting for serving rather than a limitation.
 
 ---
 
-## 3. Part B — Batch and training path (answers "can it be rebuilt here")
+## 3. Part B — Batch and training path
 
 ### 3.1 Vitals-TCN, batch 64 × 200 hours (19,681 params)
 
-Same protocol on both machines.
-
 | Threads | A forward | B forward | A throughput | B throughput | A train/step | B train/step |
 |---|---|---|---|---|---|---|
-| 1 | **10.4 ms** | 14.2 ms | 1,233,341 hr/s | 901,405 hr/s | **40.7 ms** | 87.0 ms |
-| 4 | **2.2 ms** | 6.8 ms | 5,822,430 hr/s | 1,876,347 hr/s | **20.4 ms** | 56.4 ms |
-| 8 | **1.6 ms** | 5.9 ms | 8,080,877 hr/s | 2,160,312 hr/s | **16.0 ms** | 49.1 ms |
-| 14 | **1.4 ms** | 4.1 ms | 9,154,496 hr/s | 3,147,608 hr/s | 16.0 ms | 52.4 ms |
-| Thread speedup 1 → 14 | **7.4×** | 3.46× | | | 2.5× | 1.66× |
+| 1 | **10.4 ms** | 11.51 ms | 1,233,341 hr/s | 1,111,623 hr/s | **40.7 ms** | 72.98 ms |
+| 2 | — | 6.21 ms | — | 2,061,158 hr/s | — | 51.81 ms |
+| 4 | **2.2 ms** | 5.40 ms | 5,822,430 hr/s | 2,370,326 hr/s | **20.4 ms** | 44.38 ms |
+| 8 | **1.6 ms** | 3.89 ms | 8,080,877 hr/s | 3,293,282 hr/s | **16.0 ms** | 42.13 ms |
+| 14 | **1.4 ms** | 4.05 ms *(regresses)* | 9,154,496 hr/s | 3,157,999 hr/s | 16.0 ms | 41.77 ms |
+| Speedup 1 → best | **7.4×** | 2.96× (at 8) | | | 2.5× | 1.75× |
 
-### 3.2 XGBoost (300 trees, depth 6, 1,720,991 rows × 19 features)
+Both machines peak and then flatten; B regresses slightly at 14.
 
-Machine A measured with the repository's real `GBM_FEATURES` (**13** features,
-1,720,991 train rows — the row count matches B exactly). **B's report says 19
-features**; see §7.
+### 3.2 XGBoost — **corrected, both machines**
 
-| Measurement | A | B | C |
-|---|---|---|---|
-| Fit, 1 thread | **18.9 s** | 22.2 s | — |
-| Fit, 8 threads | **5.7 s** | 8.8 s | — |
-| Fit, 14 threads | **5.3 s** | 7.3 s | — |
-| Predict 361k rows, 1 thread | 0.64 s (567,049 rows/s) | 0.96 s (374,723 rows/s) | — |
-| Predict 361k rows, 8 threads | 0.09 s (4,164,853 rows/s) | 0.28 s (1,291,718 rows/s) | — |
-| Predict 361k rows, 14 threads | **0.06 s (5,746,469 rows/s)** | 0.16 s (2,266,198 rows/s) | — |
+`train_gbm()` in `baselines_mimic.py` passes **no hyperparameters** —
+`XGBClassifier(random_state, n_jobs, tree_method="hist", eval_metric)` and
+nothing else, so XGBoost's library defaults apply: **100 trees, depth 6**.
+
+> **Both machines originally timed 300 trees**, a configuration the repository
+> never fits. B caught this in revision B; A's first run had copied B's
+> protocol and inherited the same error. Both columns below are re-measured
+> with `train_gbm`'s exact settings on 1,720,991 train rows × **13** features.
+
+| Threads | A fit | B fit | A predict 361k | B predict 361k |
+|---|---|---|---|---|
+| 1 | **6.64 s** | 9.17 s | 0.216 s (1.67 M rows/s) | 0.428 s (0.84 M rows/s) |
+| 2 | **4.30 s** | 5.56 s | 0.111 s | 0.236 s |
+| 4 | **2.79 s** | 4.02 s | 0.056 s | 0.124 s |
+| 8 | **2.08 s** | 3.09 s | 0.029 s | 0.086 s |
+| 14 | **1.87 s** (3.55×) | 2.78 s (3.30×) | **0.022 s (16.1 M rows/s)** | 0.058 s (6.2 M rows/s) |
 
 ### 3.3 Whole-pipeline fit
 
-Machine A run in an isolated clone (source + symlinked parquets, own empty
-`embeddings/`) so the working repository was never written to — see §7.
+Machine A ran in an isolated clone (source + symlinked parquets + its own empty
+`embeddings/`); machine B likewise. See §7 for why this is mandatory.
 
 | Measurement | A | B | C |
 |---|---|---|---|
 | Full fit, 8 threads | **133 s (2 min 13 s)** | 403 s (6 min 43 s) | — |
 | ⤷ NEWS2 / GBM | 0 s / 2 s | 0 s / 7 s | — |
 | ⤷ vitals-TCN / labs | 45 s / 42 s | 113 s / 117 s | — |
-| ⤷ orchestrator (from cached latents) | 38 s | 166 s | — |
+| ⤷ orchestrator (cached latents) | 38 s | 166 s | — |
 | Average cores busy | 4.76 of 24 (19.8%) | 7.53 of 20 (37.7%) | — |
-| Peak resident memory | **8.3 GB** (see §7) | **2.0 GB** | — |
-| Disk: environment | 7.6 GB — 1.6 GB torch + **4.2 GB CUDA libs** | **1.2 GB** (CPU-only build) | — |
-| Disk: data | 6.0 GB (all caches + embeddings) | 467 MB | — |
-| Test suite | 669 passed | 687 passed, 1 skipped | — |
+| Peak resident memory | 8.3 GB — **build artifact, see §7** | **2.0 GB** | — |
+| Disk: environment | 7.6 GB (1.6 torch + **4.2 CUDA**) | **1.2 GB** (`+cpu` wheel) | — |
+| Disk: data | 6.0 GB (full research tree) | 467 MB | — |
+| Test suite | 669 passed, 0 skipped | 667 passed, 1 skipped (668 collected) | — |
 
-**A is 3.0× faster end to end** (133 s vs 403 s) and finishes a full rebuild of
-every model in about two minutes.
-
-**Note on disk:** machine A's figures are a full research tree — every agent
-cache, ECG embeddings, and a CUDA torch build. Machine B's 1.7 GB total is the
-representative number for a fresh CPU-only clone, and the right one to quote.
+**A is 3.0× faster end to end.** Quote **B's 2.0 GB and 1.7 GB disk** as the
+requirement — those are the CPU-wheel figures a deployment would actually see.
 
 ---
 
 ## 4. Part C — Explanation cards on CPU (`num_gpu: 0`)
 
 Cards are generated **only when an alarm fires** (~0.52/hour for a 20-bed unit
-at the frozen 2.62% alarm volume) and no prediction depends on them.
+at the frozen 2.62% alarm volume) and no prediction depends on them. Both
+machines now use the repository's real card prompt at `num_predict=90`,
+`temperature=0`, `seed=42`, `think=false`.
 
-| Model | Weights | A tok/s | A s/card | B tok/s | B s/card | B GPU s/card |
-|---|---|---|---|---|---|---|
-| medgemma:4b | 3.3 GB | 12.1 | **3.1 s** | 15.1 | 9.9 s | 8.4 s |
-| gemma3:4b | 3.3 GB | not measured | — | 13.0 | 12.0 s | 7.3 s |
-| llama3.2:3b | 2.0 GB | not measured | — | 13.0 | 19.3 s | 13.2 s |
-| qwen2.5:7b | 4.7 GB | not measured | — | 8.4 | 17.2 s | 9.3 s |
-| gemma4:12b | 7.6 GB | 4.1 | **11.0 s** | not measured | — | — |
+| Model | Weights | A tok/s | A s/card | B tok/s | B s/card | B out | B resident |
+|---|---|---|---|---|---|---|---|
+| llama3.2:3b | 2.0 GB | — | — | **23.3** | 2.2 s | 49 tok | 2.6 GB |
+| **medgemma:4b** | 3.3 GB | 12.1 | 3.1 s | **19.0** | 2.0 s | 34 tok | 2.9 GB |
+| gemma3:4b | 3.3 GB | — | — | 18.9 | 1.7 s | 28 tok | 2.9 GB |
+| qwen2.5:7b | 4.7 GB | — | — | 11.4 | 3.0 s | 33 tok | 5.1 GB |
+| **gemma4:12b** *(ships)* | 7.6 GB | 4.1 | 11.0 s | 5.9 | 10.1 s | 57 tok | **8.9 GB** |
 
-**The s/card figures are not comparable between A and B** — different prompts
-and different output lengths (A: the explanation-card prompt at
-`num_predict=90`; B: an ICU-trajectory prompt at ~70–100 output tokens). The
-**tok/s column is the comparable one**. Section 5 fixes this for run C.
+**Unresolved: B is faster than A on generation** (medgemma 19.0 vs 12.1 tok/s;
+gemma4 5.9 vs 4.1), despite A winning every torch and XGBoost benchmark. Both
+ran the same prompt and options. Candidate causes — ollama version, its
+thread/core selection, memory bandwidth, laptop power profile — are untested.
+**Quote B's numbers** (measured under the fixed protocol, five models) and treat
+A's two rows as corroborating the shape, not the magnitude.
 
-**Both runs agree on the conclusion:** a 4B model generates a card in single-digit
-seconds on CPU alone, and even a 12B model at 11 s is far inside a budget of one
-card every two hours.
+**`think: false` is mandatory for gemma4:12b.** It is a reasoning model in this
+ollama build: without the flag the whole `num_predict` budget is consumed by
+hidden deliberation and the card returns **empty** while `eval_count` still
+reads 90 — a plausible tok/s attached to no output. `OllamaRunner` carries the
+field (`llm_orchestrator.py:110-115`) and `scripts/bench_single_node.py:225`
+sets it, so machine A's numbers are real cards.
+
+**Deployment pick: `medgemma:4b`.** Near the top on generation rate,
+domain-matched, and 2.9 GB resident against gemma4:12b's 8.9 GB — the 12B alone
+pushes a deployment past the 16 GB tier.
 
 ---
 
 ## 4b. Kernel dispatch — what a pre-AVX2 CPU gives up
 
-Torch picks its kernel tier at runtime (`DEFAULT` / `AVX2` / `AVX512`), so a
-pre-2013 chip falls back rather than failing. Forced with
 `ATEN_CPU_CAPABILITY=default`, 8 threads, TCN at 64 × 200.
 
 | Tier | A forward | A train/step | B forward | B train/step |
@@ -143,20 +156,22 @@ pre-2013 chip falls back rather than failing. Forced with
 | DEFAULT (pre-AVX2) | 2.1 ms | 18.9 ms | 5.0 ms | 53.9 ms |
 | **Penalty** | **40% / 15%** | | **16% / 1%** | |
 
-Both machines agree on the conclusion — **AVX2 is not a requirement**, it is a
-speed difference. The penalty is larger on A because its AVX2 path is faster to
-begin with; the fallback absolute time (2.1 ms) is still better than B's AVX2
-path. Caveat carried from B's report: this forces torch's tier only, the MKL
-BLAS underneath still uses the host instruction set, so a genuine pre-AVX2 chip
-gives up somewhat more.
+**AVX2 is not a requirement** — it is a speed difference, agreed on both
+machines. The penalty is larger on A because its AVX2 path is faster to begin
+with; A's *fallback* (2.1 ms) still beats B's AVX2 path (4.3 ms). Caveat from
+B's report: this forces torch's kernel tier only, MKL underneath still uses the
+host instruction set, so a genuine pre-AVX2 chip gives up somewhat more.
+
+---
 
 ## 4c. Accuracy reproduction
 
-Both machines ran `scripts/results_table.py` (the **core-3 ladder**, not the
-shipped flagship — see §7). Calibrated figures:
+Both machines ran `scripts/results_table.py`, which fits the **core-3 bank**,
+not the shipped flagship. Calibrated:
 
-| Model | A AUPRC | B AUPRC | published | A AUROC | B AUROC |
+| Model | A | B | published | A AUROC | B AUROC |
 |---|---|---|---|---|---|
+| **Two-head ALL-8 (flagship, 10 seeds)** | — | — | **0.309** | — | **0.823** |
 | Orchestrator (core-3) | 0.237 | 0.232 | 0.232 | 0.790 | 0.786 |
 | vitals-TCN | 0.198 | 0.187 | 0.187 | 0.765 | 0.755 |
 | GBM | 0.172 | 0.172 | 0.172 | 0.747 | 0.747 |
@@ -167,31 +182,32 @@ shipped flagship — see §7). Calibrated figures:
 Test split identical on both: 361,229 patient-hours, 8,375 stays, 6,335
 patients, 4.74% prevalence.
 
-**B reproduces the published values; A drifts upward on the two trained
-sequence models** (+0.011 vitals-TCN, +0.005 orchestrator). Both ran 8 threads,
-so thread count alone does not explain it; the remaining differences are torch
-2.11.0+cu128 (A) versus 2.14.0+cpu (B). This is expected rather than alarming —
-the repository pins `OMP_NUM_THREADS=1` by default and only claims bit-identity
-for the **fusion** at one thread, not for agent refits at eight. It does mean
-published agent numbers should be regenerated on one thread, not eight.
+**Never quote 0.232 as the system's accuracy** — it belongs to the three-agent
+bank this timing script happens to fit. The flagship is 0.309 / 0.823, CIs
+[0.291, 0.337] and [0.813, 0.840] (`results_fusion.md`).
 
-## 5. Protocol — what a comparable run must fix
+**A drifts upward on the two trained sequence models** (+0.011 vitals-TCN,
++0.005 orchestrator) where B reproduces published exactly. Both ran 8 threads,
+so thread count alone does not explain it; the remaining difference is torch
+2.11.0+cu128 versus 2.14.0+cpu. Expected rather than alarming — the repository
+pins `OMP_NUM_THREADS=1` and claims bit-identity only for the **fusion** at one
+thread, not agent refits at eight.
 
-A third run (the i7) is only comparable if these are held constant:
+---
 
-| Knob | Required value | Why |
-|---|---|---|
-| GPU | hidden (`CUDA_VISIBLE_DEVICES=`) or `+cpu` torch build | the question is CPU-only |
-| Serving batch | **1 patient × 29 h context** | the bedside operating point |
-| Batch-path shape | **64 × 200 hours** | matches §3.1 on both machines |
-| Threads | sweep **1, 2, 4, 8, 14** | thread scaling is the whole story (§6) |
-| LLM prompt | the explanation-card prompt, `num_predict=90`, `temperature=0`, `seed=42` | s/card is prompt-dependent |
-| LLM models | `medgemma:4b` **and** `gemma4:12b` | the small and large ends |
-| Timing | median of ≥ 20 reps after ≥ 5 warmup | first call includes model load |
-| Report | tok/s **and** s/card | only tok/s is portable |
+## 5. Protocol — what run C must fix
 
-Machine A's serving numbers come from `scripts/bench_single_node.py`, which
-already implements this:
+| Knob | Required value |
+|---|---|
+| GPU | hidden (`CUDA_VISIBLE_DEVICES=`) or a `+cpu` wheel |
+| Serving shape | 1 patient × 29 h context — report end-to-end **and** TCN-only |
+| Batch shape | 64 × 200 hours |
+| Threads | sweep 1, 2, 4, 8, 14 |
+| GBM | `train_gbm`'s own settings — **library defaults, 100 trees**, 13 features |
+| LLM | real card prompt, `num_predict=90`, `temperature=0`, `seed=42`, **`think=false`** |
+| LLM models | `medgemma:4b` and `gemma4:12b` minimum |
+| Timing | median of ≥ 20 reps after ≥ 5 warmup |
+| Report | tok/s **and** s/card; tok/s is the portable one |
 
 ```bash
 CUDA_VISIBLE_DEVICES= .venv/bin/python scripts/bench_single_node.py \
@@ -200,71 +216,53 @@ CUDA_VISIBLE_DEVICES= .venv/bin/python scripts/bench_single_node.py \
 
 ---
 
-## 6. Reconciling the two runs
-
-The two reports appear to contradict each other on threading. They do not.
-
-- **Machine A, serving:** 1 → 8 threads makes latency *worse* (0.832 → 0.907 ms).
-- **Machine B, batch:** 1 → 14 threads gives **3.46×** on TCN inference.
-- **Machine A, same batch shape as B:** **7.4×**.
-
-**Batch size is the entire explanation.** At batch 1 × 29 hours (29 patient-hours
-of work) the per-op dispatch cost dominates and threads add coordination
-overhead. At 64 × 200 (12,800 patient-hours) there is enough arithmetic to
-amortise them. Both findings are correct and they apply to different paths:
+## 6. The threading result, settled
 
 | Path | Shape | Threads help? | Deploy as |
 |---|---|---|---|
-| Bedside scoring | 1 patient-hour | **no** | 1 core |
-| Backfill / catch-up | many patients at once | **yes, 3.5–7.4×** | as many cores as available |
-| Training / refit | full cohort | **yes, ~3×** | 8 threads is the sweet spot |
+| Bedside scoring | 1 patient-hour | **no** — 0.90× (A), 0.70× (B) | 1 core |
+| Backfill / catch-up | many patients | **yes** — up to 7.4× (A), 2.96× (B) | all cores |
+| Training / refit | full cohort | **yes** — ~3× both machines | 8 threads |
 
-Machine A is 1.4× faster than B at one thread but 3.7× faster at eight — a
-newer core plus more of them, and it scales further before flattening.
+Revision A's apparent 3.46×-versus-degradation contradiction was batch size and
+nothing else; both machines now measure both regimes and agree.
 
 ---
 
-## 7. Hazards and open items
+## 7. Resolved, and still open
 
-**`scripts/results_table.py` overwrites the cached agent bank.** At line 94 it
-calls `emit_and_cache(...)` into `data/cache/embeddings/`, replacing the
-`vitals_tcn`, `labs`, `news2` and orchestrator emissions that every published
-result is paired against. The i5 report was correctly produced on an isolated
-clone. **Do not run it on the working repository** — this is why machine A has
-no full-fit timing.
+**Resolved since revision A**
 
-**The i5 report's accuracy table is the older ladder,** not the current flagship:
-it shows the orchestrator at 0.232 AUPRC / 0.786 AUROC (the core-3 configuration
-from `results.md`), whereas the shipped two-head ALL-8 flagship is 0.309 / 0.823
-over ten seeds. Both are correct for what they ran; only don't quote 0.232 as
-the system's accuracy.
+- *GBM feature count* — 13, not 19. The 19 was the vitals-TCN's `N_FEATURES`.
+- *GBM tree count* — 100 (library default), not 300. **Both machines re-measured.**
+- *Test count* — B's 687 counted a dirty tree with 20 uncommitted tests; a clean
+  `f7bbb62` collects 668. A collects 669 at a later commit with 0 skips; B sees
+  1 skip. The remaining ±1 is commit drift plus one environment-dependent skip.
+- *Memory* — B confirmed its venv is the `+cpu` wheel with **no `nvidia/`
+  directory**. A's 8.3 GB peak is the `+cu128` wheel mapping CUDA libraries even
+  with the GPU hidden. **2.0 GB is the requirement; ship the `+cpu` wheel** — 5×
+  smaller on disk, ~4× lighter in RAM.
 
-**Machine A's 8.3 GB peak RSS is a build artifact, not a requirement.** A's
-virtualenv carries 4.2 GB of NVIDIA CUDA libraries (torch 2.11.0+cu128), which
-are mapped even with `CUDA_VISIBLE_DEVICES=` set. B's `+cpu` build has none and
-peaks at 2.0 GB for the same work. **Quote B's 2.0 GB** as the memory
-requirement, and install the CPU-only wheel for any deployment: it is 5×
-smaller on disk (1.2 GB vs 7.6 GB) and roughly 4× lighter in RAM.
+**Hazard — do not run `scripts/results_table.py` on a working repository.** It
+calls `emit_and_cache()` at lines 94, 99 and 112, overwriting every agent's
+cached latents in `data/cache/embeddings/` — the bank every published result is
+paired against — silently. Both machines' timings come from isolated clones.
 
-**Feature-count mismatch on the XGBoost row.** B's report states 19 features;
-the repository's `GBM_FEATURES` is 13. Train-row counts match exactly
-(1,720,991), so it is the same cohort and the same split — only the feature
-vector differs. Resolve before the two fit timings are printed side by side.
+**Open**
 
-**Test-count mismatch.** A collects 669 tests at this commit; B reports 687
-passed and 1 skipped at `f7bbb62`. Not yet explained.
-
-**Still required for the Intel answer:**
-
-1. A run on an actual **i7** — any generation clears the floor per the i5
-   report's analysis, but nothing has been measured on one.
-2. Machine B's serving-path numbers — `bench_single_node.py` has not been run
-   there; it is a three-minute job and would complete the matrix.
-3. `gemma4:12b` on machine B's CPU — B benched four models but not the one the
-   demo ships with.
-4. An actual **integrated-GPU** inference path (OpenVINO / IPEX-LLM). Not
-   required — the CPU card numbers make it optional — but it is the one part of
-   the "i7 with integrated graphics" phrasing that remains untested.
+1. **A real i7.** Neither machine is one. B's per-generation table is a
+   projection anchored on one measurement and is the weakest evidence in the
+   pair; it should be labelled as such wherever quoted. ~20 minutes on any i7
+   laptop closes this.
+2. **LLM generation gap** (§4). B out-generates A by ~1.5× on identical prompts
+   and options, contradicting every other benchmark. Needs a controlled re-run.
+3. **B's serving-path numbers.** `scripts/bench_single_node.py` and this file do
+   not exist in B's clone, which has no git remotes by design — **send both
+   files directly**, do not reference a commit. Batched throughput, model RSS
+   and duty cycle are still missing from B.
+4. **Integrated-GPU inference path** (OpenVINO / IPEX-LLM). Optional — the CPU
+   card numbers make it unnecessary — but it is the one part of "i7 with
+   integrated graphics" still untested.
 
 ---
 
@@ -272,14 +270,15 @@ passed and 1 skipped at `f7bbb62`. Not yet explained.
 
 | Claim | Evidence |
 |---|---|
-| No GPU is required anywhere, including explanation cards | A and B, independently |
-| Prediction is ~0.8 ms per patient-hour on one core | A |
+| No GPU required anywhere, including explanation cards | A and B |
+| Prediction is sub-millisecond per patient-hour on one core | A |
+| Adding cores makes bedside latency worse — one core is correct | A and B |
 | A 20-bed ICU uses ~0.16% of one core, cards included | A |
-| The whole system rebuilds from scratch in ~7 min on a laptop CPU | B |
+| The whole system rebuilds from scratch in 2–7 min on a laptop CPU | A and B |
 | Peak memory for a full refit is 2.0 GB | B |
 | A fresh CPU-only install is 1.7 GB on disk | B |
+| XGBoost trains on 1.72 M rows in 2–3 s at 8 threads | A and B |
 | Pre-AVX2 CPUs incur a 16–40% penalty, not a failure | A and B |
 | RAM (8 GB), not the instruction set, is the real floor | B |
-| A full rebuild of every model takes 2–7 min on a laptop CPU | A and B |
-| XGBoost trains on 1.72 M rows in 5–9 s at 8 threads | A and B |
-| Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A |
+| Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A and B |
+| `medgemma:4b` is the deployment reader: 2.9 GB vs gemma4:12b's 8.9 GB | B |
