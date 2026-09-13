@@ -1697,9 +1697,75 @@ text 0.097 / 0.5116 and latent 0.219 / 0.0047. Direction, magnitude and
 conclusion are unchanged; the latent arm moved most (0.219 → 0.244) because
 the cohort's hour grid changed under it. These are the numbers to publish.
 
+## T21 — Single-node CPU-only footprint: the whole system on one commodity box
+
+Intel's review asked whether Sentinel can run on a single compute node of "i7
+category with integrated GPU", rather than needing data-centre compute. Run
+2026-09-13 with the discrete GPU hidden (`CUDA_VISIBLE_DEVICES=`), on an
+**Intel Core Ultra 9 275HX** — a laptop-class part, not a server CPU.
+
+**The prediction path.** Every agent's forward pass plus both fusion heads,
+timed per scoring call. Agent nets are instantiated from the deployed
+architectures (parameter count and shape fix the FLOPs; weights do not); the
+fusion uses the real `all8_s42.pt` checkpoint.
+
+| component | params |
+|---|---|
+| vitals_tcn | 19,681 |
+| ecg_meas | 10,996 |
+| cadence / labs / fluid / resp | 4,225 / 3,713 / 3,009 / 2,945 |
+| news2 | 0 (deterministic lookup) |
+| fusion, both heads | 52,036 |
+| **total, whole neural path** | **96,605** |
+
+| measurement (1 CPU thread) | value |
+|---|---|
+| score one patient-hour, streaming with 29 h context | **0.83 ms** (p95 0.84) |
+| rescore a full 34-hour stay | 0.85 ms |
+| batched throughput (backfill path) | 231k–253k patient-hours/s |
+| models' contribution to RSS | **3.5 MB** |
+| fusion checkpoint on disk | 121 KB |
+
+**Threads do not help**: 0.832 / 0.850 / 0.888 / 0.907 ms at 1 / 2 / 4 / 8
+threads. The nets are small enough that dispatch overhead exceeds the work, so
+the deployment unit is *one core* and the rest of the node stays free.
+
+**Explanation cards on CPU** (ollama, `num_gpu: 0`, 90-token card, real prompt
+schema with synthetic values): medgemma:4b **3.1 s/card** (12.1 tok/s),
+gemma4:12b **11.0 s/card** (4.1 tok/s). Cards are generated only when an alarm
+fires — at the frozen 2.62% volume a 20-bed unit raises ~0.52 alarms/hour, so
+the card cost is ~5.7 s of CPU per hour with the 12B model, ~1.6 s with the 4B.
+
+**Duty cycle, 20-bed unit, hourly scoring, one core:** 17 ms/hour of prediction
+plus ~5.7 s/hour of card generation ≈ **0.16% of one core**. At 500 beds the
+prediction path is 416 ms/hour (0.012%).
+
+**Three corrections this run makes to previously quoted numbers:**
+
+1. The 6.7 GB peak RSS in the demo footprint is the cached 2.46M-row agent bank
+   held for *batch evaluation*. It is not a serving requirement: loading every
+   model adds 3.5 MB over the Python+torch baseline (638 MB, itself the
+   interpreter and framework rather than the models — an ONNX Runtime or
+   OpenVINO deployment would cut it further).
+2. The 2.1 µs/patient-hour figure is amortised batch throughput. The
+   single-patient *latency* is 0.83 ms — both correct, different questions.
+   Quote 0.83 ms for bedside responsiveness, throughput for backfill.
+3. No discrete GPU is required anywhere, including for the explanation card.
+   The integrated GPU is an optional accelerator, not a dependency.
+
+Honest scope: a Core Ultra 9 275HX has stronger single-core performance than a
+mid-range i7, but since the conclusion rests on one thread with ~3 orders of
+magnitude of headroom, the IPC gap does not change it. Not measured: cold-start
+model load, sustained multi-day memory behaviour, and an actual Xe iGPU
+inference path (OpenVINO / IPEX-LLM).
+
 ## Reproduce
 
 ```bash
+# T21 single-node CPU-only benchmark (GPU hidden; ~3 min + LLM time)
+CUDA_VISIBLE_DEVICES= .venv/bin/python scripts/bench_single_node.py \
+  --threads 1,2,4,8 --reps 100 --llm-cards 4 --llm-models medgemma:4b,gemma4:12b
+
 # T20 text-arm A/B (re-pinned 2026-09-12; ~45 min, local ollama)
 OLLAMA_KEEP_ALIVE=2h .venv/bin/python scripts/run_text_arm.py --stays 150
 
