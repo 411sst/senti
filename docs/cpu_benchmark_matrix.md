@@ -118,20 +118,40 @@ at the frozen 2.62% alarm volume) and no prediction depends on them. Both
 machines now use the repository's real card prompt at `num_predict=90`,
 `temperature=0`, `seed=42`, `think=false`.
 
-| Model | Weights | A tok/s | A s/card | B tok/s | B s/card | B out | B resident |
+| Model | Weights | A tok/s (default) | A tok/s (**pinned**) | B tok/s | B s/card | B out | B resident |
 |---|---|---|---|---|---|---|---|
 | llama3.2:3b | 2.0 GB | — | — | **23.3** | 2.2 s | 49 tok | 2.6 GB |
-| **medgemma:4b** | 3.3 GB | 12.1 | 3.1 s | **19.0** | 2.0 s | 34 tok | 2.9 GB |
+| **medgemma:4b** | 3.3 GB | 12.1 | **15.2** | 19.0 | 2.0 s | 34 tok | 2.9 GB |
 | gemma3:4b | 3.3 GB | — | — | 18.9 | 1.7 s | 28 tok | 2.9 GB |
 | qwen2.5:7b | 4.7 GB | — | — | 11.4 | 3.0 s | 33 tok | 5.1 GB |
-| **gemma4:12b** *(ships)* | 7.6 GB | 4.1 | 11.0 s | 5.9 | 10.1 s | 57 tok | **8.9 GB** |
+| **gemma4:12b** *(ships)* | 7.6 GB | 4.1 | **5.4** | 5.9 | 10.1 s | 57 tok | **8.9 GB** |
 
-**Unresolved: B is faster than A on generation** (medgemma 19.0 vs 12.1 tok/s;
-gemma4 5.9 vs 4.1), despite A winning every torch and XGBoost benchmark. Both
-ran the same prompt and options. Candidate causes — ollama version, its
-thread/core selection, memory bandwidth, laptop power profile — are untested.
-**Quote B's numbers** (measured under the fixed protocol, five models) and treat
-A's two rows as corroborating the shape, not the magnitude.
+### Ollama thread pinning — a deployment finding, not a benchmark artifact
+
+A initially generated ~1.5× slower than B despite winning every torch and
+XGBoost benchmark. Sweeping ollama's `num_thread` on a fixed prompt explains
+most of it. A's CPU is **8 P-cores + 16 E-cores, no hyperthreading**:
+
+| `num_thread` | medgemma:4b | gemma4:12b |
+|---|---|---|
+| 4 | 12.6 tok/s | 4.3 tok/s |
+| 8 | 15.1 tok/s | 5.2 tok/s |
+| 14 | **15.2 tok/s** | **5.4 tok/s** |
+| 24 (all cores) | **4.1 tok/s** | **2.9 tok/s** |
+
+**Letting ollama use all 24 cores is 3.7× slower than using 8.** llama.cpp
+splits each token's work evenly across threads and then waits for the slowest,
+so the E-cores stall every token. Ollama's default lands somewhere unhelpful —
+A's original 12.1 tok/s sits between the 4- and 8-thread values.
+
+Pinned, A reaches 15.2 (medgemma) and 5.4 (gemma4) against B's 19.0 and 5.9 —
+the 12B gap closes to ~9%. The residue is most likely **ollama version: A runs
+0.30.10, B runs 0.34.0.**
+
+> **Ship with `num_thread` pinned to the performance-core count.** Every recent
+> Intel mobile part is hybrid — Meteor Lake, Arrow Lake, Lunar Lake — which is
+> exactly the hardware class Intel asked about. A card generator that lets
+> ollama grab every core runs 2–4× slower than it should on the target.
 
 **`think: false` is mandatory for gemma4:12b.** It is a reasoning model in this
 ollama build: without the flag the whole `num_predict` budget is consumed by
@@ -205,6 +225,7 @@ thread, not agent refits at eight.
 | Threads | sweep 1, 2, 4, 8, 14 |
 | GBM | `train_gbm`'s own settings — **library defaults, 100 trees**, 13 features |
 | LLM | real card prompt, `num_predict=90`, `temperature=0`, `seed=42`, **`think=false`** |
+| LLM threads | sweep `num_thread` 4/8/14/all — never trust the default on a hybrid CPU |
 | LLM models | `medgemma:4b` and `gemma4:12b` minimum |
 | Timing | median of ≥ 20 reps after ≥ 5 warmup |
 | Report | tok/s **and** s/card; tok/s is the portable one |
@@ -254,8 +275,11 @@ paired against — silently. Both machines' timings come from isolated clones.
    projection anchored on one measurement and is the weakest evidence in the
    pair; it should be labelled as such wherever quoted. ~20 minutes on any i7
    laptop closes this.
-2. **LLM generation gap** (§4). B out-generates A by ~1.5× on identical prompts
-   and options, contradicting every other benchmark. Needs a controlled re-run.
+2. **LLM generation gap** (§4) — **largely explained.** Ollama was using all 24
+   of A's cores including 16 E-cores, costing 2–4×. Pinned, the 12B gap narrows
+   to ~9%; the residue is probably the ollama version (0.30.10 vs 0.34.0).
+   Confirm by sweeping `num_thread` on B (also a hybrid part) and comparing
+   versions.
 3. **B's serving-path numbers.** `scripts/bench_single_node.py` and this file do
    not exist in B's clone, which has no git remotes by design — **send both
    files directly**, do not reference a commit. Batched throughput, model RSS
@@ -282,3 +306,4 @@ paired against — silently. Both machines' timings come from isolated clones.
 | RAM (8 GB), not the instruction set, is the real floor | B |
 | Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A and B |
 | `medgemma:4b` is the deployment reader: 2.9 GB vs gemma4:12b's 8.9 GB | B |
+| Pin ollama's `num_thread` to P-cores — all-core is 2–4× slower on hybrid CPUs | A |
