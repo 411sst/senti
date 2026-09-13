@@ -68,25 +68,38 @@ Same protocol on both machines.
 
 ### 3.2 XGBoost (300 trees, depth 6, 1,720,991 rows × 19 features)
 
+Machine A measured with the repository's real `GBM_FEATURES` (**13** features,
+1,720,991 train rows — the row count matches B exactly). **B's report says 19
+features**; see §7.
+
 | Measurement | A | B | C |
 |---|---|---|---|
-| Fit, 1 thread | not measured | 22.2 s | — |
-| Fit, 8 threads | not measured | 8.8 s | — |
-| Fit, 14 threads | not measured | 7.3 s | — |
-| Predict 361k rows, 14 threads | not measured | 0.16 s (2,266,198 rows/s) | — |
+| Fit, 1 thread | **18.9 s** | 22.2 s | — |
+| Fit, 8 threads | **5.7 s** | 8.8 s | — |
+| Fit, 14 threads | **5.3 s** | 7.3 s | — |
+| Predict 361k rows, 1 thread | 0.64 s (567,049 rows/s) | 0.96 s (374,723 rows/s) | — |
+| Predict 361k rows, 8 threads | 0.09 s (4,164,853 rows/s) | 0.28 s (1,291,718 rows/s) | — |
+| Predict 361k rows, 14 threads | **0.06 s (5,746,469 rows/s)** | 0.16 s (2,266,198 rows/s) | — |
 
 ### 3.3 Whole-pipeline fit
 
+Machine A run in an isolated clone (source + symlinked parquets, own empty
+`embeddings/`) so the working repository was never written to — see §7.
+
 | Measurement | A | B | C |
 |---|---|---|---|
-| Full fit, 8 threads | **not measured — see §7** | **403 s (6 min 43 s)** | — |
-| ⤷ NEWS2 / GBM | — | 0 s / 7 s | — |
-| ⤷ vitals-TCN / labs | — | 113 s / 117 s | — |
-| ⤷ orchestrator (from cached latents) | — | 166 s | — |
-| Average CPU load | — | 37.7% (7.53 of 20 cores) | — |
-| Peak resident memory | — | **2.0 GB** | — |
-| Disk: environment | 7.6 GB (CUDA torch build) | **1.2 GB** (CPU-only build) | — |
+| Full fit, 8 threads | **133 s (2 min 13 s)** | 403 s (6 min 43 s) | — |
+| ⤷ NEWS2 / GBM | 0 s / 2 s | 0 s / 7 s | — |
+| ⤷ vitals-TCN / labs | 45 s / 42 s | 113 s / 117 s | — |
+| ⤷ orchestrator (from cached latents) | 38 s | 166 s | — |
+| Average cores busy | 4.76 of 24 (19.8%) | 7.53 of 20 (37.7%) | — |
+| Peak resident memory | **8.3 GB** (see §7) | **2.0 GB** | — |
+| Disk: environment | 7.6 GB — 1.6 GB torch + **4.2 GB CUDA libs** | **1.2 GB** (CPU-only build) | — |
 | Disk: data | 6.0 GB (all caches + embeddings) | 467 MB | — |
+| Test suite | 669 passed | 687 passed, 1 skipped | — |
+
+**A is 3.0× faster end to end** (133 s vs 403 s) and finishes a full rebuild of
+every model in about two minutes.
 
 **Note on disk:** machine A's figures are a full research tree — every agent
 cache, ECG embeddings, and a CUDA torch build. Machine B's 1.7 GB total is the
@@ -117,6 +130,50 @@ seconds on CPU alone, and even a 12B model at 11 s is far inside a budget of one
 card every two hours.
 
 ---
+
+## 4b. Kernel dispatch — what a pre-AVX2 CPU gives up
+
+Torch picks its kernel tier at runtime (`DEFAULT` / `AVX2` / `AVX512`), so a
+pre-2013 chip falls back rather than failing. Forced with
+`ATEN_CPU_CAPABILITY=default`, 8 threads, TCN at 64 × 200.
+
+| Tier | A forward | A train/step | B forward | B train/step |
+|---|---|---|---|---|
+| AVX2 (Haswell+, 2013 on) | 1.5 ms | 16.4 ms | 4.3 ms | 53.3 ms |
+| DEFAULT (pre-AVX2) | 2.1 ms | 18.9 ms | 5.0 ms | 53.9 ms |
+| **Penalty** | **40% / 15%** | | **16% / 1%** | |
+
+Both machines agree on the conclusion — **AVX2 is not a requirement**, it is a
+speed difference. The penalty is larger on A because its AVX2 path is faster to
+begin with; the fallback absolute time (2.1 ms) is still better than B's AVX2
+path. Caveat carried from B's report: this forces torch's tier only, the MKL
+BLAS underneath still uses the host instruction set, so a genuine pre-AVX2 chip
+gives up somewhat more.
+
+## 4c. Accuracy reproduction
+
+Both machines ran `scripts/results_table.py` (the **core-3 ladder**, not the
+shipped flagship — see §7). Calibrated figures:
+
+| Model | A AUPRC | B AUPRC | published | A AUROC | B AUROC |
+|---|---|---|---|---|---|
+| Orchestrator (core-3) | 0.237 | 0.232 | 0.232 | 0.790 | 0.786 |
+| vitals-TCN | 0.198 | 0.187 | 0.187 | 0.765 | 0.755 |
+| GBM | 0.172 | 0.172 | 0.172 | 0.747 | 0.747 |
+| labs | 0.167 | 0.165 | 0.165 | 0.726 | 0.726 |
+| NEWS2 | 0.114 | 0.114 | 0.114 | 0.684 | 0.684 |
+| random floor | 0.048 | 0.048 | 0.048 | 0.501 | 0.501 |
+
+Test split identical on both: 361,229 patient-hours, 8,375 stays, 6,335
+patients, 4.74% prevalence.
+
+**B reproduces the published values; A drifts upward on the two trained
+sequence models** (+0.011 vitals-TCN, +0.005 orchestrator). Both ran 8 threads,
+so thread count alone does not explain it; the remaining differences are torch
+2.11.0+cu128 (A) versus 2.14.0+cpu (B). This is expected rather than alarming —
+the repository pins `OMP_NUM_THREADS=1` by default and only claims bit-identity
+for the **fusion** at one thread, not for agent refits at eight. It does mean
+published agent numbers should be regenerated on one thread, not eight.
 
 ## 5. Protocol — what a comparable run must fix
 
@@ -182,14 +239,29 @@ from `results.md`), whereas the shipped two-head ALL-8 flagship is 0.309 / 0.823
 over ten seeds. Both are correct for what they ran; only don't quote 0.232 as
 the system's accuracy.
 
+**Machine A's 8.3 GB peak RSS is a build artifact, not a requirement.** A's
+virtualenv carries 4.2 GB of NVIDIA CUDA libraries (torch 2.11.0+cu128), which
+are mapped even with `CUDA_VISIBLE_DEVICES=` set. B's `+cpu` build has none and
+peaks at 2.0 GB for the same work. **Quote B's 2.0 GB** as the memory
+requirement, and install the CPU-only wheel for any deployment: it is 5×
+smaller on disk (1.2 GB vs 7.6 GB) and roughly 4× lighter in RAM.
+
+**Feature-count mismatch on the XGBoost row.** B's report states 19 features;
+the repository's `GBM_FEATURES` is 13. Train-row counts match exactly
+(1,720,991), so it is the same cohort and the same split — only the feature
+vector differs. Resolve before the two fit timings are printed side by side.
+
+**Test-count mismatch.** A collects 669 tests at this commit; B reports 687
+passed and 1 skipped at `f7bbb62`. Not yet explained.
+
 **Still required for the Intel answer:**
 
 1. A run on an actual **i7** — any generation clears the floor per the i5
    report's analysis, but nothing has been measured on one.
-2. Machine A's batch-path numbers (XGBoost fit, full fit) — needs an isolated
-   clone.
-3. Machine B's serving-path numbers — `bench_single_node.py` has not been run
+2. Machine B's serving-path numbers — `bench_single_node.py` has not been run
    there; it is a three-minute job and would complete the matrix.
+3. `gemma4:12b` on machine B's CPU — B benched four models but not the one the
+   demo ships with.
 4. An actual **integrated-GPU** inference path (OpenVINO / IPEX-LLM). Not
    required — the CPU card numbers make it optional — but it is the one part of
    the "i7 with integrated graphics" phrasing that remains untested.
@@ -206,5 +278,8 @@ the system's accuracy.
 | The whole system rebuilds from scratch in ~7 min on a laptop CPU | B |
 | Peak memory for a full refit is 2.0 GB | B |
 | A fresh CPU-only install is 1.7 GB on disk | B |
-| Pre-AVX2 CPUs incur a 16% penalty, not a failure | B |
+| Pre-AVX2 CPUs incur a 16–40% penalty, not a failure | A and B |
 | RAM (8 GB), not the instruction set, is the real floor | B |
+| A full rebuild of every model takes 2–7 min on a laptop CPU | A and B |
+| XGBoost trains on 1.72 M rows in 5–9 s at 8 threads | A and B |
+| Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A |
