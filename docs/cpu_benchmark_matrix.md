@@ -145,54 +145,56 @@ machines now use the repository's real card prompt at `num_predict=90`,
 | qwen2.5:7b | 4.7 GB | — | — | 11.4 | 3.0 s | 33 tok | 5.1 GB |
 | **gemma4:12b** *(ships)* | 7.6 GB | 4.1 | **5.4** | 5.9 | 10.1 s | 57 tok | **8.9 GB** |
 
-### Ollama thread count — a runtime-version issue, **not** a hybrid-core one
+### Ollama thread count — version A/B, run on one machine
 
-A initially generated ~1.5× slower than B. Sweeping ollama's `num_thread` on a
-fixed prompt on both machines:
+The mechanism is now measured rather than inferred. Both ollama versions were
+run **side by side on machine A** — same CPU, same OS, same kernel, same model
+store, same prompt, same session — with 0.34.0 extracted to a scratch directory
+and served on port 11435 while the system's 0.30.10 kept serving on 11434.
+Nothing was upgraded or replaced.
 
-| `num_thread` | medgemma · A | gemma4 · A | medgemma · B | gemma4 · B |
-|---|---|---|---|---|
-| 4 | 12.6 tok/s | 4.3 tok/s | 14.9 tok/s | 5.2 tok/s |
-| 8 | 15.1 | 5.2 | 16.9 | 6.0 |
-| 14 | **15.2** | **5.4** | **17.8** | **6.6** |
-| all cores (A 24 / B 20) | **4.1** | **2.9** | 17.0 | 6.3 |
-| default (unset) | 12.1 | — | **17.4** | 6.2 |
+| `num_thread` | A · **0.30.10** | A · **0.34.0** | B · 0.34.0 (Windows) |
+|---|---|---|---|
+| 4 | 12.6 | 12.8 | 14.9 |
+| 8 | 15.2 | 15.1 | 16.9 |
+| 14 | **15.5** | **15.7** | **17.8** |
+| all cores (A 24 / B 20) | **4.9** | **13.6** | 17.0 |
+| default (unset) | 12.6 | 12.8 | **17.4** |
 
-Both peak at 14. The ends differ completely: on **A** the all-cores setting
-costs **73%** and the default sits well below peak; on **B** all-cores costs
-**4.5%** and the default is within **2%** of peak.
+Median of 3 reps for the 14 / all-cores / default rows on A; single rep at 4 and
+8. The all-cores figure on 0.30.10 is the noisiest cell measured (4.7–6.6 across
+reps), which is itself consistent with threads contending.
 
-**An earlier version of this file attributed A's collapse to hybrid P/E cores.
-That attribution was wrong and is retracted.** B's i5-13500HX is *also* hybrid —
-6 P-cores (12 threads) + 8 E-cores, 14 physical / 20 logical — and shows no
-collapse at all. Hybrid topology is therefore not sufficient to produce the
-effect.
+**Three conclusions, and they split the earlier claim in half:**
 
-Three variables actually differ between the two runs, and **none is isolated**:
+1. **The version fixes the catastrophic case.** At all-cores, 0.30.10 collapses
+   to 4.9 tok/s — 68% below its own peak — while 0.34.0 holds 13.6, down only
+   13%. That is a **2.8× difference attributable to the runtime alone**, with
+   every hardware variable held constant.
+2. **The version does not fix the default.** Both versions default to ~12.7
+   tok/s on machine A, **19% below the 15.5–15.7 available at `num_thread=14`**.
+   Upgrading changes the default's behaviour not at all here.
+3. **The default problem is machine-specific, not version-specific.** On B, the
+   same 0.34.0 defaults to 17.4 against a 17.8 peak — within 2%. On A it is 19%
+   off. Same runtime, same setting, different outcome: what remains is the OS
+   (Linux vs Windows) or the E-core share (16 of 24 vs 8 of 20), and this
+   experiment does not separate those two.
 
-| Variable | A | B |
-|---|---|---|
-| **ollama version** | 0.30.10 | **0.34.0** |
-| **operating system** | Linux (Pop!_OS 24.04) | **Windows** |
-| E-core share | 16 of 24 cores | 8 of 20 threads |
+**The earlier "hybrid P/E cores cause the collapse" claim was wrong** and stays
+retracted — B is hybrid and does not collapse. But the corrected picture still
+supports pinning, for a different reason: ollama's *default* thread choice is
+poor on machine A on **either** version.
 
-Version is the leading hypothesis — the pathological default is simply gone on
-the newer build. The OS is a real second candidate: Windows schedules hybrid
-cores through Thread Director, Linux historically handles them less well, and a
-llama.cpp thread pool that waits on its slowest worker is exactly the workload
-that would expose that.
-
-> **What to tell Intel: require ollama ≥ 0.34 and leave `num_thread` unset.**
-> Do **not** claim their hybrid architecture needs manual thread pinning — on a
-> current runtime it does not, and misattributing a fixed runtime bug to their
-> hardware in a reply addressed to them would be a bad look. Pinning to 14 buys
-> a further 2–6% and is a fine tuning note, but it is not the finding.
-
-**The isolating test, still unrun:** the same ollama version on both machines —
-either upgrade A to 0.34.x and re-sweep, or install 0.30.10 on B. One run
-separates version from OS from topology. Until then the mechanism is
-undetermined and the deployment advice above stands on the version evidence
-alone.
+> **Two recommendations, both measured:**
+> **(a) Pin `num_thread` to ~14.** Worth **+23%** on machine A (12.7 → 15.5) and
+> +2% on machine B, on either version, at zero cost.
+> **(b) Require ollama ≥ 0.34.** It does not improve the tuned case, but it
+> converts the untuned all-cores failure from −68% to −13%.
+>
+> **What not to say to Intel:** that their hybrid architecture requires manual
+> thread pinning. The catastrophic case is a runtime bug fixed in 0.34; the
+> residual default gap is unattributed between OS and core ratio. Pinning is a
+> tuning note that happens to pay well, not a hardware defect.
 
 **`think: false` is mandatory for gemma4:12b.** It is a reasoning model in this
 ollama build: without the flag the whole `num_predict` budget is consumed by
@@ -316,12 +318,13 @@ paired against — silently. Both machines' timings come from isolated clones.
    projection anchored on one measurement and is the weakest evidence in the
    pair; it should be labelled as such wherever quoted. ~20 minutes on any i7
    laptop closes this.
-2. **LLM thread collapse** (§4) — **mechanism undetermined.** A loses 73% at
-   all-cores; B, also hybrid, loses 4.5%. Version, OS and E-core share all
-   differ and none is isolated. **The test: run one ollama version on both
-   machines.** Upgrading A to 0.34.x and re-sweeping is ~10 minutes and settles
-   it; it has not been done because A's ollama serves the live demo and the
-   review is imminent.
+2. **LLM thread behaviour** (§4) — **half resolved by the version A/B.** Running
+   0.30.10 and 0.34.0 side by side on machine A proved the runtime causes the
+   all-cores collapse (4.9 → 13.6 tok/s). It did **not** explain why ollama's
+   default is 19% off peak on A but within 2% on B, on the same 0.34.0. That
+   residue is OS or E-core share, unseparated. Isolating it needs either a
+   Linux run on B's hardware or a Windows run on A's — neither is worth doing
+   before the review, since pinning `num_thread` sidesteps it entirely.
 3. ~~B's serving-path numbers~~ — **done in revision D.** Both machines now have
    a complete Part A.
 4. **Integrated-GPU inference path** (OpenVINO / IPEX-LLM). Optional — the CPU
@@ -346,4 +349,5 @@ paired against — silently. Both machines' timings come from isolated clones.
 | RAM (8 GB), not the instruction set, is the real floor | B |
 | Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A and B |
 | `medgemma:4b` is the deployment reader: 2.9 GB vs gemma4:12b's 8.9 GB | B |
-| Require ollama ≥ 0.34; its default thread choice is then within 2% of optimal | B |
+| Require ollama ≥ 0.34 — turns an untuned −68% all-core case into −13% | A (version A/B) |
+| Pin ollama `num_thread` ≈ 14: +23% on A, +2% on B, on either version | A and B |
