@@ -45,9 +45,42 @@ Both machines have now run `scripts/bench_single_node.py`.
 | …degradation at max threads | 0.92× | 0.73× | — |
 | **Vitals-TCN alone**, 1 × 29 h, 1 thread | 0.207 ms | 0.418 ms (0.45 in rev D) | — |
 | Batched throughput (256 × 29 h), 1 thread | 253,194 patient-hours/s | 184,000 patient-hours/s | — |
-| **Serving peak RSS** (no agent bank) | 638 MB *(`+cu128`)* | **335 MB** *(`+cpu`)* | — |
-| Model contribution to RSS | 3.5 MB | 0.7 MB | — |
-| 20-bed unit, prediction only | 17 ms/hour | 33 ms/hour (0.0009% of a core) | — |
+| **Serving peak RSS** (no agent bank) | 691 MB `+cu128` / **537 MB `+cpu`** | **335 MB** `+cpu` | — |
+| Python + torch floor | 638 MB `+cu128` / 455 MB `+cpu` | — | — |
+| Model contribution to RSS | 3.5–11 MB (sampling noise) | 0.7 MB | — |
+| 20-bed unit, prediction only | 17 ms/hour `+cu128` / 15 ms `+cpu` | 33 ms/hour (0.0009% of a core) | — |
+
+### The CPU-only wheel is faster, not just smaller
+
+Machine A was re-measured on a purpose-built `torch 2.14.0+cpu` environment —
+the same version and build machine B uses — so the two columns compare like
+with like:
+
+| | A · `+cu128` | A · **`+cpu`** | B · `+cpu` |
+|---|---|---|---|
+| Bedside latency, 1 thread | 0.832 ms | **0.727 ms** | 1.660 ms |
+| Serving peak RSS | 691 MB | **537 MB** | 335 MB |
+| Full fit, 8 threads | 133 s | **126 s** | 403 s |
+| Full-fit peak RSS | 8.3 GB | **5.75 GB** | 2.0 GB |
+| Environment on disk | 7.6 GB | **1.8 GB** | 1.2 GB |
+
+**Dropping CUDA costs nothing and pays 13% at inference** (0.832 → 0.727 ms,
+medians of 100 reps, p95s 0.856 and 0.742 — the gap is outside run-to-run
+noise). Peak serving memory falls 22%, full-fit memory 31%, and the environment
+shrinks 4×. There is no argument for shipping the CUDA wheel on a CPU node.
+
+**Where A's remaining 288 MB of NVIDIA libraries comes from — and it is not
+torch.** B's report notes its `site-packages` has no `nvidia/` directory. On
+Linux that is not achievable with xgboost installed: **`xgboost` hard-requires
+`nvidia-nccl-cu13`**, 288 MB, regardless of the torch wheel. `torch 2.14.0+cpu`
+itself pulls none. B's clean tree is a Windows property — xgboost's Windows
+wheel has no such dependency — not a consequence of choosing the CPU wheel.
+`pip install xgboost --no-deps` removes it; it is unused at inference.
+
+**Two residual gaps against B on identical torch, both Linux-vs-Windows:**
+serving RSS 537 vs 335 MB and full-fit RSS 5.75 vs 2.0 GB. glibc's per-thread
+malloc arenas on a 24-core host are the obvious suspect and are untested;
+neither figure threatens the 8 GB floor, so this was not chased further.
 
 **A is ~2× faster on the whole path** (0.832 vs 1.660 ms) — the same ratio every
 other benchmark shows. Parameter counts match exactly, which confirms both ran
@@ -250,11 +283,17 @@ bank this timing script happens to fit. The flagship is 0.309 / 0.823, CIs
 [0.291, 0.337] and [0.813, 0.840] (`results_fusion.md`).
 
 **A drifts upward on the two trained sequence models** (+0.011 vitals-TCN,
-+0.005 orchestrator) where B reproduces published exactly. Both ran 8 threads,
-so thread count alone does not explain it; the remaining difference is torch
-2.11.0+cu128 versus 2.14.0+cpu. Expected rather than alarming — the repository
-pins `OMP_NUM_THREADS=1` and claims bit-identity only for the **fusion** at one
-thread, not agent refits at eight.
++0.005 orchestrator) where B reproduces published exactly.
+
+**The torch-version explanation for this is now disproven.** Re-running A's full
+fit on `torch 2.14.0+cpu` — byte-identical build to B's — produced *exactly the
+same* drifted numbers (orchestrator 0.237, vitals-TCN 0.198). Neither the CUDA
+wheel nor the torch version causes it. Both machines ran 8 threads, so what
+remains is the host: thread scheduling and floating-point reduction order differ
+between a 24-core Linux box and a 20-thread Windows one, and agent refits at
+eight threads are not order-deterministic. This is why the repository pins
+`OMP_NUM_THREADS=1` and claims bit-identity only for the **fusion** at one
+thread. Published agent numbers should be regenerated at one thread, not eight.
 
 ---
 
@@ -347,7 +386,8 @@ paired against — silently. Both machines' timings come from isolated clones.
 | XGBoost trains on 1.72 M rows in 2–3 s at 8 threads | A and B |
 | Pre-AVX2 CPUs incur a 16–40% penalty, not a failure | A and B |
 | RAM (8 GB), not the instruction set, is the real floor | B |
-| Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A and B |
+| The CPU-only torch wheel is 4× smaller **and 13% faster** at inference | A |
+| On Linux, xgboost — not torch — pulls 288 MB of NCCL; `--no-deps` drops it | A |
 | `medgemma:4b` is the deployment reader: 2.9 GB vs gemma4:12b's 8.9 GB | B |
 | Require ollama ≥ 0.34 — turns an untuned −68% all-core case into −13% | A (version A/B) |
 | Pin ollama `num_thread` ≈ 14: +23% on A, +2% on B, on either version | A and B |
