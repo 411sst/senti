@@ -81,8 +81,12 @@ mkdir -p data/cache/demo
 What works without a GPU: everything — all five tabs (the Live replay included; it replays
 cached scores), every stay, every hour, and the cached explanation card for each hour. The only difference is the **Regenerate live**
 button: with no ollama running it shows a warning and keeps the cached card. (Optional:
-`ollama pull gemma4:12b` and `ollama serve` on CPU makes the button work, at roughly
-20–30 s per card instead of ~1 s.)
+`ollama pull gemma4:12b` and `ollama serve` on CPU makes the button work, at a
+**measured 11 s per card** instead of ~0.7 s on the GPU — and ~3 s if you point
+it at `medgemma:4b` instead. Two settings matter on CPU: pass
+`num_thread` ≈ 14 rather than accepting ollama's default, which gives up ~19%,
+and use ollama ≥ 0.34, since 0.30.x collapses to a third of its throughput if it
+takes every core. Full numbers in `docs/cpu_benchmark_matrix.md`.)
 
 ## Before the demo
 
@@ -93,6 +97,9 @@ button: with no ollama running it shows a warning and keeps the cached card. (Op
   substrate) — the same caveat the T17 explanation benchmark carries.
 - The Live replay's tick timer belongs to the page, not the tab: pause the replay before
   switching tabs, or it keeps advancing and its alarm toasts keep popping.
+- Nothing in the demo needs a GPU. The prediction path is 0.83 ms per patient-hour
+  on one CPU thread and the whole system was benchmarked GPU-hidden on a laptop
+  (`results_fusion.md` T21); the GPU only speeds up the *Regenerate live* button.
 - The Live tab is honest theatre: precomputed held-out scores replayed at clock speed
   (the line under the controls says so). All three models alarm at thresholds frozen on
   validation at the same alarm volume.

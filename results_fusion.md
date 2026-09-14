@@ -1736,6 +1736,17 @@ gemma4:12b **11.0 s/card** (4.1 tok/s). Cards are generated only when an alarm
 fires — at the frozen 2.62% volume a 20-bed unit raises ~0.52 alarms/hour, so
 the card cost is ~5.7 s of CPU per hour with the 12B model, ~1.6 s with the 4B.
 
+**Those two card figures are at ollama's default thread count, which is not its
+best.** A later version A/B (see `docs/cpu_benchmark_matrix.md`) measured
+medgemma:4b at **15.5 tok/s** with `num_thread=14` against **12.6 tok/s** at the
+default — the default gives up 19% on this machine, on both ollama 0.30.10 and
+0.34.0. Pinning the thread count is worth ~23% and costs nothing; the card
+timings above should be read as an upper bound on cost, not a floor. Separately,
+ollama 0.30.10 collapses to 4.9 tok/s if allowed all 24 cores, which 0.34.0
+fixes (13.6 tok/s) — so the deployment note is **pin `num_thread` near 14 and
+require ollama ≥ 0.34**. Neither is a property of hybrid CPUs: a second machine
+with a hybrid i5 and 0.34.0 shows no collapse and a near-optimal default.
+
 **Duty cycle, 20-bed unit, hourly scoring, one core:** 17 ms/hour of prediction
 plus ~5.7 s/hour of card generation ≈ **0.16% of one core**. At 500 beds the
 prediction path is 416 ms/hour (0.012%).
@@ -1752,6 +1763,11 @@ prediction path is 416 ms/hour (0.012%).
    Quote 0.83 ms for bedside responsiveness, throughput for backfill.
 3. No discrete GPU is required anywhere, including for the explanation card.
    The integrated GPU is an optional accelerator, not a dependency.
+
+A second machine (Core i5-13500HX, Windows, torch `+cpu`) has since run the same
+`scripts/bench_single_node.py` and the full fit; both columns, the reconciled
+threading result and the ollama findings live in
+`docs/cpu_benchmark_matrix.md`.
 
 Honest scope: a Core Ultra 9 275HX has stronger single-core performance than a
 mid-range i7, but since the conclusion rests on one thread with ~3 orders of

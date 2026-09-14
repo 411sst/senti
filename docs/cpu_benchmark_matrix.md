@@ -268,7 +268,7 @@ thread, not agent refits at eight.
 | Threads | sweep 1, 2, 4, 8, 14 |
 | GBM | `train_gbm`'s own settings — **library defaults, 100 trees**, 13 features |
 | LLM | real card prompt, `num_predict=90`, `temperature=0`, `seed=42`, **`think=false`** |
-| LLM threads | sweep `num_thread` 4/8/14/all — never trust the default on a hybrid CPU |
+| LLM threads | sweep `num_thread` 4/8/14/all — the default is 19% off peak on machine A |
 | LLM models | `medgemma:4b` and `gemma4:12b` minimum |
 | Timing | median of ≥ 20 reps after ≥ 5 warmup |
 | Report | tok/s **and** s/card; tok/s is the portable one |
