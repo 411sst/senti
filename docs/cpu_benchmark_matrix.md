@@ -6,10 +6,12 @@ Two machines have been measured and **neither is an i7**. This file is both the
 *specification* — every measurement a comparable run must produce — and the
 *results matrix* so far.
 
-**Status: the two reports now agree on every material figure.** Machine B's
-revision B (13 Sep) corrected four of its own numbers after cross-review, and
-one of those corrections invalidated a machine-A measurement too (§3.2). What
-remains unexplained is one LLM throughput gap (§4).
+**Status: Part A and Part B are complete on both machines and agree.** Machine
+B's revision D closed the last gap in its column. Two cross-corrections have
+been applied along the way: B's 300-tree XGBoost figure was wrong and had been
+copied into A's protocol (§3.2), and **A's "hybrid P/E cores cause the ollama
+collapse" finding did not survive B's counter-measurement and is retracted**
+(§4). One mechanism remains undetermined, with a named test to settle it (§7).
 
 ---
 
@@ -31,18 +33,35 @@ remains unexplained is one LLM throughput gap (§4).
 
 ## 2. Part A — Serving path (answers "can it run at the bedside")
 
+Both machines have now run `scripts/bench_single_node.py`.
+
 | Measurement | A · Ultra 9 275HX | B · i5-13500HX | C · i7 |
 |---|---|---|---|
-| Learned parameters, whole path | 96,605 | — | — |
-| Fusion checkpoint on disk | 121 KB | — | — |
-| **End-to-end** 1 patient-hour, 29 h ctx, 1 thread | **0.832 ms** | not measured | — |
-| …2 / 4 / 8 threads | 0.850 / 0.888 / 0.907 ms | not measured | — |
-| **Vitals-TCN alone**, 1 × 29 h, 1 thread | **0.207 ms** | **0.418 ms** | — |
-| …2 / 4 / 8 / 14 threads | 0.216 / 0.224 / 0.224 / 0.230 ms | 0.457 / 0.459 / 0.567 / 0.596 ms | — |
-| …degradation at max threads | 0.90× | 0.70× | — |
-| Batched throughput (256 × 29 h), 1 thread | 253,194 patient-hours/s | not measured | — |
-| Model contribution to RSS | 3.5 MB | not measured | — |
-| 20-bed unit, incl. cards | ≈ 0.16% of one core | not measured | — |
+| Learned parameters, whole path | 96,605 | **96,605** *(exact match)* | — |
+| Fusion checkpoint on disk | 121 KB | architecture-only in that clone | — |
+| **End-to-end** 1 patient-hour, 29 h ctx, 1 thread | **0.832 ms** | **1.660 ms** (p95 2.11) | — |
+| …2 / 4 / 8 threads | 0.850 / 0.888 / 0.907 ms | 1.725 / 1.930 / 2.203 ms | — |
+| …14 threads | — | 2.284 ms | — |
+| …degradation at max threads | 0.92× | 0.73× | — |
+| **Vitals-TCN alone**, 1 × 29 h, 1 thread | 0.207 ms | 0.418 ms (0.45 in rev D) | — |
+| Batched throughput (256 × 29 h), 1 thread | 253,194 patient-hours/s | 184,000 patient-hours/s | — |
+| **Serving peak RSS** (no agent bank) | 638 MB *(`+cu128`)* | **335 MB** *(`+cpu`)* | — |
+| Model contribution to RSS | 3.5 MB | 0.7 MB | — |
+| 20-bed unit, prediction only | 17 ms/hour | 33 ms/hour (0.0009% of a core) | — |
+
+**A is ~2× faster on the whole path** (0.832 vs 1.660 ms) — the same ratio every
+other benchmark shows. Parameter counts match exactly, which confirms both ran
+the same architecture.
+
+**Where the 1.66 ms goes** (B's breakdown): the two fusion heads are **1.04 ms**,
+the vitals-TCN 0.45 ms, and every MLP agent under 0.05 ms. The fusion, not the
+agents, is the serving cost.
+
+**Serving memory is not fit memory.** B measures the serving process at
+**335 MB** peak with the models themselves contributing 0.7 MB. The 2.0 GB
+quoted for the full fit holds the 2.46 M-row agent bank in RAM; a bedside
+deployment never does. Quoting 2.0 GB as a *serving* requirement overstates it
+roughly 6×. Both numbers are real and answer different questions.
 
 > **Do not put A's 0.832 ms next to B's 0.418 ms.** They measure different
 > things: A's is the **whole path** (six agent forwards + two fusion heads);
@@ -126,32 +145,54 @@ machines now use the repository's real card prompt at `num_predict=90`,
 | qwen2.5:7b | 4.7 GB | — | — | 11.4 | 3.0 s | 33 tok | 5.1 GB |
 | **gemma4:12b** *(ships)* | 7.6 GB | 4.1 | **5.4** | 5.9 | 10.1 s | 57 tok | **8.9 GB** |
 
-### Ollama thread pinning — a deployment finding, not a benchmark artifact
+### Ollama thread count — a runtime-version issue, **not** a hybrid-core one
 
-A initially generated ~1.5× slower than B despite winning every torch and
-XGBoost benchmark. Sweeping ollama's `num_thread` on a fixed prompt explains
-most of it. A's CPU is **8 P-cores + 16 E-cores, no hyperthreading**:
+A initially generated ~1.5× slower than B. Sweeping ollama's `num_thread` on a
+fixed prompt on both machines:
 
-| `num_thread` | medgemma:4b | gemma4:12b |
+| `num_thread` | medgemma · A | gemma4 · A | medgemma · B | gemma4 · B |
+|---|---|---|---|---|
+| 4 | 12.6 tok/s | 4.3 tok/s | 14.9 tok/s | 5.2 tok/s |
+| 8 | 15.1 | 5.2 | 16.9 | 6.0 |
+| 14 | **15.2** | **5.4** | **17.8** | **6.6** |
+| all cores (A 24 / B 20) | **4.1** | **2.9** | 17.0 | 6.3 |
+| default (unset) | 12.1 | — | **17.4** | 6.2 |
+
+Both peak at 14. The ends differ completely: on **A** the all-cores setting
+costs **73%** and the default sits well below peak; on **B** all-cores costs
+**4.5%** and the default is within **2%** of peak.
+
+**An earlier version of this file attributed A's collapse to hybrid P/E cores.
+That attribution was wrong and is retracted.** B's i5-13500HX is *also* hybrid —
+6 P-cores (12 threads) + 8 E-cores, 14 physical / 20 logical — and shows no
+collapse at all. Hybrid topology is therefore not sufficient to produce the
+effect.
+
+Three variables actually differ between the two runs, and **none is isolated**:
+
+| Variable | A | B |
 |---|---|---|
-| 4 | 12.6 tok/s | 4.3 tok/s |
-| 8 | 15.1 tok/s | 5.2 tok/s |
-| 14 | **15.2 tok/s** | **5.4 tok/s** |
-| 24 (all cores) | **4.1 tok/s** | **2.9 tok/s** |
+| **ollama version** | 0.30.10 | **0.34.0** |
+| **operating system** | Linux (Pop!_OS 24.04) | **Windows** |
+| E-core share | 16 of 24 cores | 8 of 20 threads |
 
-**Letting ollama use all 24 cores is 3.7× slower than using 8.** llama.cpp
-splits each token's work evenly across threads and then waits for the slowest,
-so the E-cores stall every token. Ollama's default lands somewhere unhelpful —
-A's original 12.1 tok/s sits between the 4- and 8-thread values.
+Version is the leading hypothesis — the pathological default is simply gone on
+the newer build. The OS is a real second candidate: Windows schedules hybrid
+cores through Thread Director, Linux historically handles them less well, and a
+llama.cpp thread pool that waits on its slowest worker is exactly the workload
+that would expose that.
 
-Pinned, A reaches 15.2 (medgemma) and 5.4 (gemma4) against B's 19.0 and 5.9 —
-the 12B gap closes to ~9%. The residue is most likely **ollama version: A runs
-0.30.10, B runs 0.34.0.**
+> **What to tell Intel: require ollama ≥ 0.34 and leave `num_thread` unset.**
+> Do **not** claim their hybrid architecture needs manual thread pinning — on a
+> current runtime it does not, and misattributing a fixed runtime bug to their
+> hardware in a reply addressed to them would be a bad look. Pinning to 14 buys
+> a further 2–6% and is a fine tuning note, but it is not the finding.
 
-> **Ship with `num_thread` pinned to the performance-core count.** Every recent
-> Intel mobile part is hybrid — Meteor Lake, Arrow Lake, Lunar Lake — which is
-> exactly the hardware class Intel asked about. A card generator that lets
-> ollama grab every core runs 2–4× slower than it should on the target.
+**The isolating test, still unrun:** the same ollama version on both machines —
+either upgrade A to 0.34.x and re-sweep, or install 0.30.10 on B. One run
+separates version from OS from topology. Until then the mechanism is
+undetermined and the deployment advice above stands on the version evidence
+alone.
 
 **`think: false` is mandatory for gemma4:12b.** It is a reasoning model in this
 ollama build: without the flag the whole `num_predict` budget is consumed by
@@ -275,15 +316,14 @@ paired against — silently. Both machines' timings come from isolated clones.
    projection anchored on one measurement and is the weakest evidence in the
    pair; it should be labelled as such wherever quoted. ~20 minutes on any i7
    laptop closes this.
-2. **LLM generation gap** (§4) — **largely explained.** Ollama was using all 24
-   of A's cores including 16 E-cores, costing 2–4×. Pinned, the 12B gap narrows
-   to ~9%; the residue is probably the ollama version (0.30.10 vs 0.34.0).
-   Confirm by sweeping `num_thread` on B (also a hybrid part) and comparing
-   versions.
-3. **B's serving-path numbers.** `scripts/bench_single_node.py` and this file do
-   not exist in B's clone, which has no git remotes by design — **send both
-   files directly**, do not reference a commit. Batched throughput, model RSS
-   and duty cycle are still missing from B.
+2. **LLM thread collapse** (§4) — **mechanism undetermined.** A loses 73% at
+   all-cores; B, also hybrid, loses 4.5%. Version, OS and E-core share all
+   differ and none is isolated. **The test: run one ollama version on both
+   machines.** Upgrading A to 0.34.x and re-sweeping is ~10 minutes and settles
+   it; it has not been done because A's ollama serves the live demo and the
+   review is imminent.
+3. ~~B's serving-path numbers~~ — **done in revision D.** Both machines now have
+   a complete Part A.
 4. **Integrated-GPU inference path** (OpenVINO / IPEX-LLM). Optional — the CPU
    card numbers make it unnecessary — but it is the one part of "i7 with
    integrated graphics" still untested.
@@ -306,4 +346,4 @@ paired against — silently. Both machines' timings come from isolated clones.
 | RAM (8 GB), not the instruction set, is the real floor | B |
 | Use the CPU-only torch wheel: 5× smaller, ~4× lighter in RAM | A and B |
 | `medgemma:4b` is the deployment reader: 2.9 GB vs gemma4:12b's 8.9 GB | B |
-| Pin ollama's `num_thread` to P-cores — all-core is 2–4× slower on hybrid CPUs | A |
+| Require ollama ≥ 0.34; its default thread choice is then within 2% of optimal | B |
