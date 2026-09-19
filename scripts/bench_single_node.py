@@ -65,7 +65,21 @@ RECEPTIVE_FIELD = 29          # hours of context the TCN stack needs
 STAY_HOURS = 34               # a representative stay length
 
 
+IS_MACOS = sys.platform == "darwin"
+
+# getrusage reports peak RSS in KILOBYTES on Linux but in BYTES on macOS.
+# Dividing by the wrong constant silently reports memory off by ~1000x.
+RSS_TO_MB = (1024 * 1024) if IS_MACOS else 1024
+
+
 def cpu_model():
+    if IS_MACOS:
+        try:
+            return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                  capture_output=True, text=True,
+                                  check=True).stdout.strip()
+        except Exception:
+            return platform.machine() or "unknown"
     try:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
             if line.startswith("model name"):
@@ -266,12 +280,16 @@ def main():
     print(f"host CPU     : {cpu_model()}")
     print(f"cores        : {os.cpu_count()} logical")
     print(f"torch        : {torch.__version__}   CUDA visible: {not gpu_hidden}")
-    print(f"python       : {platform.python_version()}")
+    print(f"python       : {platform.python_version()}  ({platform.machine()})")
+    if IS_MACOS:
+        print("note         : macOS — peak RSS read as bytes; torch+xgboost share "
+              "an OpenMP runtime here, so keep OMP_NUM_THREADS=1 for any run that "
+              "loads both (see scripts/results_table.py).")
 
-    rss_base = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    rss_base = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
     nets = build_agents()
     fusion, names, latent_dims, source = load_fusion()
-    rss_loaded = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    rss_loaded = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
 
     agent_params = {n: sum(p.numel() for p in m.parameters()) for n, m in nets.items()}
     fusion_params = sum(p.numel() for p in fusion.parameters())
@@ -311,7 +329,7 @@ def main():
         print(f"  {batch:>4d} patients x 29 h, 1 thread : "
               f"{tput[batch]:>12,.0f} patient-hours/s")
 
-    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
     print(f"\n-- serving memory ----------------------------------------------")
     print(f"  python + torch baseline                : {rss_base:,.0f} MB")
     print(f"  after loading every model              : {rss_loaded:,.0f} MB "
