@@ -1774,6 +1774,181 @@ mid-range i7, but since the conclusion rests on one thread with ~3 orders of
 magnitude of headroom, the IPC gap does not change it. Not measured: cold-start
 model load, sustained multi-day memory behaviour, and an actual Xe iGPU
 inference path (OpenVINO / IPEX-LLM).
+## T22 — External validation on eICU-CRD: the shipped stack, 208 hospitals, zero-shot
+
+Every number in this document before this section comes from one hospital. The
+demo's own caveat slide says so: *single centre, retrospective, no external
+validation*. T22 removes the third clause. Run 2026-09-20 on **eICU-CRD v2.0**
+via BigQuery under the same PhysioNet DUA.
+
+eICU is not "a second site". It is **208 hospitals** across the US, mostly
+community rather than academic, which makes this a multi-centre test rather
+than a second draw from the same kind of place.
+
+### The cohort, built by the same code
+
+`scripts/eicu_cohort.sql` mirrors `mimic_cohort.sql` row for row, and
+`src/eicu_cohort.py` *imports* every transformation from `mimic_cohort` rather
+than reimplementing it. That is deliberate: if the two datasets went through
+two code paths, a transfer result would confound "different hospital" with
+"different preprocessing", which is the one thing this experiment exists to
+rule out.
+
+| | MIMIC-IV (test) | eICU-CRD |
+| --- | --- | --- |
+| Prediction hours | 361,229 | **5,965,716** |
+| Stays / patients | 8,375 / — | 133,229 / 104,966 |
+| Hospitals | 1 | **208** |
+| Positive hours | 4.74% | 3.38% |
+| Event stays | 18.4% | 12.1% |
+
+**A design decision reproduced independently.** The 6-hour stabilization window
+was justified in `mimic_cohort.sql` by "73% of events land in the first 6
+hours". In eICU, 40,623 of 56,691 events land there: **71.7%**. Different
+country-wide hospital mix, same number.
+
+**Distributions agree where they should.** Vitals medians MIMIC vs eICU: heart
+rate 82.0 / 82.2, respiratory rate 19 / 19, SpO2 96 / 97, systolic 121.0 /
+123.3, temperature 36.78 / 36.80 — and they track across the full quantile
+range from p0.1 to p99.9. No Fahrenheit contamination (0.000% of temperatures
+in 90-110), no SpO2 above 100, no non-positive systolic. 22 of 24 lab analytes
+agree within +/-10% on the median.
+
+**Where they differ, they differ for reasons.** NEWS2 mean 4.34 -> 3.64 and
+on-oxygen 48.8% -> 41.9%, consistent with a broader case mix than one
+quaternary centre. The whole liver panel runs lower (AST 50 -> 33, ALT 36 ->
+29, bilirubin 0.90 -> 0.70, albumin 3.0 -> 2.8): MIMIC's transplant service
+against 208 mostly-community hospitals. Anion gap 14 -> 10 is a lab-formula
+convention, not a unit error — eICU's value is internally consistent with its
+own chemistry (139 - 104 - 25 = 10).
+
+### Four asymmetries that must travel with any number here
+
+1. **Ventilation onset is documentation time.** eICU's derived
+   `ventilation_events` is unusable as an onset (8,886 stays with a start;
+   offsets as far back as -2073 h), so onset is the earlier of
+   `respiratorycare.ventstartoffset` and the first `%mechanical ventilation%`
+   care-plan row. Care-plan charting *lags* true onset, which makes eICU lead
+   times conservative for us — never flattering.
+2. **No lab storetime.** The MIMIC extract bins labs by storetime to avoid a
+   70-minute leak; eICU offers only `labresultoffset`. If that is optimistic,
+   it flatters eICU and makes measured degradation *smaller* than the truth.
+3. **Death is discharge-resolved**, not minute-resolved.
+4. **No `gcs_unable`.** eICU has no "verbal not assessable" flag, so every row
+   takes the non-intubated branch of `alert_flags`.
+
+### Protocol: nothing is fitted on eICU
+
+Agents are fit on MIMIC train and isotonic-calibrated on MIMIC val; the fusion
+is fit the same way; eICU is scored through the frozen result. Weights,
+normalisation statistics and calibrators all stay as fitted on MIMIC —
+repointing any of them would turn a transfer test into a refit. eICU stay ids are 6-7
+digits and MIMIC's are the 8-digit 3xxxxxxx range, so the two are disjoint;
+`scripts/score_eicu.py` asserts this, because a collision would silently
+fabricate ECG and lab joins.
+
+**Reproduction check first.** Only the orchestrator checkpoints are persisted
+as weights — the per-modality agents cache emissions, not models — so the
+stack is re-fit on MIMIC and checked against the shipped caches before any
+eICU number is believed:
+
+| agent | risk corr vs shipped cache | max abs delta |
+| --- | --- | --- |
+| news2 | 1.0000 | 0.0000 (deterministic) |
+| vitals_tcn | 0.9985 | 0.1426 |
+| labs | 0.9880 | 0.1944 |
+
+### Result: core-3 fusion (the shipped PRIMARY config)
+
+AUPRC is prevalence-dependent and the two cohorts differ (4.74% vs 3.38%), so
+raw AUPRC is **not** comparable across them. Lift = AUPRC / prevalence, and
+AUROC, are.
+
+| pooled | prevalence | AUPRC | lift | AUROC | ECE |
+| --- | --- | --- | --- | --- | --- |
+| MIMIC test | 4.74% | 0.2358 | 4.97 | 0.786 | 0.0010 |
+| eICU, 208 hospitals | 3.38% | 0.0921 | 2.73 | 0.725 | 0.0225 |
+
+The pooled gap is mostly **charting density**, not generalisation failure.
+eICU charts far more thinly: post-carry-forward availability is 89.8 / 86.4 /
+80.4 / 89.3 / 91.0% for the five vitals against MIMIC's 99.2 / 98.0 / 99.1 /
+98.9 / 98.7%, and GCS 70.6% against 98.4%. Restricting both sides to hours
+where all five vitals are fresh compares like with like:
+
+| all 5 vitals fresh within | MIMIC lift / AUROC | eICU lift / AUROC | lift retained | AUROC delta |
+| --- | --- | --- | --- | --- |
+| 12 h | 4.37 / 0.779 | 3.23 / 0.737 | 74% | −0.042 |
+| 6 h | 4.03 / 0.773 | 3.30 / 0.739 | 82% | −0.034 |
+| 3 h | 3.74 / 0.768 | 3.52 / 0.742 | 94% | −0.025 |
+| 2 h | 3.69 / 0.766 | 3.48 / 0.744 | **94%** | **−0.022 (2.9% rel)** |
+
+Monotone convergence, settling at **94% of lift retained and 2.9% relative
+AUROC loss** — inside the under-4% that Gao et al. report for MIMIC->eICU
+transfer (`docs/references.md`).
+
+Note MIMIC's own performance *falls* under the same restriction (0.786 ->
+0.766). Staleness is itself informative — charting intensity tracks acuity —
+and the model exploits it. It cannot exploit eICU's different version of it,
+because the missingness *mechanism* differs: rare and specific in MIMIC (2.5%
+of hours), common and culturally varied across 208 eICU hospitals (27.5%).
+
+### The zero-parameter control
+
+NEWS2 is a deterministic lookup with no learned parameters, so it cannot
+overfit to MIMIC. If the eICU extraction or labels were broken it would
+collapse too:
+
+| NEWS2 agent | AUPRC | lift | AUROC |
+| --- | --- | --- | --- |
+| MIMIC test | 0.1143 | 2.41 | 0.684 |
+| eICU | 0.0832 | **2.46** | 0.676 |
+
+It transfers intact — marginally better. That isolates the learned components'
+drop to feature density rather than to a bad cohort, bad labels, or
+hospital-specific overfitting. It is the single most load-bearing check in
+this section.
+
+### The fusion transfers better than its parts
+
+Pooled AUROC loss: vitals-TCN alone −0.073 (0.754 -> 0.681); core-3 fusion
+−0.061 (0.786 -> 0.725). At matched density (3 h) the single agent holds
+0.735 -> 0.722 while the fusion holds 0.768 -> 0.742. Having several
+modalities to fall back on buys measured robustness when one channel thins
+out — an argument for the architecture that no longer rests on intuition.
+
+### Per-hospital: what deployment actually looks like
+
+91 hospitals had at least 20,000 scored hours and 50 positive hours:
+
+| | p10 | median | p90 |
+| --- | --- | --- | --- |
+| AUROC | 0.658 | **0.728** | 0.815 |
+| lift | 1.87 | 3.23 | 5.32 |
+
+The median site beats the pooled number (0.728 vs 0.725). This spread is the
+honest answer to "what happens when you deploy at a new site", and it is a
+figure no single-centre study can produce.
+
+### What breaks: calibration, not ranking
+
+ECE 0.0010 -> 0.0225 pooled. Isotonic calibrators fitted at MIMIC's 4.74%
+prevalence do not hold at eICU's 3.38%. Ranking survives (AUPRC and AUROC are
+rank-based); absolute probabilities do not. **Deployment implication: alarm
+thresholds must be re-frozen on local validation data at a new site**, which
+the per-unit operating-point machinery in T12 already does. Stated here rather
+than discovered in the field.
+
+### Scope — what T22 does and does not cover
+
+Measured: **core-3** (vitals_tcn + news2 + labs), the shipped PRIMARY
+configuration. Not yet measured: the all-8 flagship. The GBM pseudo-agent
+needs no new extraction (`build_design` reads only cohort columns, labs and
+derived trajectories). Cadence, fluid and resp each need an eICU extract —
+fluid and resp map cleanly from `pivoted_uo` / `pivoted_o2`; cadence is where
+208 charting cultures differ most, making it both the most interesting and the
+most likely to degrade. ECG is absent from eICU entirely and degrades to its
+learned no-data embedding, which is already the common path in MIMIC (7.6-42%
+ECG coverage), so the flagship needs no reconfiguration to run there.
 
 ## Reproduce
 
@@ -1913,4 +2088,15 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 
 # tests
 .venv/bin/python -m pytest -q   # 661 passing
+
+# T22 external validation on eICU-CRD (2026-09-20). Credentialed PhysioNet data,
+# same DUA as MIMIC; both parquets land under the gitignored data/ tree.
+# SENTINEL_BQ_STORAGE=0 because the sandbox project has no billing (no BQ Storage API).
+SENTINEL_BQ_STORAGE=0 .venv/bin/python scripts/fetch_eicu_cohort.py   # 1.59 GB scanned, ~3 min
+SENTINEL_BQ_STORAGE=0 .venv/bin/python scripts/fetch_eicu_labs.py     # 1.32 GB scanned, ~3 min
+PYTHONPATH=src .venv/bin/python src/eicu_cohort.py                    # 5,965,716 prediction hours
+
+# Zero-shot transfer: fit on MIMIC, score eICU. Writes to data/cache/embeddings_eicu/
+# so the shipped caches the whole results corpus is paired against are never touched.
+.venv/bin/python scripts/score_eicu.py                                # core-3, ~5 min
 ```
