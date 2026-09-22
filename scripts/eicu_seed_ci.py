@@ -97,13 +97,28 @@ def main():
                   f"   {'clear of 0' if ok else 'SPANS 0'}")
     print(f"\n  {clear}/{total} comparisons with the interval clear of zero")
 
+    print(f"\n=== per-spec summary across {len(seeds_present)} seeds ===")
+    print(f"  {'vs':<12} {'mean':>9} {'min':>9} {'max':>9} {'seeds clear':>13}")
+    for spec in SPECS:
+        pts = [float(np.mean(d[f"sentinel_s{s}"] - d[spec])) for s in seeds_present]
+        ok = sum(delta_ci(d[f"sentinel_s{s}"], d[spec])[0] > 0 for s in seeds_present)
+        print(f"  {spec:<12} {np.mean(pts):>+9.4f} {min(pts):>+9.4f} {max(pts):>+9.4f} "
+              f"{ok:>8}/{len(seeds_present)}")
+
     if len(seeds_present) > 1:
-        print(f"\n=== seed-to-seed spread (paired, same resample) ===")
-        for i, a in enumerate(seeds_present):
-            for b in seeds_present[i + 1:]:
-                lo, hi = delta_ci(d[f"sentinel_s{a}"], d[f"sentinel_s{b}"])
-                pt = float(np.mean(d[f"sentinel_s{a}"] - d[f"sentinel_s{b}"]))
-                print(f"  seed {a} − seed {b}: {pt:+.4f}  [{lo:+.4f}, {hi:+.4f}]")
+        aup = {s: auprc(y[m], models[f"sentinel_s{s}"][m]) for s in seeds_present}
+        lo_s, hi_s = min(aup, key=aup.get), max(aup, key=aup.get)
+        print(f"\n=== seed spread on the cut ===")
+        print(f"  AUPRC min {aup[lo_s]:.4f} (seed {lo_s})  "
+              f"max {aup[hi_s]:.4f} (seed {hi_s})  "
+              f"range {aup[hi_s]-aup[lo_s]:.4f}  mean {np.mean(list(aup.values())):.4f}")
+        lo, hi = delta_ci(d[f"sentinel_s{hi_s}"], d[f"sentinel_s{lo_s}"])
+        print(f"  widest paired seed gap (best − worst): "
+              f"{aup[hi_s]-aup[lo_s]:+.4f}  [{lo:+.4f}, {hi:+.4f}]")
+        worst = min(float(np.mean(d[f"sentinel_s{s}"] - d[spec]))
+                    for s in seeds_present for spec in SPECS)
+        print(f"  smallest margin over any spec at any seed: {worst:+.4f}")
+        print(f"  {'-> seed noise is smaller than the margin' if (aup[hi_s]-aup[lo_s]) < worst else '-> seed noise is comparable to the margin; report both'}")
 
 
 if __name__ == "__main__":

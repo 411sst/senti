@@ -1924,10 +1924,11 @@ confidence interval clear of zero** (+0.0115 over YAIB, +0.0113 over
 eCART-style, +0.0177 over Sadanandan). Pooled across every hour — including
 those too sparsely charted for a temporal model — it ties the two strongest and
 still beats the third. Calibration does not transfer and thresholds must be
-re-frozen locally. **The comparative win is seed-stable: 9 of 9 comparisons
-(3 fusion seeds x 3 specs) have the interval clear of zero**, and seed 42 —
-the one first published — is the weakest of the three. The sections below
-build that result up from the cohort.
+re-frozen locally. **The comparative win is seed-stable at the same standard
+as the MIMIC claims: 30 of 30 comparisons (10 fusion seeds x 3 specs) have the
+interval clear of zero**, and the seed spread (0.0063 AUPRC) is strictly
+smaller than the smallest margin over any spec at any seed (+0.0109). The
+sections below build that result up from the cohort.
 
 eICU is not "a second site". It is **208 hospitals** across the US, mostly
 community rather than academic, which makes this a multi-centre test rather
@@ -2095,7 +2096,8 @@ within one pipeline so nothing else moves: single-head ALL-8 0.3009 against
 How much of that the two-head recovers is less settled than a single seed
 suggested. At seed 42 the 7-agent two-head reaches 0.3094, essentially the
 published ALL-8 ten-seed mean of 0.309 — but seed 42 is the *high* MIMIC draw,
-and over seeds 42/1/2 the mean is **0.3024**, a gap of ~0.007. Part of even
+and over ten seeds the matched-density MIMIC mean is 0.2331 against seed 42's
+0.2391 — seed 42 is the single best MIMIC draw of the ten. Part of even
 that is re-fit difference rather than cadence, since this pipeline has no
 ALL-8 two-head arm to subtract. The honest reading: cadence costs the two-head
 **appreciably less than the single head, roughly half**, and pinning it down
@@ -2105,11 +2107,12 @@ needs an ALL-8 two-head arm at matched seeds.
 | --- | --- | --- | --- |
 | core-3 (the code default) | 3.69 / 0.766 | 3.48 / 0.744 | 94% |
 | 7-agent, single head | 4.63 / 0.794 | 3.97 / 0.763 | 86% |
-| **7-agent two-head — the flagship** | **4.99 / 0.799** | **4.08 / 0.762** | **82%** |
+| **7-agent two-head — the flagship** | **4.96 / 0.798** | **4.10 / 0.764** | **83%** |
 | ALL-8 single head (MIMIC reference only) | 6.34 / 0.824 | — | — |
 
 All cuts at matched charting density (all five vitals fresh within 2 h); the
-flagship row is the mean over seeds 42/1/2, the others are seed 42. The
+flagship row is the mean over ten fusion seeds on BOTH sides (MIMIC AUPRC
+0.2331, eICU 0.1526), the others are seed 42. The
 flagship posts the best absolute eICU numbers on every measure; its larger
 *relative* drop reflects that it starts highest, not that it travels worst —
 worth stating in that order, because the 80% read alone says the opposite.
@@ -2156,30 +2159,43 @@ resample applied to every model:
 hospitals, every interval clear of zero. Pooled it ties the two strongest** —
 an interval spanning zero is a tie, not a loss — **and still beats the third.**
 
-### The margin survives a change of seed
+### Ten seeds: the margin is not a seed artifact
 
 Seeds vary the FUSION only, following T9/T18: the agent bank is fitted once at
 seed 42 and shared, so a seed costs the two head fits and nothing else. The
 comparators stay fixed — they are published specs, not something we re-roll.
-All six models went through ONE bootstrap pass on the identical patient-level
-resample, so every delta below is paired against every other.
+All thirteen models (ten seeds, three specs) went through ONE bootstrap pass on
+the identical patient-level resample, so every delta is paired against every
+other rather than drawn independently.
 
 | eICU, matched density | AUPRC | lift | AUROC | vs YAIB | vs eCART | vs Sadanandan |
 | --- | --- | --- | --- | --- | --- | --- |
-| seed 42 | 0.1506 | 4.05 | 0.7636 | +0.0115 [+0.0077, +0.0159] | +0.0113 | +0.0177 |
-| seed 1 | 0.1518 | 4.08 | 0.7611 | +0.0126 [+0.0085, +0.0169] | +0.0124 | +0.0189 |
-| seed 2 | 0.1533 | 4.12 | 0.7617 | +0.0141 [+0.0102, +0.0188] | +0.0140 | +0.0204 |
-| **mean** | **0.1519** | **4.08** | **0.7621** | **+0.0127** | **+0.0126** | **+0.0190** |
+| seed 42 | 0.1506 | 4.05 | 0.7636 | +0.0115 | +0.0113 | +0.0177 |
+| seed 1 | 0.1518 | 4.08 | 0.7611 | +0.0126 | +0.0124 | +0.0189 |
+| seed 2 | 0.1533 | 4.12 | 0.7617 | +0.0141 | +0.0140 | +0.0204 |
+| seed 3 | 0.1532 | 4.12 | 0.7664 | +0.0140 | +0.0139 | +0.0203 |
+| seed 4 | 0.1565 | 4.21 | 0.7665 | +0.0174 | +0.0173 | +0.0237 |
+| seed 5 | 0.1531 | 4.12 | 0.7646 | +0.0140 | +0.0138 | +0.0203 |
+| seed 6 | 0.1522 | 4.09 | 0.7625 | +0.0131 | +0.0129 | +0.0194 |
+| seed 7 | 0.1502 | 4.04 | 0.7625 | +0.0110 | +0.0109 | +0.0173 |
+| seed 8 | 0.1519 | 4.08 | 0.7648 | +0.0128 | +0.0127 | +0.0191 |
+| seed 9 | 0.1532 | 4.12 | 0.7626 | +0.0140 | +0.0138 | +0.0203 |
+| **mean** | **0.1526** | **4.10** | **0.7636** | **+0.0135** | **+0.0133** | **+0.0197** |
+| **range** | 0.0063 | | | +0.0110 … +0.0174 | +0.0109 … +0.0173 | +0.0173 … +0.0237 |
 
-**9 of 9 intervals clear of zero**, and the already-published seed 42 is the
-weakest of the three — the original number was conservative, not a lucky draw.
-Seed-to-seed spread is −0.0011 / −0.0027 / −0.0016 AUPRC, smaller than the
-margin over any comparator, which is the condition that makes the result
-quotable at all.
+**30 of 30 intervals clear of zero** — 10/10 seeds against each of the three
+specs. Every seed's worst interval still excludes zero; the narrowest is seed
+7 vs eCART at +0.0109 [+0.0067, +0.0148].
 
-eICU is also *more* seed-stable than MIMIC — eICU AUPRC spans 0.0027 across the
-three seeds against MIMIC's 0.0171 — which is 5,965,716 rows against 361,229
-doing exactly what they should.
+The line that decides whether any of this is quotable: the **widest paired seed
+gap is +0.0063 [+0.0051, +0.0078]** (seed 4 − seed 7) while the **smallest
+margin over any spec at any seed is +0.0109**. Seed noise is strictly smaller
+than the effect. Seed 42, already published, is the second-weakest of the ten,
+so the original figure understated the result rather than cherry-picking it.
+
+eICU is also *more* seed-stable than MIMIC — eICU AUPRC spans 0.0063 across ten
+seeds against MIMIC's 0.0128 on the same cut — which is 5,965,716 rows against
+164,477 doing exactly what they should.
 
 The margin is conditional, and the condition is data capture. On MIMIC the
 lead over YAIB is +0.028 AUPRC; on eICU it is +0.012 at matched density and a
@@ -2228,9 +2244,11 @@ microbiology table of ~17k rows (so `n_micro` is degenerate) — 3 of 9 channels
 absent by construction rather than by hospital variation. Zero-filling them
 would depress the transfer number for a reason unrelated to generalisation, so
 the flagship here is ALL-8 less cadence with that cost priced separately on
-MIMIC. **Seeds**: three fusion seeds (42/1/2) against the MIMIC claims'
-ten. Enough to show the comparative win is not a seed artifact (9/9 clear),
-not yet parity with the ten-seed evidence elsewhere in this document. T23's
+MIMIC. **Seeds**: ten fusion seeds (42, 1-9), parity with the ten-seed
+evidence elsewhere in this document — 30/30 intervals clear, seed noise
+smaller than the effect. What is still a single draw is the agent bank, fitted
+once at seed 42 and shared across seeds by the T9/T18 protocol; a sweep that
+also re-rolled the agents would be a different and larger experiment. T23's
 calibration figures are seed 42 only; ECE moves with the seed (pooled
 0.0378 / 0.0319 / 0.0390 at 42/1/2), so the repair *costs* there should be
 read as one seed's, even though the pattern will not depend on it.
