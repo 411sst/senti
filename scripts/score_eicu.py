@@ -306,6 +306,10 @@ def main():
                     help="also score the SHIPPED FLAGSHIP: treatment head + "
                          "mortality head combined by noisy-OR (T9). This is "
                          "what the demo plots and what ships to Intel.")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="fusion seed. Follows T9/T18: seeds vary the FUSION, "
+                         "not the agents -- the bank is fitted once at 42 and "
+                         "shared, so a seed sweep costs the head fits only.")
     ap.add_argument("--label", default="run",
                     help="suffix for the cached score files")
     ap.add_argument("--mimic-only", action="store_true",
@@ -369,10 +373,11 @@ def main():
         bank_splits = bank_splits + ("eicu",)
     bank = AgentBank.load(splits=bank_splits,
                           agent_names=tuple(args.agents), emb_dir=EMB_DIR)
-    orch = Orchestrator(bank=bank, max_epochs=args.fusion_epochs)
+    orch = Orchestrator(bank=bank, max_epochs=args.fusion_epochs, seed=args.seed)
     t0 = time.time()
     orch.fit(train, val)
-    print(f"[fusion] {'+'.join(args.agents)} fit in {time.time()-t0:.0f}s")
+    print(f"[fusion] {'+'.join(args.agents)} fit in {time.time()-t0:.0f}s "
+          f"(seed {args.seed})")
 
     def scored(df):
         out = orch.emit(df)
@@ -397,7 +402,7 @@ def main():
 
     if args.two_head:
         sc = two_head_scores(bank, {"train": train, "val": val, "test": test},
-                             eicu, args.fusion_epochs)
+                             eicu, args.fusion_epochs, seed=args.seed)
         np.savez_compressed(
             REPO / "data" / "cache" / f"eicu_twohead_{args.label}.npz",
             stay_id=es.stay_id.to_numpy(), hour=es.hour.to_numpy(),

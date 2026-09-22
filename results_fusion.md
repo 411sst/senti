@@ -1924,7 +1924,10 @@ confidence interval clear of zero** (+0.0115 over YAIB, +0.0113 over
 eCART-style, +0.0177 over Sadanandan). Pooled across every hour — including
 those too sparsely charted for a temporal model — it ties the two strongest and
 still beats the third. Calibration does not transfer and thresholds must be
-re-frozen locally. The sections below build that result up from the cohort.
+re-frozen locally. **The comparative win is seed-stable: 9 of 9 comparisons
+(3 fusion seeds x 3 specs) have the interval clear of zero**, and seed 42 —
+the one first published — is the weakest of the three. The sections below
+build that result up from the cohort.
 
 eICU is not "a second site". It is **208 hospitals** across the US, mostly
 community rather than academic, which makes this a multi-centre test rather
@@ -2085,19 +2088,28 @@ The two-head ALL-8 composite is what the demo plots and what ships to Intel
 (`risk_source: two-head ALL-8 composite` in the demo bundle), so it is the
 configuration the claim rests on. eICU cannot supply cadence, so the flagship
 here is **ALL-8 less cadence** — seven agents, ECG degrading to its learned
-no-data embedding. Cadence's cost is measured on MIMIC rather than guessed:
-single-head ALL-8 0.3009 against 7-agent 0.2863, so **~0.015 AUPRC** — and the
-two-head absorbs nearly all of it, landing at 0.3094 against the published
-ten-seed mean of 0.309.
+no-data embedding. Cadence's cost is measured on MIMIC rather than guessed,
+within one pipeline so nothing else moves: single-head ALL-8 0.3009 against
+7-agent 0.2863, so **~0.015 AUPRC**.
+
+How much of that the two-head recovers is less settled than a single seed
+suggested. At seed 42 the 7-agent two-head reaches 0.3094, essentially the
+published ALL-8 ten-seed mean of 0.309 — but seed 42 is the *high* MIMIC draw,
+and over seeds 42/1/2 the mean is **0.3024**, a gap of ~0.007. Part of even
+that is re-fit difference rather than cadence, since this pipeline has no
+ALL-8 two-head arm to subtract. The honest reading: cadence costs the two-head
+**appreciably less than the single head, roughly half**, and pinning it down
+needs an ALL-8 two-head arm at matched seeds.
 
 | configuration | MIMIC lift / AUROC | eICU lift / AUROC | lift kept |
 | --- | --- | --- | --- |
 | core-3 (the code default) | 3.69 / 0.766 | 3.48 / 0.744 | 94% |
 | 7-agent, single head | 4.63 / 0.794 | 3.97 / 0.763 | 86% |
-| **7-agent two-head — the flagship** | **5.09 / 0.801** | **4.05 / 0.764** | **80%** |
+| **7-agent two-head — the flagship** | **4.99 / 0.799** | **4.08 / 0.762** | **82%** |
 | ALL-8 single head (MIMIC reference only) | 6.34 / 0.824 | — | — |
 
-All cuts at matched charting density (all five vitals fresh within 2 h). The
+All cuts at matched charting density (all five vitals fresh within 2 h); the
+flagship row is the mean over seeds 42/1/2, the others are seed 42. The
 flagship posts the best absolute eICU numbers on every measure; its larger
 *relative* drop reflects that it starts highest, not that it travels worst —
 worth stating in that order, because the 80% read alone says the opposite.
@@ -2143,6 +2155,31 @@ resample applied to every model:
 **At matched charting density the flagship beats all three on unseen
 hospitals, every interval clear of zero. Pooled it ties the two strongest** —
 an interval spanning zero is a tie, not a loss — **and still beats the third.**
+
+### The margin survives a change of seed
+
+Seeds vary the FUSION only, following T9/T18: the agent bank is fitted once at
+seed 42 and shared, so a seed costs the two head fits and nothing else. The
+comparators stay fixed — they are published specs, not something we re-roll.
+All six models went through ONE bootstrap pass on the identical patient-level
+resample, so every delta below is paired against every other.
+
+| eICU, matched density | AUPRC | lift | AUROC | vs YAIB | vs eCART | vs Sadanandan |
+| --- | --- | --- | --- | --- | --- | --- |
+| seed 42 | 0.1506 | 4.05 | 0.7636 | +0.0115 [+0.0077, +0.0159] | +0.0113 | +0.0177 |
+| seed 1 | 0.1518 | 4.08 | 0.7611 | +0.0126 [+0.0085, +0.0169] | +0.0124 | +0.0189 |
+| seed 2 | 0.1533 | 4.12 | 0.7617 | +0.0141 [+0.0102, +0.0188] | +0.0140 | +0.0204 |
+| **mean** | **0.1519** | **4.08** | **0.7621** | **+0.0127** | **+0.0126** | **+0.0190** |
+
+**9 of 9 intervals clear of zero**, and the already-published seed 42 is the
+weakest of the three — the original number was conservative, not a lucky draw.
+Seed-to-seed spread is −0.0011 / −0.0027 / −0.0016 AUPRC, smaller than the
+margin over any comparator, which is the condition that makes the result
+quotable at all.
+
+eICU is also *more* seed-stable than MIMIC — eICU AUPRC spans 0.0027 across the
+three seeds against MIMIC's 0.0171 — which is 5,965,716 rows against 361,229
+doing exactly what they should.
 
 The margin is conditional, and the condition is data capture. On MIMIC the
 lead over YAIB is +0.028 AUPRC; on eICU it is +0.012 at matched density and a
@@ -2191,8 +2228,12 @@ microbiology table of ~17k rows (so `n_micro` is degenerate) — 3 of 9 channels
 absent by construction rather than by hospital variation. Zero-filling them
 would depress the transfer number for a reason unrelated to generalisation, so
 the flagship here is ALL-8 less cadence with that cost priced separately on
-MIMIC. **Seeds**: single seed (42); the MIMIC claims carry ten-seed evidence
-and this does not — the intervals here are over patients, not seeds.
+MIMIC. **Seeds**: three fusion seeds (42/1/2) against the MIMIC claims'
+ten. Enough to show the comparative win is not a seed artifact (9/9 clear),
+not yet parity with the ten-seed evidence elsewhere in this document. T23's
+calibration figures are seed 42 only; ECE moves with the seed (pooled
+0.0378 / 0.0319 / 0.0390 at 42/1/2), so the repair *costs* there should be
+read as one seed's, even though the pattern will not depend on it.
 **Age**: 0.24% of eICU stays are under 18 where MIMIC-IV's ICU is adults-only
 by construction; left unfiltered and reported rather than silently trimmed.
 ## T23 — Calibration transfer: what breaks, and what a new site pays to repair it
@@ -2459,4 +2500,13 @@ PYTHONPATH=src .venv/bin/python src/eicu_cohort.py                    # 5,965,71
 # T23: what breaks in calibration on transfer, and what a new site pays to fix
 # it. Reads T22's cached flagship scores; no refit, no BigQuery.
 .venv/bin/python scripts/eicu_calibration.py                          # ~4 min
+
+# Seed stability of the comparative win. Seeds vary the FUSION only (T9/T18),
+# so --reuse-emissions makes each one the two head fits and nothing else.
+for S in 1 2; do
+  .venv/bin/python scripts/score_eicu.py --two-head --reuse-emissions \
+      --seed $S --label all7_s$S \
+      --agents vitals_tcn news2 labs ecg_meas gbm fluid resp
+done
+.venv/bin/python scripts/eicu_seed_ci.py --seeds 42 1 2                # ~8 min
 ```
