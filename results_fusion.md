@@ -2195,6 +2195,97 @@ MIMIC. **Seeds**: single seed (42); the MIMIC claims carry ten-seed evidence
 and this does not — the intervals here are over patients, not seeds.
 **Age**: 0.24% of eICU stays are under 18 where MIMIC-IV's ICU is adults-only
 by construction; left unfiltered and reported rather than silently trimmed.
+## T23 — Calibration transfer: what breaks, and what a new site pays to repair it
+
+T22 ended on a split finding: the flagship's **ranking** survives the move to
+208 unseen hospitals (AUROC 0.801 -> 0.764) while its **calibration** does not
+(ECE 0.0020 -> 0.0381 equal-mass). That is not a cosmetic difference.
+Alarm thresholds are quantiles of a calibrated probability, so a site that
+inherits MIMIC's calibrators inherits the wrong alarm *volume* even though the
+model still ranks its own patients correctly. T22 said "re-freeze thresholds
+locally"; this rung turns that instruction into a number.
+
+Run 2026-09-22 on the T22 flagship scores. Every map applied here is monotone,
+so AUPRC and AUROC are unchanged by construction — asserted in the script, not
+assumed. Nothing in this section can flatter a ranking result.
+
+### The failure is a near-uniform over-confidence, not a shape distortion
+
+Equal-mass deciles of the frozen flagship on eICU (5,965,716 hours):
+
+| decile | predicted | observed | observed / predicted |
+| --- | --- | --- | --- |
+| 1 | 0.0067 | 0.0076 | 1.13 |
+| 4 | 0.0268 | 0.0140 | 0.52 |
+| 7 | 0.0556 | 0.0290 | 0.52 |
+| 9 | 0.1348 | 0.0574 | 0.43 |
+| 10 | 0.2976 | 0.1291 | 0.43 |
+
+The ratio sits near 0.5 from the fourth decile up: the model predicts roughly
+**twice the event rate it observes**, by about the same factor everywhere. A
+constant multiplicative gap is the repairable kind — it is a wrong intercept,
+not a wrong curve.
+
+### Half of it is prevalence, and that half is free
+
+The calibrators were fitted at MIMIC val's 4.75% prevalence; eICU runs at
+3.38%. The standard prior correction — multiply the odds by the ratio of
+target to source prior odds — needs **no labels at all**, only the local base
+rate, which a site can estimate from its own event counts without touching the
+model.
+
+| | ECE (equal-mass) |
+| --- | --- |
+| frozen, as shipped | 0.0381 |
+| prior-corrected, label-free | **0.0202** |
+
+It recovers 47% and no more, and the arithmetic says why: the prior shift
+multiplies the odds by 0.70 while the observed over-confidence needs about
+0.43. **Prevalence explains roughly half the calibration failure; the other
+half is genuine distribution shift** and cannot be fixed without local labels.
+
+### The other half costs about 500 patients
+
+Isotonic re-fitted on N randomly chosen local patients and evaluated on a
+disjoint held-out quarter (1,468,189 hours from 26,241 patients, never used
+for fitting), median of 5 draws per N:
+
+| local patients | local hours | ECE | recovered |
+| --- | --- | --- | --- |
+| 0 (frozen) | 0 | 0.0381 | — |
+| 250 | 12,732 | 0.0077 | 80% |
+| **500** | **27,849** | **0.0059** | **85%** |
+| 1,000 | 58,815 | 0.0044 | 88% |
+| 2,500 | 139,592 | 0.0032 | 92% |
+| 5,000 | 284,914 | 0.0017 | 96% |
+| 10,000 | 569,092 | 0.0013 | 97% |
+
+**About 500 labelled local patients restore calibration to a usable level, and
+about 5,000 restore it outright** — 0.0017 against MIMIC's own 0.0020. The
+25/50/100 rows are non-monotone (0.0255 / 0.0099 / 0.0166); that is sampling
+noise at five draws, and the small-N end should not be quoted without more
+repetitions.
+
+This is the concrete form of the T22 deployment caveat. A new site needs either
+its own base rate (free, half the gap) or a few hundred labelled stays (most of
+the rest) before its alarm volume means what the operating point says it means.
+
+### Calibration failure is site-specific
+
+Across the 91 hospitals with >= 20k scored hours and >= 50 positive hours:
+ECE **p10 0.0106, median 0.0365, p90 0.0763**. Some sites are nearly calibrated
+out of the box and some are twice the pooled figure, so "re-freeze locally" is
+not uniform advice — it is worth far more at some sites than others, and the
+local ECE is measurable before anyone commits to a threshold.
+
+### Ruled out: the noisy-OR is not the cause
+
+The obvious suspect was the two-head composite. Noisy-OR assumes the treatment
+and death heads are independent; they are not (the events co-occur), which
+would inflate the combined probability and read exactly as over-confidence.
+It does not survive contact with the data: the **single-head** 7-agent config
+scores ECE 0.0379 on eICU against the **two-head**'s 0.0378 — indistinguishable.
+The over-confidence comes from the transfer, not from the composition rule.
 
 ## Reproduce
 
@@ -2364,4 +2455,8 @@ PYTHONPATH=src .venv/bin/python src/eicu_cohort.py                    # 5,965,71
 
 # The comparative test: the three published specs, fitted on MIMIC, scored on eICU.
 .venv/bin/python scripts/score_eicu_baselines.py                      # ~6 min
+
+# T23: what breaks in calibration on transfer, and what a new site pays to fix
+# it. Reads T22's cached flagship scores; no refit, no BigQuery.
+.venv/bin/python scripts/eicu_calibration.py                          # ~4 min
 ```
