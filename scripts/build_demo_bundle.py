@@ -86,9 +86,13 @@ CAVEATS = [
     "Death arm: on death stays with no documented care-limitation decision "
     "(chart or discharge note) the lead is +0.5 h at 50% win — null. Early "
     "death-stay alarms largely track care patterns of decisions already made.",
-    "Single centre, retrospective: MIMIC-IV (Beth Israel Deaconess) only, no "
-    "external validation yet; NEWS2 is as charted; no outcome evidence — the lead "
-    "is an alarm-time difference, not a mortality difference.",
+    "Externally validated, retrospective: trained on MIMIC-IV (Beth Israel "
+    "Deaconess) and scored zero-shot on eICU-CRD — 208 hospitals, 5.97M "
+    "patient-hours — keeping 80% of its lift and beating all three published "
+    "specs where charting density is matched (results_fusion.md T22, seed 42). "
+    "Calibration does not transfer: thresholds must be re-frozen locally. "
+    "NEWS2 is as charted; no outcome evidence — the lead is an alarm-time "
+    "difference, not a mortality difference.",
 ]
 
 

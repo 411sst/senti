@@ -136,12 +136,25 @@ oxy AS (
   GROUP BY 1, 2
 ),
 fio AS (
-  SELECT c.stay_id, DIV(b.chartoffset, 60) AS hour, MAX(b.fio2) AS fio2
+  -- FiO2 AS A PERCENTAGE, matching MIMIC. eICU stores it as a FRACTION
+  -- (0.21-1.0) while MIMIC's extract yields a percentage (21-100). The
+  -- cohort's own use of this column is oxygen_flags, which normalises either
+  -- scale identically -- but scripts/mimic_extra_vitals.sql's consumers read
+  -- the RAW column (src/lit_gbm.py masks it by staleness and feeds it to the
+  -- published GBM specs), so a fraction here would silently hand those specs
+  -- values 100x smaller than the ones they were fitted on.
+  SELECT c.stay_id, DIV(b.chartoffset, 60) AS hour, MAX(pct) AS fio2
   FROM cohort c
-  JOIN `physionet-data.eicu_crd_derived.pivoted_bg` b
-    ON b.patientunitstayid = c.stay_id
+  JOIN (
+    SELECT patientunitstayid, chartoffset,
+           CASE WHEN fio2 >= 0.21 AND fio2 <= 1.0   THEN fio2 * 100.0
+                WHEN fio2 >= 21.0 AND fio2 <= 100.0 THEN fio2
+                ELSE NULL END AS pct
+    FROM `physionet-data.eicu_crd_derived.pivoted_bg`
+    WHERE fio2 IS NOT NULL
+  ) b ON b.patientunitstayid = c.stay_id
   WHERE b.chartoffset >= 0 AND b.chartoffset <= c.unitdischargeoffset
-    AND b.fio2 IS NOT NULL
+    AND b.pct IS NOT NULL
   GROUP BY 1, 2
 )
 SELECT g.stay_id, g.subject_key, g.hospitalid, g.unittype, g.hour,

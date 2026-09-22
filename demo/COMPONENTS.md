@@ -312,8 +312,9 @@ which are not (lead: two seeds at 0.0 h).
 ### What we do not claim
 Three caveats, stated on the page so they are never a surprise: the timing edge is
 seed-sensitive; on death stays with no documented care-limitation decision the lead is null
-(early death alarms largely track decisions already made); single centre, retrospective,
-no external validation, no outcome evidence.
+(early death alarms largely track decisions already made); externally validated on eICU-CRD
+but retrospective, with calibration that does not transfer (thresholds re-freeze locally) and
+no outcome evidence.
 
 ---
 

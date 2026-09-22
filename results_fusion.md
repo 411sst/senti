@@ -1778,8 +1778,17 @@ inference path (OpenVINO / IPEX-LLM).
 
 Every number in this document before this section comes from one hospital. The
 demo's own caveat slide says so: *single centre, retrospective, no external
-validation*. T22 removes the third clause. Run 2026-09-20 on **eICU-CRD v2.0**
-via BigQuery under the same PhysioNet DUA.
+validation*. T22 removes the third clause. Run 2026-09-20/21 on **eICU-CRD
+v2.0** via BigQuery under the same PhysioNet DUA.
+
+**Headline.** The shipped two-head flagship, frozen and scored on 208 unseen
+hospitals, keeps **80% of its MIMIC lift** (AUROC 0.801 -> 0.764) and **beats
+all three published early-warning specs at matched charting density, every
+confidence interval clear of zero** (+0.0115 over YAIB, +0.0113 over
+eCART-style, +0.0177 over Sadanandan). Pooled across every hour — including
+those too sparsely charted for a temporal model — it ties the two strongest and
+still beats the third. Calibration does not transfer and thresholds must be
+re-frozen locally. The sections below build that result up from the cohort.
 
 eICU is not "a second site". It is **208 hospitals** across the US, mostly
 community rather than academic, which makes this a multi-centre test rather
@@ -1918,37 +1927,138 @@ out — an argument for the architecture that no longer rests on intuition.
 
 ### Per-hospital: what deployment actually looks like
 
-91 hospitals had at least 20,000 scored hours and 50 positive hours:
-
-| | p10 | median | p90 |
-| --- | --- | --- | --- |
-| AUROC | 0.658 | **0.728** | 0.815 |
-| lift | 1.87 | 3.23 | 5.32 |
-
-The median site beats the pooled number (0.728 vs 0.725). This spread is the
-honest answer to "what happens when you deploy at a new site", and it is a
-figure no single-centre study can produce.
+91 hospitals had at least 20,000 scored hours and 50 positive hours. For
+core-3 the median site scores AUROC **0.728** (p10 0.658, p90 0.815), beating
+its own pooled figure of 0.725; the per-configuration table further down gives
+the same breakdown for the flagship. This spread is the honest answer to "what
+happens when you deploy at a new site", and it is a figure no single-centre
+study can produce.
 
 ### What breaks: calibration, not ranking
 
-ECE 0.0010 -> 0.0225 pooled. Isotonic calibrators fitted at MIMIC's 4.74%
+ECE 0.0010 -> 0.0225 pooled for core-3, and 0.0020 -> 0.0378 for the
+flagship. Isotonic calibrators fitted at MIMIC's 4.74%
 prevalence do not hold at eICU's 3.38%. Ranking survives (AUPRC and AUROC are
 rank-based); absolute probabilities do not. **Deployment implication: alarm
 thresholds must be re-frozen on local validation data at a new site**, which
 the per-unit operating-point machinery in T12 already does. Stated here rather
 than discovered in the field.
+### The shipped flagship, and all four configurations
+
+The two-head ALL-8 composite is what the demo plots and what ships to Intel
+(`risk_source: two-head ALL-8 composite` in the demo bundle), so it is the
+configuration the claim rests on. eICU cannot supply cadence, so the flagship
+here is **ALL-8 less cadence** — seven agents, ECG degrading to its learned
+no-data embedding. Cadence's cost is measured on MIMIC rather than guessed:
+single-head ALL-8 0.3009 against 7-agent 0.2863, so **~0.015 AUPRC** — and the
+two-head absorbs nearly all of it, landing at 0.3094 against the published
+ten-seed mean of 0.309.
+
+| configuration | MIMIC lift / AUROC | eICU lift / AUROC | lift kept |
+| --- | --- | --- | --- |
+| core-3 (the code default) | 3.69 / 0.766 | 3.48 / 0.744 | 94% |
+| 7-agent, single head | 4.63 / 0.794 | 3.97 / 0.763 | 86% |
+| **7-agent two-head — the flagship** | **5.09 / 0.801** | **4.05 / 0.764** | **80%** |
+| ALL-8 single head (MIMIC reference only) | 6.34 / 0.824 | — | — |
+
+All cuts at matched charting density (all five vitals fresh within 2 h). The
+flagship posts the best absolute eICU numbers on every measure; its larger
+*relative* drop reflects that it starts highest, not that it travels worst —
+worth stating in that order, because the 80% read alone says the opposite.
+
+Per-hospital, 91 sites with >= 20k scored hours and >= 50 positive hours:
+
+| configuration | AUROC p10 / median / p90 | lift p10 / median / p90 |
+| --- | --- | --- |
+| core-3 | 0.658 / 0.728 / 0.815 | 1.87 / 3.23 / 5.32 |
+| 7-agent single head | 0.677 / 0.754 / 0.835 | 2.16 / 3.82 / 7.07 |
+| **two-head flagship** | **0.689 / 0.759 / 0.842** | **2.49 / 4.37 / 8.94** |
+
+### Does it still beat the published specs there?
+
+"Sentinel transfers" and "Sentinel still wins" are different claims, and the
+shipping claim is the second one. Beating the published specs on one hospital
+could be tuning to that hospital; beating them across 208 unseen ones cannot
+be. Each spec was rebuilt by `src/lit_gbm.py` — the same code that produced the
+published MIMIC numbers — fitted on MIMIC train, early-stopped on MIMIC val
+(eCART down-sampled to its published 50% prevalence), then scored on eICU
+unchanged. No spec saw an eICU row, exactly as the flagship did not.
+
+The specs reproduce on MIMIC first, which is what makes the eICU column
+believable: YAIB 0.2811 against a published 0.281, Sadanandan 0.2382 against
+0.239, eCART-style 0.2728 against 0.280.
+
+| model, eICU at matched density | AUPRC | lift | AUROC |
+| --- | --- | --- | --- |
+| Sadanandan XGB | 0.1330 | 3.58 | 0.7338 |
+| eCART-style GBM | 0.1394 | 3.75 | 0.7318 |
+| YAIB LightGBM | 0.1391 | 3.74 | 0.7541 |
+| **Sentinel two-head** | **0.1506** | **4.05** | **0.7636** |
+
+Paired AUPRC deltas, patient-clustered bootstrap, 300 resamples, the same
+resample applied to every model:
+
+| Sentinel − | matched density (<= 2 h fresh) | pooled (every hour) |
+| --- | --- | --- |
+| YAIB LightGBM | **+0.0115 [+0.0077, +0.0159]** | −0.0014 [−0.0045, +0.0016] |
+| eCART-style GBM | **+0.0113 [+0.0072, +0.0155]** | +0.0021 [−0.0011, +0.0050] |
+| Sadanandan XGB | **+0.0177 [+0.0130, +0.0225]** | **+0.0080 [+0.0047, +0.0113]** |
+
+**At matched charting density the flagship beats all three on unseen
+hospitals, every interval clear of zero. Pooled it ties the two strongest** —
+an interval spanning zero is a tie, not a loss — **and still beats the third.**
+
+The margin is conditional, and the condition is data capture. On MIMIC the
+lead over YAIB is +0.028 AUPRC; on eICU it is +0.012 at matched density and a
+tie pooled. The likely mechanism is not a defect: the architecture's edge comes
+from temporal structure and staleness features, which thin charting erodes,
+while gradient-boosted trees absorb missingness natively. That makes a site's
+charting density a **deployment prerequisite** rather than an afterthought, and
+it points at tractable work — the staleness bounds in `mimic_cohort.py` are
+tuned to MIMIC's regime and could be re-derived for sparser sites.
+
+### The FiO2 trap, twice
+
+eICU stores FiO2 as a **fraction** (0.21-1.0, median 0.48) and MIMIC as a
+**percentage** (21-100, median 40). Nothing downstream validates the scale, and
+neither mismatch raised: values were simply 100x too small, which reads as
+"this patient is on sub-room-air oxygen" and quietly degrades whatever consumes
+it. It appeared in two independent paths — `build_resp_features`, which LOCFs
+with a room-air default of 21.0 and feeds `resp_fio2` raw; and the cohort's raw
+parquet, which `src/lit_gbm.py` masks by staleness and hands to the published
+specs. The second would have scored eCART and YAIB on values 100x too small and
+manufactured exactly the margin this section sets out to test.
+
+Both extracts now emit percentages, and `scripts/score_eicu_baselines.py`
+carries an idempotent `as_fio2_percent()` guard that normalises and then
+asserts the 21-100 range, so the class of bug cannot recur silently. The resp
+extract also moved from blood-gas FiO2 (300,884 rows) to `respiratorycharting`
+(3.08M rows / 75,234 stays), the real analogue of MIMIC's charted FiO2:
+coverage 12% -> 57.2%, against MIMIC's 51.9%.
+
+A related reproducibility note: a BigQuery cohort re-fetch is **not**
+bit-reproducible, because `AVG()` is order-dependent under parallel execution.
+Re-running the identical query moved 0.1% of vitals by <= 1.1e-13 and flipped
+104 NEWS2 values (0.0017%) sitting exactly on band boundaries. Labels and event
+times were bit-identical. This does not touch the fusion's own bit-identity
+claim (CPU, single thread) but it does mean the data layer beneath it carries
+~1e-14 jitter on re-extraction. The same would be true of MIMIC.
 
 ### Scope — what T22 does and does not cover
 
-Measured: **core-3** (vitals_tcn + news2 + labs), the shipped PRIMARY
-configuration. Not yet measured: the all-8 flagship. The GBM pseudo-agent
-needs no new extraction (`build_design` reads only cohort columns, labs and
-derived trajectories). Cadence, fluid and resp each need an eICU extract —
-fluid and resp map cleanly from `pivoted_uo` / `pivoted_o2`; cadence is where
-208 charting cultures differ most, making it both the most interesting and the
-most likely to degrade. ECG is absent from eICU entirely and degrades to its
-learned no-data embedding, which is already the common path in MIMIC (7.6-42%
-ECG coverage), so the flagship needs no reconfiguration to run there.
+Measured: all four shipped configurations, and the comparative test against
+three published specs, on 5,965,716 eICU patient-hours.
+
+Not covered. **Cadence** has no faithful eICU mapping: no order-entry table
+(so `n_orders_lab` and `n_orders_imaging` would be structurally zero) and a
+microbiology table of ~17k rows (so `n_micro` is degenerate) — 3 of 9 channels
+absent by construction rather than by hospital variation. Zero-filling them
+would depress the transfer number for a reason unrelated to generalisation, so
+the flagship here is ALL-8 less cadence with that cost priced separately on
+MIMIC. **Seeds**: single seed (42); the MIMIC claims carry ten-seed evidence
+and this does not — the intervals here are over patients, not seeds.
+**Age**: 0.24% of eICU stays are under 18 where MIMIC-IV's ICU is adults-only
+by construction; left unfiltered and reported rather than silently trimmed.
 
 ## Reproduce
 
@@ -2094,9 +2204,25 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 # SENTINEL_BQ_STORAGE=0 because the sandbox project has no billing (no BQ Storage API).
 SENTINEL_BQ_STORAGE=0 .venv/bin/python scripts/fetch_eicu_cohort.py   # 1.59 GB scanned, ~3 min
 SENTINEL_BQ_STORAGE=0 .venv/bin/python scripts/fetch_eicu_labs.py     # 1.32 GB scanned, ~3 min
+SENTINEL_BQ_STORAGE=0 .venv/bin/python scripts/fetch_eicu_modalities.py \
+    --which fluids,resp,extra_vitals,stay_meta                        # 2.9 GB scanned total
 PYTHONPATH=src .venv/bin/python src/eicu_cohort.py                    # 5,965,716 prediction hours
 
 # Zero-shot transfer: fit on MIMIC, score eICU. Writes to data/cache/embeddings_eicu/
 # so the shipped caches the whole results corpus is paired against are never touched.
 .venv/bin/python scripts/score_eicu.py                                # core-3, ~5 min
+
+# The shipped flagship: seven agents (ALL-8 less cadence), single head AND the
+# two-head noisy-OR composite. --reuse-emissions skips the agent fits when the
+# .npz files are already cached, turning a re-run from ~9 min into ~3.
+.venv/bin/python scripts/score_eicu.py --two-head --label all7 \
+    --agents vitals_tcn news2 labs ecg_meas gbm fluid resp
+
+# Cadence's cost on home turf, so its absence from the transfer config is a
+# known subtraction rather than a confound.
+.venv/bin/python scripts/score_eicu.py --mimic-only \
+    --agents vitals_tcn news2 labs ecg_meas gbm cadence fluid resp
+
+# The comparative test: the three published specs, fitted on MIMIC, scored on eICU.
+.venv/bin/python scripts/score_eicu_baselines.py                      # ~6 min
 ```
