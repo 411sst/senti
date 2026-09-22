@@ -56,7 +56,8 @@ paper found whose label is our label.
 **Churpek, M.M., et al.** *Multicenter Development and Prospective Validation of
 eCARTv5: A Gradient-Boosted Machine-Learning Early Warning Score.*
 Critical Care Explorations, 2025. PMID 38562803; PMC11949291.
-<https://pmc.ncbi.nlm.nih.gov/articles/PMC11949291/> — read 2026-08-26.
+<https://pmc.ncbi.nlm.nih.gov/articles/PMC11949291/> — read 2026-08-26;
+re-validated 2026-09-02 (full text via Europe PMC) for the T19 redesign.
 
 *Used for:* the `spec_ecart` feature philosophy, and — more importantly — the
 **ranking-vs-earliness dissociation**, which this paper demonstrates for an
@@ -80,12 +81,27 @@ FDA-cleared model.
 - AUROC, retrospective: **eCARTv5 0.834 (0.834–0.835)**, eCARTv2 0.775
   (0.775–0.776), NEWS 0.766 (0.766–0.767), MEWS 0.704 (0.703–0.704).
   Prospective: 0.828 / 0.768 / 0.767 / 0.709.
-- Operating points: moderate risk (≥ 93) sensitivity 51.8 %, PPV 9.0 %;
-  high risk (≥ 97) sensitivity 38.6 %, PPV 14.2 %.
+- Thresholds were **not volume-matched**: each score's "commonly used
+  moderate (higher sensitivity) and high-risk (higher PPV) thresholds" were
+  chosen post hoc — eCARTv5 ≥ 93 / ≥ 97, eCARTv2 ≥ 21 / ≥ 35, **NEWS ≥ 5 /
+  ≥ 7**, MEWS ≥ 3 / ≥ 4.
+- Operating points, eCARTv5: moderate (≥ 93) sensitivity 51.8 %, PPV 9.0 %;
+  high (≥ 97) sensitivity 38.6 %, PPV 14.2 %. NEWS: moderate (≥ 5) 49.7 % /
+  5.4 %; high (≥ 7) 28.0 % / 9.9 %. Specificity/alert rates not reported.
+- Lead time = interval from the score's **first threshold crossing anywhere
+  in the admission** to the event — unpaired, volume-unmatched, standing
+  alarms counted (IQRs run 1–73 h).
 - **Lead time at the moderate-risk threshold: NEWS 17 h (IQR 1–73), eCARTv5
   16 h (IQR 1–68), MEWS 13 h (IQR 1–66), eCARTv2 9 h (IQR 0–57).**
   eCARTv5 beats NEWS by 6.8 AUROC points and warns *no earlier*. This is
   Sentinel's central claim, stated by the comparator class's own validation.
+- At the high-risk threshold the paper does claim earliness: eCARTv5 5 h
+  (IQR 0–43) vs NEWS 3 h (0–40), MEWS 2 h, eCARTv2 2 h, p < 0.01 — but on
+  different caught populations (sensitivity 38.6 % vs 28.0 %), unpaired,
+  with standing alarms credited. Our harness (frozen thresholds, matched
+  volume, jointly-caught pairs) would not admit that comparison as stated.
+- Comparator is the **original NEWS, not NEWS2**: "choosing the SpO₂ scale
+  in NEWS2 requires real-time clinician determination."
 
 ## 3. Benchmark anchors
 

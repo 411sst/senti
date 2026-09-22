@@ -1629,6 +1629,142 @@ under `data/cache/backup_pre10seed_20260829/`), `data/cache/two_head_seeds.json`
 `logs/two_head_10seed_{a,b,c}.log`, `logs/two_head_seeds.log`;
 `src/seed_lead.py` (helpers, tested), `scripts/two_head_seeds.py`.
 
+## T19 — The eCART bench: the reference row without NEWS2
+
+The mentor-review objection (Sep 2026): "racing NEWS2 at a volume-matched
+threshold of ~11 is cheating — the ward rule escalates at ≥5, so by 11 the
+patient is already being seen." Its premises are encoded as executable
+synthetic tests in `tests/test_news2_low_band.py`; this rung is the
+constructive answer. Re-validating the eCARTv5 paper against its full text
+(2026-09-02; digest in `docs/references.md`) sharpened two facts. First,
+its evaluation protocol is weaker than ours — thresholds chosen post hoc
+per score, lead time measured from the first crossing anywhere in the
+admission, unpaired, volume-unmatched, standing alarms credited — and under
+it eCARTv5 beats NEWS by 6.8 AUROC points while warning *no earlier* at the
+moderate threshold (median 16 h vs 17 h). Second, the ward bands it uses
+for NEWS (≥5 / ≥7) are ambient states in an ICU: 45% / 23% of our alertable
+hours. The redesign that follows: the reference row becomes the eCART-style
+GBM itself, raced head-to-head; NEWS2 is demoted to a clinical anchor whose
+bands are derived from this cohort's own score distribution; the
+volume-matched NEWS2 race (T9/T18) stays as the appendix protocol,
+externally justified by the paper's own moderate-threshold tie.
+
+Nothing is trained: `src/ecart_bench.py` reads `two_head.npz` (ten seeds)
+and `lit_gbm_scores.npz`, freezes every threshold on V_freeze, and reports
+with 2,000-rep patient-clustered CIs → `data/cache/ecart_bench.json`.
+
+### Part 1 — head-to-head: two-head flagship vs the eCART-style GBM
+
+Both systems frozen to the same V_freeze alert volume (the model matched to
+the GBM's achieved volume at the budget); pairs are stays BOTH catch at or
+before the event (~660–700 per seed, of 1,550 test event stays); diff > 0 =
+flagship's first alarm earlier. Race at the 2% budget:
+
+| seed | AUPRC | Δ vs eCART-style [95% CI] | wins : ties : losses | earlier when they differ | sign p |
+|---|---|---|---|---|---|
+| 42 | 0.3141 | +0.0341 [+0.0208, +0.0460] | 176 : 393 : 95 | 65% | 9.9e-07 |
+| 1 | 0.3069 | +0.0269 [+0.0140, +0.0388] | 201 : 410 : 72 | 74% | 2.8e-15 |
+| 2 | 0.3017 | +0.0217 [+0.0088, +0.0332] | 178 : 389 : 101 | 64% | 4.7e-06 |
+| 3 | 0.3054 | +0.0254 [+0.0133, +0.0374] | 157 : 375 : 124 | 56% | 5.6e-02 |
+| 4 | 0.3125 | +0.0325 [+0.0199, +0.0438] | 177 : 422 : 83 | 68% | 5.5e-09 |
+| 5 | 0.3121 | +0.0321 [+0.0196, +0.0430] | 180 : 406 : 86 | 68% | 8.4e-09 |
+| 6 | 0.3063 | +0.0263 [+0.0143, +0.0370] | 169 : 400 : 92 | 65% | 2.2e-06 |
+| 7 | 0.3155 | +0.0355 [+0.0229, +0.0462] | 175 : 403 : 94 | 65% | 9.0e-07 |
+| 8 | 0.3109 | +0.0309 [+0.0177, +0.0417] | 194 : 410 : 80 | 71% | 4.3e-12 |
+| 9 | 0.3020 | +0.0220 [+0.0091, +0.0349] | 186 : 389 : 87 | 68% | 2.0e-09 |
+
+Seed-level (10 seeds): **ΔAUPRC +0.0287 [+0.0252, +0.0323], per-seed CI
+clear of zero in 10/10.** The paired-race median is 0 h at every seed —
+three of five jointly-caught stays alarm at the identical hour — so the
+informative statistic is the discordant share: **earlier-when-differ 66.3%
+[62.9, 69.7] at the seed level, wins > losses in 10/10 seeds, sign
+p < 0.05 in 9/10** (seed 3: 0.056). Pooled over seeds: n 6,704, 66.2%,
+p 5.0e-65.
+
+10-seed ensemble: AUPRC 0.3137 vs eCART-style 0.2800 (Δ +0.0337
+[+0.0212, +0.0451]); race by budget:
+
+| budget | wins : ties : losses | median | earlier when they differ | sign p |
+|---|---|---|---|---|
+| 1% | 110 : 299 : 69 | 0.0 | 61.5% | 2.7e-03 |
+| 2% | 184 : 406 : 85 | 0.0 | 68.4% | 1.5e-09 |
+| 5% | 208 : 660 : 83 | 0.0 | 71.5% | 1.5e-13 |
+
+**Reading.** Against the strongest published comparator class the timing
+edge is thinner than against NEWS2 — no median separation, most alarms
+simultaneous — but it is one-directional: at every budget the flagship is
+earlier roughly 2:1 among stays where the two disagree, consistently
+across all ten seeds. Tail honesty (@2%, |diff| ≥ 12 h): of the 52 stays
+where the flagship was ≥12 h earlier, 63% are standing model alarms from
+the first scored hour (T18's arrival-flag finding, present here too); of
+the 31 where the GBM was earlier, 23% are standing GBM alarms.
+
+### Part 2 — cohort-relative NEWS2 bands
+
+The RCP bands were calibrated on general wards, where the average patient
+scores near 0. The mean alertable ICU hour here scores 4.3–4.4, and the
+final 4–6 pre-event hours of real deteriorations average **6.2–6.3 (median
+6)** — the average crashing patient never clears the ward "high-risk" band
+before crashing. `cohort_bands` therefore derives severity bands from the
+cohort's own distribution: the smallest integer threshold whose V_freeze
+alert volume is ≤ 25% / 10% / 5% (~P75 / P90 / P95). Race columns are the
+ensemble matched to each band's volume:
+
+| band | thr | freeze vol | test vol | non-event stays alarming | median | earlier when they differ | NEWS2 standing alarms |
+|---|---|---|---|---|---|---|---|
+| ~P75 | ≥7 | 22.9% | 22.8% | 60.8% | 0.0 | 96% (n 1,086) | 54% |
+| ~P90 | ≥9 | 8.9% | 8.7% | 35.2% | +1.0 [0, +1] | 84% (n 793) | 36% |
+| ~P95 | ≥11 | 2.6% | 2.3% | 14.1% | +1.0 [0, +2] | 67% (n 415) | 18% |
+
+Three things this table settles:
+
+1. **The cohort's own P95 is 11.** The threshold the review called absurd
+   is not a ward import gone wrong — it is where this population's top 5%
+   begins, and the published 2% budget's achieved volume (2.6%) is its
+   immediate neighbourhood. Cohort-relative banding, the standard
+   population-recalibration fix, lands on 11 by construction.
+2. **Bands below P95 are inoperable here, and the burden column is the
+   reason**: ≥7 alarms at least once on 61% of stays that never
+   deteriorate.
+3. **The model wins the discordant share at every band** — but the 96% at
+   ≥7 carries its own caveat, printed beside it: 54% of NEWS2's first
+   alarms at that band are standing alarms on the stay's first scored
+   hour. At ward-band volumes the race measures chart position, not
+   detection (`tests/test_news2_low_band.py` proves the mechanism on
+   synthetic data).
+
+### Part 3 — the clinical anchor: where the model's catches sit
+
+At the 2% NEWS2-matched operating point (s42's frozen threshold 0.2810
+reproduces the published `standby_report` global point; n = 1,008 caught
+event stays; the 10-seed ensemble is within 1–2 points on every cell):
+
+| band | first alarm BEFORE stay ever in band | caught stays never in band pre-event | median gap alarm → first band entry |
+|---|---|---|---|
+| ≥5 | 28% | 22% | 2 h (n 63) |
+| ≥7 | 42% | 29% | 4 h (n 128) |
+| ≥9 | 61% | 40% | 5 h (n 211) |
+| ≥11 | 82% | 57% | 7 h (n 244) |
+
+The sentence this buys: **42% of the model's catches fire before the
+patient has ever entered the NEWS2 emergency-response band (≥7), and 29%
+of caught deteriorations never enter it before the event at all** — at the
+RCP's own escalation threshold those patients were never going to be
+flagged in time, at any alarm budget.
+
+**What changes upstream.** The headline comparator is now the eCART-style
+GBM: "clears the published GBM class on ranking in 10/10 seeds and, where
+their alarms differ, fires earlier 2:1" replaces "beats NEWS2 at 2%". The
+NEWS2 volume-matched race moves to appendix standing as the
+fairness-protocol contribution — kept because reviewers will ask, and
+because eCARTv5's own validation (16 h vs NEWS's 17 h at the moderate
+threshold, under a protocol that credits standing alarms) is the external
+evidence that lead-time claims need exactly this harness.
+
+Reproduce: `src/ecart_bench.py` (helpers tested in
+`tests/test_ecart_bench.py`), `data/cache/ecart_bench.json`,
+`logs/ecart_bench.log`.
+
 ## Architecture audit (post-T8 sweep)
 
 A full pass over every component the program added, plus the pipeline it
@@ -2124,6 +2260,9 @@ GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
 .venv/bin/python scripts/merge_two_head.py --parts data/cache/two_head_part_{a,b,c}.npz \
   --reference data/cache/backup_pre10seed_20260829/two_head.npz --seed-order 42,1,2,3,4,5,6,7,8,9
 .venv/bin/python scripts/two_head_seeds.py
+
+# T19 eCART bench (no retraining; two_head + lit_gbm caches only)
+.venv/bin/python src/ecart_bench.py --reps 2000 --auprc-reps 500
 
 # T10 literature-anchored GBMs (XGBoost on GPU and LightGBM on CPU, in parallel)
 GOOGLE_CLOUD_PROJECT=<project> SENTINEL_BQ_STORAGE=0 \
