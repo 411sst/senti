@@ -39,6 +39,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from baselines_mimic import load_splits  # noqa: E402
+from config import SEED  # noqa: E402
 from metrics import auprc, auroc, ece  # noqa: E402
 
 LABEL = "label_24h"
@@ -139,7 +140,7 @@ def two_head_scores(bank, splits, eicu, epochs, seed=42):
     return scores
 
 
-def build_gbm_emissions(splits, eicu, emb_dir, device="cuda"):
+def build_gbm_emissions(splits, eicu, emb_dir, device="cuda", seed=SEED):
     """Cache the GBM pseudo-agent's emissions for MIMIC splits and eICU.
 
     Not an :class:`Agent` subclass -- the fusion consumes it as a one-wide
@@ -170,21 +171,21 @@ def build_gbm_emissions(splits, eicu, emb_dir, device="cuda"):
     X = {k: build_design(splits[k], labs_m, None)[0][cols] for k in splits}
     t0 = time.time()
     booster = fit_gbm_student(X["train"], y["train"], np.ones(len(y["train"])),
-                              X["val"], y["val"], device=device)
+                              X["val"], y["val"], device=device, seed=seed)
     print(f"[gbm] booster fit in {time.time()-t0:.0f}s")
 
     # Out-of-fold train scores, split by PATIENT so no patient is scored by a
     # booster that saw them (the same two-fold scheme as the shipped agent).
     pid = ordered["train"]["patient_id"].to_numpy()
     patients = np.sort(ordered["train"]["patient_id"].unique())
-    perm = np.random.default_rng(42).permutation(patients)
+    perm = np.random.default_rng(seed).permutation(patients)
     half = len(patients) // 2
     oof = np.full(len(pid), np.nan)
     for hold in (set(perm[:half]), set(perm[half:])):
         m = np.isin(pid, list(hold))
         b = fit_gbm_student(X["train"][~m], y["train"][~m],
                             np.ones(int((~m).sum())), X["val"], y["val"],
-                            device=device)
+                            device=device, seed=seed)
         oof[m] = gbm_predict(b, X["train"][m])
     assert not np.isnan(oof).any()
 
@@ -213,26 +214,31 @@ def build_gbm_emissions(splits, eicu, emb_dir, device="cuda"):
     print(f"[gbm] cached {', '.join('gbm_' + w for w in wanted)}.npz")
 
 
-def build_agent(name, epochs):
-    """Construct one untrained agent by name."""
+def build_agent(name, epochs, seed=SEED):
+    """Construct one untrained agent by name.
+
+    ``seed`` reaches every learned agent. NEWS2 takes none -- it is a
+    deterministic lookup, so re-seeding it would be meaningless rather than
+    merely useless.
+    """
     if name == "vitals_tcn":
         from agents.vitals_tcn import VitalsTCNAgent
-        return VitalsTCNAgent(max_epochs=epochs)
+        return VitalsTCNAgent(max_epochs=epochs, seed=seed)
     if name == "news2":
         from agents.news2_agent import News2Agent
         return News2Agent()
     if name == "labs":
         from agents.labs_agent import LabsAgent
-        return LabsAgent(max_epochs=epochs)
+        return LabsAgent(max_epochs=epochs, seed=seed)
     if name == "ecg_meas":
         from agents.ecg_meas_agent import EcgMeasAgent
-        return EcgMeasAgent(max_epochs=epochs)
+        return EcgMeasAgent(max_epochs=epochs, seed=seed)
     if name == "fluid":
         from agents.tabular_agent import FluidAgent
-        return FluidAgent(max_epochs=epochs)
+        return FluidAgent(max_epochs=epochs, seed=seed)
     if name == "resp":
         from agents.tabular_agent import RespAgent
-        return RespAgent(max_epochs=epochs)
+        return RespAgent(max_epochs=epochs, seed=seed)
     if name == "cadence":
         # MIMIC-ONLY. eICU has no faithful cadence mapping: no order-entry
         # table (so n_orders_lab / n_orders_imaging would be structurally
@@ -243,7 +249,7 @@ def build_agent(name, epochs):
         # Usable with --mimic-only, to price cadence's contribution on home
         # turf; point_at_eicu deliberately has no branch for it.
         from agents.tabular_agent import CadenceAgent
-        return CadenceAgent(max_epochs=epochs)
+        return CadenceAgent(max_epochs=epochs, seed=seed)
     raise KeyError(f"agent {name!r} has no eICU feature mapping yet")
 
 
@@ -310,6 +316,14 @@ def main():
                     help="fusion seed. Follows T9/T18: seeds vary the FUSION, "
                          "not the agents -- the bank is fitted once at 42 and "
                          "shared, so a seed sweep costs the head fits only.")
+    ap.add_argument("--reseed-agents", action="store_true",
+                    help="re-fit the AGENTS at --seed too, not just the fusion. "
+                         "The default follows T9/T18: the bank is fitted once "
+                         "at 42 and shared, so a seed sweep measures fusion "
+                         "variance only. This measures the whole stack's, at "
+                         "roughly 10x the cost, and writes to its own "
+                         "embeddings_eicu_s<seed>/ so runs cannot clobber "
+                         "each other.")
     ap.add_argument("--label", default="run",
                     help="suffix for the cached score files")
     ap.add_argument("--mimic-only", action="store_true",
@@ -320,7 +334,13 @@ def main():
                          "confound.")
     args = ap.parse_args()
 
+    global EMB_DIR
+    if args.reseed_agents:
+        EMB_DIR = REPO / "data" / "cache" / f"embeddings_eicu_s{args.seed}"
     EMB_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[emb] {EMB_DIR.name}/"
+          + (f"  (agents re-seeded at {args.seed})" if args.reseed_agents
+             else "  (bank shared from seed 42; fusion seed only)"))
     splits = load_splits()
     train, val, test = splits["train"], splits["val"], splits["test"]
     eicu = pd.read_parquet(EICU_COHORT)
@@ -342,15 +362,19 @@ def main():
         args.agents = list(args.agents)
     elif "gbm" in args.agents:
         build_gbm_emissions({"train": train, "val": val, "test": test},
-                            None if args.mimic_only else eicu, EMB_DIR)
+                            None if args.mimic_only else eicu, EMB_DIR,
+                            seed=args.seed if args.reseed_agents else SEED)
     for name in ([] if (args.reuse_emissions and cached)
                  else [a for a in args.agents if a != "gbm"]):
         t0 = time.time()
-        agent = build_agent(name, args.epochs)
+        agent = build_agent(name, args.epochs,
+                            seed=args.seed if args.reseed_agents else SEED)
         agent.fit(train, val)
         for split, df in (("train", train), ("val", val), ("test", test)):
             agent.emit_and_cache(df, EMB_DIR / f"{name}_{split}.npz")
-        if not args.no_check_repro and (SHIPPED_EMB / f"{name}_test.npz").exists():
+        check_repro = not args.no_check_repro and not (
+            args.reseed_agents and args.seed != SEED)
+        if check_repro and (SHIPPED_EMB / f"{name}_test.npz").exists():
             from agents.base import AgentOutput
             mine = AgentOutput.load(EMB_DIR / f"{name}_test.npz")
             ship = AgentOutput.load(SHIPPED_EMB / f"{name}_test.npz")

@@ -42,6 +42,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", nargs="+", type=int, default=[42, 1, 2])
     ap.add_argument("--reps", type=int, default=300)
+    ap.add_argument("--pattern", default=None,
+                    help="score-file pattern with a {seed} placeholder, e.g. "
+                         "'eicu_twohead_rs_s{seed}.npz' for the re-seeded-agent "
+                         "sweep. Default is the shared-bank naming.")
     ap.add_argument("--bound", type=float, default=2.0,
                     help="matched-density cut: all five vitals fresh within N h")
     args = ap.parse_args()
@@ -54,8 +58,9 @@ def main():
 
     models = {}
     for s in args.seeds:
-        f = CACHE / ("eicu_twohead_all7.npz" if s == 42
-                     else f"eicu_twohead_all7_s{s}.npz")
+        f = CACHE / (args.pattern.format(seed=s) if args.pattern
+                     else ("eicu_twohead_all7.npz" if s == 42
+                           else f"eicu_twohead_all7_s{s}.npz"))
         if not f.exists():
             print(f"[skip] seed {s}: {f.name} not found")
             continue
@@ -118,7 +123,21 @@ def main():
         worst = min(float(np.mean(d[f"sentinel_s{s}"] - d[spec]))
                     for s in seeds_present for spec in SPECS)
         print(f"  smallest margin over any spec at any seed: {worst:+.4f}")
-        print(f"  {'-> seed noise is smaller than the margin' if (aup[hi_s]-aup[lo_s]) < worst else '-> seed noise is comparable to the margin; report both'}")
+        # Compare the seed gap's UPPER BOUND, not its point estimate. A point
+        # estimate below the margin says nothing about how bad an unlucky
+        # training run could be; the interval does, and the two sweeps differ
+        # exactly here -- fusion-only clears comfortably, a full re-seed
+        # overlaps.
+        if hi < worst:
+            print(f"  -> seed noise is smaller than the margin: the gap's upper "
+                  f"bound ({hi:+.4f}) is below the smallest margin ({worst:+.4f})")
+        elif aup[hi_s] - aup[lo_s] < worst:
+            print(f"  -> MARGINAL: the gap's point estimate is below the smallest "
+                  f"margin, but its upper bound ({hi:+.4f}) exceeds it "
+                  f"({worst:+.4f}). Every comparison still clears zero; an "
+                  f"unlucky training run could land near the floor. Report both.")
+        else:
+            print(f"  -> seed noise is comparable to the margin; report both")
 
 
 if __name__ == "__main__":

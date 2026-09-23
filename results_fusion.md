@@ -1926,9 +1926,10 @@ those too sparsely charted for a temporal model — it ties the two strongest an
 still beats the third. Calibration does not transfer and thresholds must be
 re-frozen locally. **The comparative win is seed-stable at the same standard
 as the MIMIC claims: 30 of 30 comparisons (10 fusion seeds x 3 specs) have the
-interval clear of zero**, and the seed spread (0.0063 AUPRC) is strictly
-smaller than the smallest margin over any spec at any seed (+0.0109). The
-sections below build that result up from the cohort.
+interval clear of zero** — and it survives re-rolling the *entire* stack, not
+just the fusion: a second ten-seed sweep that re-fits every agent, the GBM and
+both heads gives 30/30 again with a **larger** margin. The sections below
+build that result up from the cohort.
 
 eICU is not "a second site". It is **208 hospitals** across the US, mostly
 community rather than academic, which makes this a multi-centre test rather
@@ -2197,6 +2198,50 @@ eICU is also *more* seed-stable than MIMIC — eICU AUPRC spans 0.0063 across te
 seeds against MIMIC's 0.0128 on the same cut — which is 5,965,716 rows against
 164,477 doing exactly what they should.
 
+### Re-rolling everything, not just the fusion
+
+The sweep above holds the agent bank fixed at seed 42 and varies only the
+fusion, which is the T9/T18 protocol and measures fusion variance alone. The
+obvious objection is that it flatters the result by holding most of the stack
+still. So the whole thing was re-run ten more times with **every trainable
+component re-seeded**: all six learned agents, the GBM booster *and* its
+out-of-fold patient split (which was hard-coded to `rng(42)` and would
+otherwise have stayed fixed silently), the fusion and both heads. NEWS2 takes
+no seed — it is a deterministic lookup, so re-seeding it would be meaningless
+rather than merely useless. Each seed writes to its own
+`embeddings_eicu_s<seed>/`. Roughly 11 minutes a seed against 4.
+
+Every seed still scores the **identical 5,965,716 eICU rows** — asserted
+byte-identical on (stay_id, hour). Only the MIMIC-fitted model changes, so the
+spread below is *training* variance, not evaluation variance.
+
+| | fusion-only | full re-seed |
+| --- | --- | --- |
+| mean margin vs YAIB | +0.0135 | **+0.0153** |
+| mean margin vs eCART-style | +0.0133 | **+0.0151** |
+| mean margin vs Sadanandan | +0.0197 | **+0.0216** |
+| intervals clear of zero | 30/30 | **30/30** |
+| eICU AUPRC mean | 0.1526 | 0.1544 |
+| seed spread | 0.0063 [0.0051, 0.0078] | 0.0083 [0.0060, 0.0106] |
+| smallest margin at any seed | +0.0109 | +0.0098 |
+
+**Re-rolling the whole stack makes the result stronger, not weaker.** The
+shared seed-42 bank was if anything a slightly conservative draw — so the
+protocol was not doing hidden work for us.
+
+One honest qualification, and it is the reason to compare interval bounds
+rather than point estimates. Under fusion-only the seed gap's upper bound
+(+0.0078) sits clearly below the smallest margin (+0.0109). Under a full
+re-seed the gap's point estimate (+0.0083) is still below the margin
+(+0.0098), but its **upper bound (+0.0106) exceeds it**. Every individual
+comparison clears zero either way; what is no longer clean is the stronger
+statement that total training noise is *strictly* smaller than the effect.
+
+The deployment reading: individual margins are solid, but total training
+variance is close enough to the smallest margin that one unlucky training run
+could land near the floor. That argues for shipping a fixed audited seed or an
+ensemble rather than "retrain at a new site and trust it".
+
 The margin is conditional, and the condition is data capture. On MIMIC the
 lead over YAIB is +0.028 AUPRC; on eICU it is +0.012 at matched density and a
 tie pooled. The likely mechanism is not a defect: the architecture's edge comes
@@ -2244,11 +2289,9 @@ microbiology table of ~17k rows (so `n_micro` is degenerate) — 3 of 9 channels
 absent by construction rather than by hospital variation. Zero-filling them
 would depress the transfer number for a reason unrelated to generalisation, so
 the flagship here is ALL-8 less cadence with that cost priced separately on
-MIMIC. **Seeds**: ten fusion seeds (42, 1-9), parity with the ten-seed
-evidence elsewhere in this document — 30/30 intervals clear, seed noise
-smaller than the effect. What is still a single draw is the agent bank, fitted
-once at seed 42 and shared across seeds by the T9/T18 protocol; a sweep that
-also re-rolled the agents would be a different and larger experiment. T23's
+MIMIC. **Seeds**: ten seeds under both protocols — fusion-only (the
+T9/T18 shared bank) and a full re-seed of every trainable component. 30/30
+intervals clear under each. T23's
 calibration figures are seed 42 only; ECE moves with the seed (pooled
 0.0378 / 0.0319 / 0.0390 at 42/1/2), so the repair *costs* there should be
 read as one seed's, even though the pattern will not depend on it.
@@ -2526,5 +2569,16 @@ for S in 1 2; do
       --seed $S --label all7_s$S \
       --agents vitals_tcn news2 labs ecg_meas gbm fluid resp
 done
-.venv/bin/python scripts/eicu_seed_ci.py --seeds 42 1 2                # ~8 min
+.venv/bin/python scripts/eicu_seed_ci.py --seeds 42 1 2 3 4 5 6 7 8 9 # ~18 min
+
+# The same ten seeds with EVERY trainable component re-rolled, not just the
+# fusion: agents, GBM booster and its OOF split, fusion, both heads. ~11 min
+# a seed. Each writes to its own embeddings_eicu_s<seed>/.
+for S in 42 1 2 3 4 5 6 7 8 9; do
+  .venv/bin/python scripts/score_eicu.py --two-head --reseed-agents \
+      --seed $S --label rs_s$S \
+      --agents vitals_tcn news2 labs ecg_meas gbm fluid resp
+done
+.venv/bin/python scripts/eicu_seed_ci.py --seeds 42 1 2 3 4 5 6 7 8 9 \
+    --pattern "eicu_twohead_rs_s{seed}.npz"
 ```
