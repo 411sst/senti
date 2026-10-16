@@ -65,6 +65,7 @@ sup.ref{font-family:var(--f-mono); font-size:.62em; color:var(--blue-ink); line-
 .terms dd{margin:5px 0 0; font-size:16px; line-height:1.45; color:var(--ink2)}
 ul.notes{list-style:none; margin:0; padding:0; display:grid; gap:14px}
 ul.notes li{position:relative; padding-left:20px; font-size:18px; line-height:1.45; color:var(--ink2)}
+ul.notes li b{color:var(--ink); font-weight:600}
 ul.notes li::before{content:""; position:absolute; left:2px; top:.6em; width:8px; height:8px; border-radius:2px; background:var(--base)}
 .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden}
 .tile{background:var(--surface); padding:22px 22px 20px}
@@ -136,26 +137,13 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
   <div class="hd"><div class="eyebrow">Setup</div><h2>One question, every hour</h2></div>
   <div class="sb" style="gap:32px; justify-content:center; padding-bottom:40px">
     <div class="fig">
-    <svg viewBox="0 0 1040 140" role="img" aria-label="At each hour, the model reads only data recorded before that hour and predicts whether ventilation, a vasopressor, or death happens in the next 24 hours. Scoring starts at hour 6.">
-      <rect x="40" y="52" width="560" height="44" rx="6" fill="#efeee9"/>
-      <rect x="604" y="52" width="380" height="44" rx="6" fill="#edf3fb"/>
-      <text class="bd" x="320" y="78" text-anchor="middle">the model reads only data recorded before now</text>
-      <text class="bd" x="794" y="78" text-anchor="middle">next 24 h: ventilation, vasopressor or death?</text>
-      <line x1="602" y1="40" x2="602" y2="108" stroke="#2a78d6" stroke-width="2.5"/>
-      <text class="bn" x="602" y="30" text-anchor="middle">now (scored every hour)</text>
-      <line x1="40" y1="96" x2="40" y2="108" stroke="#52514e"/>
-      <text class="bd" x="40" y="124">ICU admission</text>
-      <line x1="112" y1="40" x2="112" y2="52" stroke="#52514e"/>
-      <text class="bd" x="112" y="34">hour 6: scoring starts</text>
-      <line x1="984" y1="96" x2="984" y2="108" stroke="#52514e"/>
-      <text class="bd" x="984" y="124" text-anchor="middle">now + 24 h</text>
-      <text class="bd" x="794" y="124" text-anchor="middle">label = 1 if any of the three happens here</text>
-    </svg>
+    <svg viewBox="0 0 1040 168" role="img" aria-label="Every hour from hour 6, the model reads every value recorded before that hour, predicts the chance of a ventilator, a vasopressor or death in the next 24 hours, and raises an alarm if the risk is above a fixed threshold. Then it repeats the next hour."><defs><marker id="mkf" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#52514e"/></marker><marker id="mkfb" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2a78d6"/></marker></defs><rect x="36" y="12" width="200" height="112" rx="8" fill="#fcfcfb" stroke="#c3c2b7" stroke-width="1"/><text class="dh" x="52" y="36">step 1</text><text class="bn" x="52" y="58" style="font-size:14px">Every hour</text><text class="bd" x="52" y="80">from hour 6 of the</text><text class="bd" x="52" y="96">ICU stay</text><line x1="242" y1="68" x2="284" y2="68" stroke="#52514e" stroke-width="1.5" marker-end="url(#mkf)"/><rect x="292" y="12" width="200" height="112" rx="8" fill="#fcfcfb" stroke="#c3c2b7" stroke-width="1"/><text class="dh" x="308" y="36">step 2</text><text class="bn" x="308" y="58" style="font-size:14px">Read what's known</text><text class="bd" x="308" y="80">every value recorded</text><text class="bd" x="308" y="96">before this hour</text><line x1="498" y1="68" x2="540" y2="68" stroke="#52514e" stroke-width="1.5" marker-end="url(#mkf)"/><rect x="548" y="12" width="200" height="112" rx="8" fill="#edf3fb" stroke="#2a78d6" stroke-width="1.5"/><text class="dh" x="564" y="36">step 3</text><text class="bn" x="564" y="58" style="font-size:14px">Predict</text><text class="bd" x="564" y="80">chance of a ventilator,</text><text class="bd" x="564" y="96">vasopressor or death in</text><text class="bd" x="564" y="112">the next 24 hours</text><line x1="754" y1="68" x2="796" y2="68" stroke="#52514e" stroke-width="1.5" marker-end="url(#mkf)"/><rect x="804" y="12" width="200" height="112" rx="8" fill="#fcfcfb" stroke="#15181c" stroke-width="1.5"/><text class="dh" x="820" y="36">step 4</text><text class="bn" x="820" y="58" style="font-size:14px">Alarm</text><text class="bd" x="820" y="80">if the risk is above</text><text class="bd" x="820" y="96">a fixed threshold</text><path d="M904,124 V154 H136 V132" fill="none" stroke="#2a78d6" stroke-width="1.75" stroke-dasharray="5 4" marker-end="url(#mkfb)"/><rect x="442" y="144" width="156" height="20" fill="#fcfcfb"/><text class="bn" x="520" y="158" text-anchor="middle" style="fill:#1c5cab">repeat next hour</text></svg>
+    <p class="cap">Only data recorded before each hour is used, so the model never sees the future. Scoring stops at the patient's first event.</p>
     </div>
     <div class="facts">
       <div><b>What counts as deterioration</b><p>Invasive ventilation starts, a vasopressor starts, or the patient dies, whichever comes first.</p></div>
       <div><b>The data</b><p>MIMIC-IV v3.1<sup class="ref">1</sup>: 56,157 ICU stays and 2.46 million patient-hours from one Boston hospital.</p></div>
-      <div><b>Why we start at hour 6</b><p>73% of events happen in the first 6 hours. Those patients arrive already deteriorating, so there is nothing to predict early.</p></div>
+      <div><b>Why we start at hour 6</b><p>Most ICU "events" happen right at admission: patients arrive from surgery on a ventilator, or start a vasopressor on arrival. There's nothing to predict there, so a patient must go 6 hours without an event before we start scoring.</p></div>
     </div>
   </div>
 </section>
@@ -187,120 +175,11 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
     </svg>
     <p class="cap">Every split is by patient. The first validation half calibrates the risk scores, so that "10% risk" means about 10% of those hours are followed by an event. The second half picks the alarm threshold, so it is never tuned on the data the calibration was fitted to. Test patients are scored once, at the end.</p>
     </div>
-    <dl class="terms">
+    <dl class="terms" style="grid-template-columns:repeat(3,1fr)">
       <div><dt>Patient-hour</dt><dd>One patient for one hour. A 3-day stay is 72 patient-hours. The test set has 361,229 of them from 8,375 stays; 4.74% are followed by an event within 24 hours.</dd></div>
-      <div><dt>Alarm budget</dt><dd>The share of patient-hours on which a model may alarm. At 2.6%, a full 20-bed ICU gets about 12 to 13 alarm-hours a day. Every model gets the same budget, so none can look better by alarming more.</dd></div>
-      <div><dt>AUPRC <i>area under the precision-recall curve</i></dt><dd>How well a model ranks the hours before an event above all other hours. Random guessing scores 0.047 here; perfect is 1.0. Our main metric, because events are rare.</dd></div>
-      <div><dt>ECE <i>expected calibration error</i></dt><dd>The average gap between predicted risk and what happened. If 1,000 hours are each given 10% risk, about 100 should be followed by an event. 0 is perfect.</dd></div>
+      <div><dt>Alarm budget</dt><dd>The share of patient-hours on which a model may alarm. At 2%, a full 20-bed ICU gets about 10 alarm-hours a day. Every model gets the same budget, so none can look better by alarming more.</dd></div>
+      <div><dt>AUPRC <i>area under the precision-recall curve</i></dt><dd>A 0-to-1 score for how well the model ranks risky hours above safe ones. It rewards finding real events (recall) without raising false alarms (precision). Random guessing scores 0.047 here; perfect is 1. We avoid plain accuracy: a model that never alarms would be 95% accurate.</dd></div>
     </dl>
-  </div>
-</section>
-
-<!-- 4 ARCHITECTURE -->
-<section class="slide" hidden>
-  <div class="hd"><div class="eyebrow">How it works</div><h2>How it fits together</h2></div>
-  <div class="sb">
-    <div class="row" style="grid-template-columns:1fr 330px; align-items:start">
-      <div class="fig" style="padding:14px 14px 10px">
-      <svg viewBox="0 0 1040 560" role="img" aria-label="Eight agents each send a latent and a calibrated risk to an agent bank of 208 numbers per hour. A treatment head and a mortality head both read the bank. Their probabilities combine by noisy-OR into one risk, which raises an alarm above a frozen threshold. A local LLM writes an explanation card but has no path back into scoring.">
-        <defs>
-          <marker id="mk" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#52514e"/></marker>
-          <marker id="mkb" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2a78d6"/></marker>
-          <marker id="mkg" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#9a988f"/></marker>
-        </defs>
-        <text class="dh" x="118" y="22" text-anchor="middle">8 agents</text>
-        <text class="dh" x="345" y="22" text-anchor="middle">agent bank</text>
-        <text class="dh" x="596" y="22" text-anchor="middle">two heads</text>
-        <text class="dh" x="790" y="22" text-anchor="middle">combine</text>
-        <text class="dh" x="945" y="22" text-anchor="middle">decide</text>
-        <g fill="#fcfcfb" stroke="#c3c2b7">
-          <rect x="16" y="40" width="204" height="40" rx="6"/><rect x="16" y="90" width="204" height="40" rx="6"/>
-          <rect x="16" y="140" width="204" height="40" rx="6"/><rect x="16" y="190" width="204" height="40" rx="6"/>
-          <rect x="16" y="240" width="204" height="40" rx="6"/><rect x="16" y="290" width="204" height="40" rx="6"/>
-          <rect x="16" y="340" width="204" height="40" rx="6"/><rect x="16" y="390" width="204" height="40" rx="6"/>
-        </g>
-        <text class="bn" x="28" y="57">vitals</text><text class="bd" x="28" y="72">causal TCN · 32-d latent</text>
-        <text class="bn" x="28" y="107">labs</text><text class="bd" x="28" y="122">MLP · 32-d latent</text>
-        <text class="bn" x="28" y="157">ECG (cart's machine read)</text><text class="bd" x="28" y="172">MLP · 32-d latent</text>
-        <text class="bn" x="28" y="207">cadence (care activity)</text><text class="bd" x="28" y="222">MLP · 32-d latent</text>
-        <text class="bn" x="28" y="257">fluid</text><text class="bd" x="28" y="272">MLP · 32-d latent</text>
-        <text class="bn" x="28" y="307">resp (oxygen support)</text><text class="bd" x="28" y="322">MLP · 32-d latent</text>
-        <text class="bn" x="28" y="357">GBM</text><text class="bd" x="28" y="372">XGBoost · 1 number</text>
-        <text class="bn" x="28" y="407">NEWS2</text><text class="bd" x="28" y="422">fixed rule · 7 sub-scores</text>
-        <g stroke="#52514e" stroke-width="1.5">
-          <line x1="220" y1="60" x2="256" y2="60" marker-end="url(#mk)"/><line x1="220" y1="110" x2="256" y2="110" marker-end="url(#mk)"/>
-          <line x1="220" y1="160" x2="256" y2="160" marker-end="url(#mk)"/><line x1="220" y1="210" x2="256" y2="210" marker-end="url(#mk)"/>
-          <line x1="220" y1="260" x2="256" y2="260" marker-end="url(#mk)"/><line x1="220" y1="310" x2="256" y2="310" marker-end="url(#mk)"/>
-          <line x1="220" y1="360" x2="256" y2="360" marker-end="url(#mk)"/><line x1="220" y1="410" x2="256" y2="410" marker-end="url(#mk)"/>
-        </g>
-        <rect x="262" y="40" width="166" height="390" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>
-        <text class="big" x="345" y="182" text-anchor="middle">208</text>
-        <text class="bd" x="345" y="200" text-anchor="middle">numbers per hour</text>
-        <text class="bd" x="345" y="236" text-anchor="middle">6 latents × 32</text>
-        <text class="bd" x="345" y="252" text-anchor="middle">+ NEWS2's 7 sub-scores</text>
-        <text class="bd" x="345" y="268" text-anchor="middle">+ GBM's 1 number</text>
-        <text class="bd" x="345" y="284" text-anchor="middle">+ 8 calibrated risks</text>
-        <text class="bd" x="345" y="322" text-anchor="middle">missing modality →</text>
-        <text class="bd" x="345" y="338" text-anchor="middle">a learned "no data" value</text>
-        <g stroke="#2a78d6" stroke-width="1.75">
-          <line x1="428" y1="140" x2="474" y2="140" marker-end="url(#mkb)"/>
-          <line x1="428" y1="338" x2="474" y2="338" marker-end="url(#mkb)"/>
-        </g>
-        <text class="bd" x="451" y="131" text-anchor="middle">208</text>
-        <text class="bd" x="451" y="329" text-anchor="middle">208</text>
-        <rect x="478" y="60" width="236" height="160" rx="8" fill="#edf3fb" stroke="#2a78d6" stroke-width="1.5"/>
-        <text class="bn" x="492" y="84">Treatment head</text>
-        <text class="bd" x="492" y="100">target: vent or vasopressor ≤ 24 h</text>
-        <g fill="#fcfcfb" stroke="#c3c2b7"><rect x="492" y="114" width="208" height="26" rx="5"/><rect x="492" y="148" width="208" height="26" rx="5"/><rect x="492" y="182" width="208" height="26" rx="5"/></g>
-        <text class="bd" x="504" y="131" fill="#15181c">1 · attention over 8 agents</text>
-        <text class="bd" x="504" y="165" fill="#15181c">2 · causal TCN · last 29 h</text>
-        <text class="bd" x="504" y="199" fill="#15181c">3 · isotonic calibration</text>
-        <rect x="478" y="258" width="236" height="160" rx="8" fill="#edf3fb" stroke="#2a78d6" stroke-width="1.5"/>
-        <text class="bn" x="492" y="282">Mortality head</text>
-        <text class="bd" x="492" y="298">target: death ≤ 24 h</text>
-        <g fill="#fcfcfb" stroke="#c3c2b7"><rect x="492" y="312" width="208" height="26" rx="5"/><rect x="492" y="346" width="208" height="26" rx="5"/><rect x="492" y="380" width="208" height="26" rx="5"/></g>
-        <text class="bd" x="504" y="329" fill="#15181c">1 · attention over 8 agents</text>
-        <text class="bd" x="504" y="363" fill="#15181c">2 · causal TCN · last 29 h</text>
-        <text class="bd" x="504" y="397" fill="#15181c">3 · isotonic calibration</text>
-        <g stroke="#2a78d6" stroke-width="1.75">
-          <line x1="714" y1="140" x2="765" y2="207" marker-end="url(#mkb)"/>
-          <line x1="714" y1="338" x2="765" y2="271" marker-end="url(#mkb)"/>
-        </g>
-        <text class="bn" x="748" y="166">t</text>
-        <text class="bn" x="748" y="320">m</text>
-        <circle cx="790" cy="239" r="40" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
-        <text class="bn" x="790" y="236" text-anchor="middle">noisy-OR</text>
-        <text class="fm" x="790" y="253" text-anchor="middle">1−(1−t)(1−m)</text>
-        <line x1="830" y1="239" x2="862" y2="239" stroke="#2a78d6" stroke-width="1.75" marker-end="url(#mkb)"/>
-        <text class="bd" x="846" y="230" text-anchor="middle">risk</text>
-        <rect x="866" y="192" width="158" height="94" rx="8" fill="#fcfcfb" stroke="#15181c" stroke-width="1.5"/>
-        <text class="bn" x="880" y="216">Alarm</text>
-        <text class="bd" x="880" y="235">risk ≥ threshold,</text>
-        <text class="bd" x="880" y="251">frozen on validation</text>
-        <text class="bd" x="880" y="267">≈ 2.6% of hours</text>
-        <rect x="478" y="474" width="546" height="72" rx="8" fill="#fcfcfb" stroke="#9a988f" stroke-dasharray="5 4"/>
-        <text class="bn" x="494" y="498">Explanation card · local LLM (gemma4:12b)</text>
-        <text class="bd" x="494" y="516">reads attention weights, agent risks, NEWS2 sub-scores, vital trends</text>
-        <text class="bd" x="494" y="533">never sees the risk or the alarm · display only, no path back into scoring</text>
-        <g stroke="#9a988f" stroke-width="1.5" stroke-dasharray="5 4" fill="none">
-          <polyline points="345,430 345,510 472,510" marker-end="url(#mkg)"/>
-          <line x1="596" y1="418" x2="596" y2="468" marker-end="url(#mkg)"/>
-          <line x1="945" y1="286" x2="945" y2="468" marker-end="url(#mkg)"/>
-        </g>
-        <text class="bd" x="353" y="462">risks · sub-scores · trends</text>
-        <text class="bd" x="604" y="448">attention weights</text>
-        <text class="bd" x="953" y="380">on alarm</text>
-      </svg>
-      </div>
-      <ul class="notes">
-        <li>Each agent reads one kind of data and sends a 32-number summary (its latent vector) and a risk every hour.</li>
-        <li>Both heads read the same 208 numbers, but are trained on different targets.</li>
-        <li>Noisy-OR combines their probabilities into the chance that either event happens.</li>
-        <li>NEWS2<sup class="ref">2</sup> is computed exactly to the published bands. Risks are calibrated with isotonic regression<sup class="ref">3</sup>.</li>
-        <li>The alarm threshold is fixed on validation data and never changed at test time.</li>
-        <li>Dashed grey is the explanation path. It sends nothing back, so removing the LLM leaves every score unchanged.</li>
-      </ul>
-    </div>
   </div>
 </section>
 
@@ -428,6 +307,115 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
       <div class="col"><h3>29 hours of memory</h3><p>Each TCN block adds 2 × 2 × dilation hours of reach: 4 + 8 + 16 = 28, plus the current hour. The number follows from the dilations; we did not tune it.</p></div>
       <div class="col"><h3>Two heads</h3><p>Same design, different targets: treatment start, or death. One head trained on both had to compromise. Alone, the Mortality head ranks death at AUPRC 0.340, 1.8× the GBM's 0.189.</p></div>
     </div>
+    <p class="cap" style="margin-top:0">We also swapped in YAIB's open-source TCN (914k parameters, 55 h of memory) as the vitals agent. On its own it tied ours; inside Sentinel it scored slightly worse (AUPRC −0.0045, lower in 9 of 10 seeds).</p>
+  </div>
+</section>
+
+<!-- 4 ARCHITECTURE -->
+<section class="slide" hidden>
+  <div class="hd"><div class="eyebrow">How it works</div><h2>How it fits together</h2></div>
+  <div class="sb">
+    <div class="row" style="grid-template-columns:1fr 330px; align-items:start">
+      <div class="fig" style="padding:14px 14px 10px">
+      <svg viewBox="0 0 1040 560" role="img" aria-label="Eight agents each send a latent and a calibrated risk to an agent bank of 208 numbers per hour. A treatment head and a mortality head both read the bank. Their probabilities combine by noisy-OR into one risk, which raises an alarm above a frozen threshold. A local LLM writes an explanation card but has no path back into scoring.">
+        <defs>
+          <marker id="mk" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#52514e"/></marker>
+          <marker id="mkb" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2a78d6"/></marker>
+          <marker id="mkg" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#9a988f"/></marker>
+        </defs>
+        <text class="dh" x="118" y="22" text-anchor="middle">8 agents</text>
+        <text class="dh" x="345" y="22" text-anchor="middle">agent bank</text>
+        <text class="dh" x="596" y="22" text-anchor="middle">two heads</text>
+        <text class="dh" x="790" y="22" text-anchor="middle">combine</text>
+        <text class="dh" x="945" y="22" text-anchor="middle">decide</text>
+        <g fill="#fcfcfb" stroke="#c3c2b7">
+          <rect x="16" y="40" width="204" height="40" rx="6"/><rect x="16" y="90" width="204" height="40" rx="6"/>
+          <rect x="16" y="140" width="204" height="40" rx="6"/><rect x="16" y="190" width="204" height="40" rx="6"/>
+          <rect x="16" y="240" width="204" height="40" rx="6"/><rect x="16" y="290" width="204" height="40" rx="6"/>
+          <rect x="16" y="340" width="204" height="40" rx="6"/><rect x="16" y="390" width="204" height="40" rx="6"/>
+        </g>
+        <text class="bn" x="28" y="57">vitals</text><text class="bd" x="28" y="72">causal TCN · 32-d latent</text>
+        <text class="bn" x="28" y="107">labs</text><text class="bd" x="28" y="122">MLP · 32-d latent</text>
+        <text class="bn" x="28" y="157">ECG (cart's machine read)</text><text class="bd" x="28" y="172">MLP · 32-d latent</text>
+        <text class="bn" x="28" y="207">cadence (care activity)</text><text class="bd" x="28" y="222">MLP · 32-d latent</text>
+        <text class="bn" x="28" y="257">fluid</text><text class="bd" x="28" y="272">MLP · 32-d latent</text>
+        <text class="bn" x="28" y="307">resp (oxygen support)</text><text class="bd" x="28" y="322">MLP · 32-d latent</text>
+        <text class="bn" x="28" y="357">GBM</text><text class="bd" x="28" y="372">XGBoost · 1 number</text>
+        <text class="bn" x="28" y="407">NEWS2</text><text class="bd" x="28" y="422">fixed rule · 7 sub-scores</text>
+        <g stroke="#52514e" stroke-width="1.5">
+          <line x1="220" y1="60" x2="256" y2="60" marker-end="url(#mk)"/><line x1="220" y1="110" x2="256" y2="110" marker-end="url(#mk)"/>
+          <line x1="220" y1="160" x2="256" y2="160" marker-end="url(#mk)"/><line x1="220" y1="210" x2="256" y2="210" marker-end="url(#mk)"/>
+          <line x1="220" y1="260" x2="256" y2="260" marker-end="url(#mk)"/><line x1="220" y1="310" x2="256" y2="310" marker-end="url(#mk)"/>
+          <line x1="220" y1="360" x2="256" y2="360" marker-end="url(#mk)"/><line x1="220" y1="410" x2="256" y2="410" marker-end="url(#mk)"/>
+        </g>
+        <rect x="262" y="40" width="166" height="390" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>
+        <text class="big" x="345" y="182" text-anchor="middle">208</text>
+        <text class="bd" x="345" y="200" text-anchor="middle">numbers per hour</text>
+        <text class="bd" x="345" y="236" text-anchor="middle">6 latents × 32</text>
+        <text class="bd" x="345" y="252" text-anchor="middle">+ NEWS2's 7 sub-scores</text>
+        <text class="bd" x="345" y="268" text-anchor="middle">+ GBM's 1 number</text>
+        <text class="bd" x="345" y="284" text-anchor="middle">+ 8 calibrated risks</text>
+        <text class="bd" x="345" y="322" text-anchor="middle">missing modality →</text>
+        <text class="bd" x="345" y="338" text-anchor="middle">a learned "no data" value</text>
+        <g stroke="#2a78d6" stroke-width="1.75">
+          <line x1="428" y1="140" x2="474" y2="140" marker-end="url(#mkb)"/>
+          <line x1="428" y1="338" x2="474" y2="338" marker-end="url(#mkb)"/>
+        </g>
+        <text class="bd" x="451" y="131" text-anchor="middle">208</text>
+        <text class="bd" x="451" y="329" text-anchor="middle">208</text>
+        <rect x="478" y="60" width="236" height="160" rx="8" fill="#edf3fb" stroke="#2a78d6" stroke-width="1.5"/>
+        <text class="bn" x="492" y="84">Treatment head</text>
+        <text class="bd" x="492" y="100">target: vent or vasopressor ≤ 24 h</text>
+        <g fill="#fcfcfb" stroke="#c3c2b7"><rect x="492" y="114" width="208" height="26" rx="5"/><rect x="492" y="148" width="208" height="26" rx="5"/><rect x="492" y="182" width="208" height="26" rx="5"/></g>
+        <text class="bd" x="504" y="131" fill="#15181c">1 · attention over 8 agents</text>
+        <text class="bd" x="504" y="165" fill="#15181c">2 · causal TCN · last 29 h</text>
+        <text class="bd" x="504" y="199" fill="#15181c">3 · isotonic calibration</text>
+        <rect x="478" y="258" width="236" height="160" rx="8" fill="#edf3fb" stroke="#2a78d6" stroke-width="1.5"/>
+        <text class="bn" x="492" y="282">Mortality head</text>
+        <text class="bd" x="492" y="298">target: death ≤ 24 h</text>
+        <g fill="#fcfcfb" stroke="#c3c2b7"><rect x="492" y="312" width="208" height="26" rx="5"/><rect x="492" y="346" width="208" height="26" rx="5"/><rect x="492" y="380" width="208" height="26" rx="5"/></g>
+        <text class="bd" x="504" y="329" fill="#15181c">1 · attention over 8 agents</text>
+        <text class="bd" x="504" y="363" fill="#15181c">2 · causal TCN · last 29 h</text>
+        <text class="bd" x="504" y="397" fill="#15181c">3 · isotonic calibration</text>
+        <g stroke="#2a78d6" stroke-width="1.75">
+          <line x1="714" y1="140" x2="765" y2="207" marker-end="url(#mkb)"/>
+          <line x1="714" y1="338" x2="765" y2="271" marker-end="url(#mkb)"/>
+        </g>
+        <text class="bn" x="748" y="166">t</text>
+        <text class="bn" x="748" y="320">m</text>
+        <circle cx="790" cy="239" r="40" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+        <text class="bn" x="790" y="236" text-anchor="middle">noisy-OR</text>
+        <text class="fm" x="790" y="253" text-anchor="middle">1−(1−t)(1−m)</text>
+        <line x1="830" y1="239" x2="862" y2="239" stroke="#2a78d6" stroke-width="1.75" marker-end="url(#mkb)"/>
+        <text class="bd" x="846" y="230" text-anchor="middle">risk</text>
+        <rect x="866" y="192" width="158" height="94" rx="8" fill="#fcfcfb" stroke="#15181c" stroke-width="1.5"/>
+        <text class="bn" x="880" y="216">Alarm</text>
+        <text class="bd" x="880" y="235">risk ≥ threshold,</text>
+        <text class="bd" x="880" y="251">frozen on validation</text>
+        <text class="bd" x="880" y="267">at a fixed alarm budget</text>
+        <rect x="478" y="474" width="546" height="72" rx="8" fill="#fcfcfb" stroke="#9a988f" stroke-dasharray="5 4"/>
+        <text class="bn" x="494" y="498">Explanation card · local LLM (gemma4:12b)</text>
+        <text class="bd" x="494" y="516">reads attention weights, agent risks, NEWS2 sub-scores, vital trends</text>
+        <text class="bd" x="494" y="533">never sees the risk or the alarm · display only, no path back into scoring</text>
+        <g stroke="#9a988f" stroke-width="1.5" stroke-dasharray="5 4" fill="none">
+          <polyline points="345,430 345,510 472,510" marker-end="url(#mkg)"/>
+          <line x1="596" y1="418" x2="596" y2="468" marker-end="url(#mkg)"/>
+          <line x1="945" y1="286" x2="945" y2="468" marker-end="url(#mkg)"/>
+        </g>
+        <text class="bd" x="353" y="462">risks · sub-scores · trends</text>
+        <text class="bd" x="604" y="448">attention weights</text>
+        <text class="bd" x="953" y="380">on alarm</text>
+      </svg>
+      </div>
+      <ul class="notes">
+        <li>Each agent reads one kind of data and sends a 32-number summary (its latent vector) and a risk every hour.</li>
+        <li>Both heads read the same 208 numbers, but are trained on different targets.</li>
+        <li>Noisy-OR combines their probabilities into the chance that either event happens.</li>
+        <li>NEWS2<sup class="ref">2</sup> is computed exactly to the published bands. Risks are calibrated with isotonic regression<sup class="ref">3</sup>.</li>
+        <li>The alarm threshold is fixed on validation data and never changed at test time.</li>
+        <li>Dashed grey is the explanation path. It sends nothing back, so removing the LLM leaves every score unchanged.</li>
+      </ul>
+    </div>
   </div>
 </section>
 
@@ -464,44 +452,21 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
 <!-- 10 CATCH RATE -->
 <section class="slide" hidden>
   <div class="hd"><div class="eyebrow">Results</div><h2>Same alarms, more catches</h2></div>
-  <div class="sb">
-    <p class="lede">Compared with the two strongest published models, the eCART-style GBM and YAIB LightGBM. All three may alarm on the same 2.6% of patient-hours.</p>
-    <div class="row" style="grid-template-columns:1.15fr 1fr">
-      <div class="fig">
-        <div class="fig-title">Share of 1,540 deteriorating stays caught</div>
-        <div class="legend"><span><i class="sw" style="background:#86b6ef"></i><i class="sw" style="background:#d3d5d0;margin-left:-4px"></i>caught</span><span><i class="sw" style="background:#2a78d6"></i><i class="sw" style="background:#8a8f98;margin-left:-4px"></i>caught ≥ 6 h before the event</span></div>
-        <div id="c-funnel"></div>
-        <p class="cap">Median warning before the event: 7.3 h for Sentinel, 6.9 h and 6.7 h for the others.</p>
-      </div>
-      <div class="panel">
-        <h3>Why a 2.6% budget?</h3>
-        <p>We wanted every model held to one budget near 2% of hours. NEWS2 is a whole-number score, so it can't hit 2% exactly. Its closest cut-off here is a score of 11 or more, which fires on 2.62% of hours.</p>
-        <p>We used that as the budget and set each model's threshold on validation data to fire on the same share. In a full 20-bed ICU, that is about 12 to 13 alarm-hours a day.</p>
-        <p>The ward trigger, NEWS2 ≥ 5, doesn't work here: ICU patients meet it on 45% of hours.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 11 SWEEP -->
-<section class="slide" hidden>
-  <div class="hd"><div class="eyebrow">Results</div><h2>Does the budget matter?</h2></div>
-  <div class="sb">
+  <div class="sb" style="gap:20px">
+    <p class="lede" style="max-width:none">A model can catch more patients just by alarming more. So we give every model the same alarm budget, the share of patient-hours it may alarm on, and count how many deteriorating patients each one catches. We compare against the two strongest published models from the last slide.</p>
     <div class="fig">
-      <div class="fig-title">Share of deteriorating stays caught, by alarm budget</div>
       <div class="legend"><span><i class="sw" style="background:#2a78d6"></i>Sentinel</span><span><i class="sw" style="background:#8a8f98"></i>eCART-style GBM (the stronger comparator at every budget)</span></div>
       <div id="c-sweep"></div>
-      <p class="cap">From 0.5% to 10% of patient-hours, Sentinel stays 7 to 13 points ahead. YAIB sits just below eCART-style at every budget (hover for its numbers).</p>
+      <p class="cap">Share of 1,540 deteriorating stays caught, at 7 alarm budgets. Sentinel stays 7 to 13 points ahead at every one. YAIB LightGBM sits just below eCART-style throughout (hover for its numbers). The trade-off: Sentinel spreads its alarms over more patients, so more stays that never deteriorate see an alarm (8.0% vs 5.1% at a 2% budget).</p>
     </div>
-    <p class="txt" style="max-width:none">The cost: more patients see at least one alarm. 11.8% of stays that never deteriorate get a Sentinel alarm, vs 6.8% and 6.2%. Total alarm-hours are the same; Sentinel's alarms are shorter and spread over more patients (4.0 alarm-hours per quiet stay alarmed, vs 5.6 and 5.7).</p>
   </div>
 </section>
 
 <!-- 12 eICU -->
 <section class="slide" hidden>
-  <div class="hd"><div class="eyebrow">Results</div><h2>208 hospitals it never saw</h2></div>
+  <div class="hd"><div class="eyebrow">Results</div><h2>Testing on a different dataset</h2></div>
   <div class="sb" style="gap:18px">
-    <p class="lede" style="max-width:none">eICU-CRD<sup class="ref">14</sup> is a separate US database: 133,229 ICU stays from 208 hospitals, mostly community hospitals. We ran the MIMIC-trained model on it unchanged.</p>
+    <p class="lede" style="max-width:none">eICU-CRD<sup class="ref">14</sup> is a separate US database: 133,229 ICU stays from 208 hospitals, mostly community hospitals. We ran the MIMIC-trained model on it with nothing retrained on eICU.</p>
     <div class="row" style="grid-template-columns:1fr 1fr">
       <div class="fig">
         <div class="fig-title">eICU AUPRC at matched charting density</div>
@@ -516,7 +481,7 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
     </div>
     <ul class="notes" style="grid-template-columns:1fr 1fr; column-gap:40px">
       <li>NEWS2 has no trained parameters and performs the same on both databases (lift 2.41 vs 2.46), so the drop on eICU comes from thinner charting, not different labels.</li>
-      <li>Over all hours, including sparse ones, Sentinel ties the two strongest models. The eICU version uses 7 agents; cadence has no eICU equivalent.</li>
+      <li>Over all hours, including sparse ones, Sentinel ties the two strongest models.</li>
     </ul>
   </div>
 </section>
@@ -533,9 +498,9 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
       </div>
       <div class="panel">
         <h3>Calibration at a new hospital</h3>
-        <p>On eICU the ranking held up, but the probabilities drifted: ECE rose from 0.002 to 0.038. It is cheap to repair.</p>
+        <p>On eICU the ranking held up, but predicted risks drifted from what actually happened: the average gap (calibration error) rose from 0.002 to 0.038. It is cheap to repair.</p>
         <div class="tw" style="margin-top:14px"><table>
-          <thead><tr><th>Fix</th><th class="r">ECE</th></tr></thead>
+          <thead><tr><th>Fix</th><th class="r">Calibration error</th></tr></thead>
           <tbody>
             <tr><td>As shipped from MIMIC</td><td class="r">0.038</td></tr>
             <tr><td>Adjust for local event rate (no labels)</td><td class="r">0.020</td></tr>
@@ -568,15 +533,44 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
   </div>
 </section>
 
+<!-- 15 TCN ALONE -->
+<section class="slide" hidden>
+  <div class="hd"><div class="eyebrow">In practice</div><h2>The vitals model alone: sooner, but noisier</h2></div>
+  <div class="sb" style="gap:18px">
+    <p class="lede" style="max-width:none">The vitals TCN reads only the bedside stream, so it never waits for the hourly agents. We let it drive alarms in real time and compared it with today's hourly flagship.</p>
+    <div class="row" style="grid-template-columns:1fr 470px; align-items:start">
+      <div class="fig">
+        <div class="fig-title">Patients caught vs false alarms (up and to the left is better)</div>
+        <div class="legend"><span><i class="sw" style="background:#2a78d6"></i>full model (flagship)</span><span><i class="sw" style="background:#5c6470"></i>vitals TCN in real time</span></div>
+        <div id="c-tcn"></div>
+        <p class="cap">Live-replay pipeline, monitor clock, seed 42, 8,375 test stays. Alarm thresholds are set on validation data; the last policy is tuned to today's false-alarm rate.</p>
+      </div>
+      <div class="col">
+        <h3>The policies</h3>
+        <ul class="notes" style="gap:8px">
+          <li><b>Flagship hourly:</b> today's system.</li>
+          <li><b>Flagship on arrival:</b> re-scored on every bedside reading (previous slide).</li>
+          <li><b>TCN hourly / real time:</b> the vitals TCN alone, on the hour or on every reading.</li>
+          <li><b>TCN-direct:</b> TCN on every reading, full flagship on each hour.</li>
+          <li><b>Same false-alarm cost:</b> TCN-direct, with its threshold set so as many quiet stays alarm as today.</li>
+        </ul>
+        <h3 style="margin-top:20px">What we found</h3>
+        <p>Alone, the TCN ranks far worse (AUPRC 0.188 vs 0.314). In real time it alarms on 25.7% of quiet stays, vs 10.8% today. Held to today's false-alarm rate, it catches 55.5% vs 64.6%, about 4 hours later.</p>
+        <p>Real time barely moves even the TCN: 81% of its catches already fire at hour 6, the first scored hour.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- 15 HARDWARE -->
 <section class="slide" hidden>
   <div class="hd"><div class="eyebrow">In practice</div><h2>What it runs on</h2></div>
   <div class="sb">
     <div class="row" style="grid-template-columns:1fr 1fr">
       <div class="fig">
-        <div class="fig-title">Time to score one patient-hour (1 CPU thread)</div>
+        <div class="fig-title">Time to score one patient-hour, 1 CPU thread (lower is better)</div>
         <div id="c-foot"></div>
-        <p class="cap">Same model on four machines, three operating systems. Highlighted: integrated graphics only.</p>
+        <p class="cap">Same model on four laptops, none using a GPU. Even the slowest scores a patient-hour in 2 ms.</p>
       </div>
       <div class="fig">
         <div class="fig-title">Requirements</div>
@@ -593,8 +587,8 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
       </div>
     </div>
     <div class="cols3" style="grid-template-columns:repeat(4,1fr); gap:28px">
-      <div class="col"><h3>Load</h3><p>About 2 ms per patient-hour. A 20-bed ICU needs 20 scores an hour: 40 ms of CPU work per hour.</p></div>
-      <div class="col"><h3>Memory</h3><p>About 320 MB of RAM, almost all of it Python and PyTorch. The trained models are 3.5 MB.</p></div>
+      <div class="col"><h3>Load</h3><p>At most 2 ms per patient-hour. A 20-bed ICU needs 20 scores an hour: 40 ms of CPU work per hour.</p></div>
+      <div class="col"><h3>Memory</h3><p>About 320 MB of RAM (537 MB on Linux), almost all of it Python and PyTorch. Loading the models adds 3.5 MB.</p></div>
       <div class="col"><h3>Cards</h3><p>The one-sentence explanation shown with an alarm. Written only when an alarm fires; 3 to 11 s on CPU.</p></div>
       <div class="col"><h3>Built on</h3><p>One laptop: Core Ultra 9 275HX, 32 GB RAM, RTX 5070 Ti. No cloud training.</p></div>
     </div>
@@ -606,7 +600,7 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
   <div class="hd"><div class="eyebrow">In practice</div><h2>Explaining an alarm</h2></div>
   <div class="sb" style="gap:20px">
     <p class="lede" style="max-width:none">When an alarm fires, Sentinel builds a short summary: each agent's attention weight and risk, the 7 NEWS2 sub-scores, and how 5 vitals moved over the last 4 hours. A local LLM (gemma4:12b, on the same machine) turns it into one sentence. It is never given the risk score, and its output never goes back into the model.</p>
-    <p class="example"><span>Format example, not a real patient</span>Rising respiratory rate and escalating oxygen support over the last 4 hours drove this alert, with the vitals and resp agents weighted highest.</p>
+    <p class="example"><span>Example:</span>Rising respiratory rate and escalating oxygen support over the last 4 hours drove this alert, with the vitals and resp agents weighted highest.</p>
     <div class="fig">
       <div class="fig-title">How faithful are the sentences? 200 held-out hours, 100 with an alarm</div>
       <div class="tw"><table>
@@ -620,20 +614,6 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
       </table></div>
       <p class="cap">Last column: a separate model guesses whether an alarm fired from the sentence alone. The medical fine-tune (medgemma) did not help, because the task is describing numbers it is given.</p>
     </div>
-  </div>
-</section>
-
-<!-- 17 SUMMARY -->
-<section class="slide" hidden>
-  <div class="hd"><div class="eyebrow">Wrap-up</div><h2>In short</h2></div>
-  <div class="sb">
-    <div class="tiles" style="margin-top:20px">
-      <div class="tile"><span class="n" style="font-size:56px">0.309</span><span class="k" style="font-size:18px">AUPRC on held-out MIMIC patients, vs 0.280 for the eCART-style model and 0.114 for NEWS2.</span></div>
-      <div class="tile"><span class="n" style="font-size:56px">65.5%</span><span class="k" style="font-size:18px">of deteriorating patients caught, vs 53.6%, at the same alarm budget.</span></div>
-      <div class="tile"><span class="n" style="font-size:56px">208</span><span class="k" style="font-size:18px">unseen hospitals, ahead of all three published models in 30 of 30 tests.</span></div>
-      <div class="tile"><span class="n" style="font-size:56px">~2 ms</span><span class="k" style="font-size:18px">per patient-hour on one laptop CPU core. No GPU.</span></div>
-    </div>
-    <p class="thanks">Thank you.</p>
   </div>
 </section>
 
@@ -688,7 +668,7 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
     o.rows.forEach(function(r,i){
       var y=top+i*rowH,bh=22,by=y+(rowH-bh)/2,xe=sx(r.value);
       T(s,x0-12,by+bh/2+4.5,r.label,{'class':r.hi?'lab hi':'lab','text-anchor':'end'});
-      E('path',{d:hp(x0,by,xe,bh),fill:r.hi?C.blue:C.gray},s);
+      E('path',{d:hp(x0,by,xe,bh),fill:(o.single||r.hi)?C.blue:C.gray},s);
       T(s,xe+8,by+bh/2+4.5,o.fmt(r.value),{'class':r.hi?'val hi':'val'});
       hit(s,0,y,W,rowH,r.tip);
     });
@@ -717,61 +697,42 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
   hbar('c-eicu',{W:500,labelW:170,right:56,max:0.18,ticks:[0,0.05,0.10,0.15],fmt:f3,fmtTick:function(t){return t.toFixed(2);},
     ref:{v:0.0372,label:'random 0.037'},aria:'eICU AUPRC at matched density: Sentinel 0.153, eCART-style 0.139, YAIB 0.139, Sadanandan 0.133.',
     rows:[
-      {label:'Sentinel (10-seed mean)',value:0.1526,hi:1,tip:'<b>Sentinel</b>, 7 agents<br>AUPRC 0.153 (10 seeds, 0.150 to 0.157)'},
+      {label:'Sentinel (10-seed mean)',value:0.1526,hi:1,tip:'<b>Sentinel</b><br>AUPRC 0.153 (10 seeds, 0.150 to 0.157)'},
       {label:'eCART-style GBM',value:0.1394,tip:'<b>eCART-style GBM</b><br>AUPRC 0.139'},
       {label:'YAIB LightGBM',value:0.1391,tip:'<b>YAIB LightGBM</b><br>AUPRC 0.139'},
       {label:'Sadanandan XGBoost',value:0.1330,tip:'<b>Sadanandan XGBoost</b><br>AUPRC 0.133'}
     ]});
 
-  hbar('c-foot',{W:500,labelW:220,right:66,max:2.5,ticks:[0,0.5,1,1.5,2,2.5],fmt:function(v){return v.toFixed(2)+' ms';},fmtTick:function(t){return t+' ms';},
-    aria:'Milliseconds per patient-hour: i9-13900H 1.99, i5-13500HX 1.66, Apple M1 1.12, Core Ultra 9 0.73.',
+  hbar('c-foot',{W:500,labelW:230,right:66,max:2.5,single:1,ticks:[0,0.5,1,1.5,2,2.5],fmt:function(v){return v.toFixed(2)+' ms';},fmtTick:function(t){return t+' ms';},
+    aria:'Milliseconds per patient-hour, lower is better: Core Ultra 9 0.73, Apple M1 1.12, i5-13500HX 1.66, i9-13900H with integrated graphics 1.99.',
     rows:[
-      {label:'i9-13900H · integrated GPU only',value:1.99,hi:1,tip:'<b>Core i9-13900H</b> · Windows · 16 GB<br>1.99 ms · 319 MB RAM'},
-      {label:'i5-13500HX · Windows',value:1.66,tip:'<b>Core i5-13500HX</b> · Windows · 32 GB<br>1.66 ms · 335 MB RAM'},
-      {label:'Apple M1 · macOS',value:1.12,tip:'<b>Apple M1</b> · macOS · 8 GB<br>1.12 ms · 373 MB RAM'},
-      {label:'Core Ultra 9 275HX · Linux',value:0.727,tip:'<b>Core Ultra 9 275HX</b> · Linux · 32 GB<br>0.73 ms · 537 MB RAM'}
+      {label:'Core Ultra 9 275HX · Linux',value:0.727,tip:'<b>Core Ultra 9 275HX</b> · Linux · 32 GB<br>discrete GPU hidden<br>0.73 ms · 537 MB RAM'},
+      {label:'Apple M1 · macOS',value:1.12,tip:'<b>Apple M1</b> · macOS · 8 GB · ARM<br>1.12 ms · 373 MB RAM'},
+      {label:'i5-13500HX · Windows',value:1.66,tip:'<b>Core i5-13500HX</b> · Windows · 32 GB<br>discrete GPU unused<br>1.66 ms · 335 MB RAM'},
+      {label:'i9-13900H · integrated GPU only',value:1.99,tip:'<b>Core i9-13900H</b> · Windows · 16 GB<br>Iris Xe integrated graphics, no discrete GPU<br>1.99 ms · 319 MB RAM'}
     ]});
 
-  (function(){
-    var rows=[
-      {label:'Sentinel',hi:1,any:65.5,n:1008,early:34.9,ne:537,warn:7.3},
-      {label:'eCART-style GBM',any:53.6,n:825,early:28.2,ne:435,warn:6.9},
-      {label:'YAIB LightGBM',any:51.8,n:798,early:27.1,ne:417,warn:6.7}];
-    var W=500,rowH=46,top=8,L=128,R=60,n=rows.length,H=top+n*rowH+28,s=root('c-funnel',W,H,'Share of 1,540 deteriorating stays caught: Sentinel 65.5% (34.9% at least 6 hours early), eCART-style 53.6% (28.2%), YAIB 51.8% (27.1%).');
-    var x0=L,x1=W-R,yb=top+n*rowH;function sx(v){return x0+v/100*(x1-x0);}
-    [0,25,50,75,100].forEach(function(t){var x=sx(t);if(t>0)E('line',{x1:x,x2:x,y1:top,y2:yb,stroke:C.grid},s);T(s,x,yb+18,t+'%',{'class':'tick','text-anchor':'middle'});});
-    E('line',{x1:x0,x2:x0,y1:top,y2:yb,stroke:C.base},s);
-    rows.forEach(function(r,i){
-      var y=top+i*rowH,bh=24,by=y+(rowH-bh)/2;
-      T(s,x0-12,by+bh/2+4.5,r.label,{'class':r.hi?'lab hi':'lab','text-anchor':'end'});
-      E('path',{d:hp(x0,by,sx(r.any),bh),fill:r.hi?C.blueL:C.grayL},s);
-      E('path',{d:hp(x0,by,sx(r.early),bh),fill:r.hi?C.blue:C.gray},s);
-      T(s,sx(r.any)+8,by+bh/2+4.5,r.any.toFixed(1)+'%',{'class':r.hi?'val hi':'val'});
-      T(s,sx(r.early)-7,by+bh/2+4.5,r.early.toFixed(1)+'%',{'class':'inbar','text-anchor':'end',fill:r.hi?'#ffffff':C.ink});
-      hit(s,0,y,W,rowH,'<b>'+r.label+'</b><br>caught '+r.n.toLocaleString()+' of 1,540 ('+r.any.toFixed(1)+'%)<br>'+r.ne+' caught ≥ 6 h early<br>median warning '+r.warn+' h');
-    });
-  })();
 
   (function(){
-    var b=[0.5,1,2,2.617,3,5,7.5,10],S=[34.68,46.62,58.51,65.45,68.38,75.65,83.51,86.82],Ec=[26.82,35.84,47.73,53.57,55.78,65.13,73.57,79.74],Y=[26.75,35.45,46.69,51.82,54.48,64.48,71.56,77.21];
-    var W=1040,H=318,x0=56,x1=860,top=20,bot=258,s=root('c-sweep',W,H,'Share of deteriorating stays caught by alarm budget. Sentinel rises from 34.7% at 0.5% to 86.8% at 10%; eCART-style from 26.8% to 79.7%.');
+    var b=[0.5,1,2,3,5,7.5,10],S=[34.68,46.62,58.51,68.38,75.65,83.51,86.82],Ec=[26.82,35.84,47.73,55.78,65.13,73.57,79.74],Y=[26.75,35.45,46.69,54.48,64.48,71.56,77.21];
+    var Sf=[1.73,4.01,8.02,13.40,18.26,26.20,31.92],Ef=[1.02,2.52,5.12,7.72,12.49,19.25,26.10];
+    var W=1040,H=290,x0=56,x1=860,top=18,bot=232,s=root('c-sweep',W,H,'Share of deteriorating stays caught by alarm budget. Sentinel rises from 34.7% at a 0.5% budget to 86.8% at 10%; eCART-style from 26.8% to 79.7%. Sentinel is 7 to 13 points ahead at every budget.');
     function sx(v){return x0+v/10.5*(x1-x0);} function sy(v){return bot-v/100*(bot-top);}
     [0,25,50,75,100].forEach(function(t){var y=sy(t);E('line',{x1:x0,x2:x1,y1:y,y2:y,stroke:t===0?C.base:C.grid},s);T(s,x0-8,y+4,t+'%',{'class':'tick','text-anchor':'end'});});
     [0,2,4,6,8,10].forEach(function(t){T(s,sx(t),bot+18,t+'%',{'class':'tick','text-anchor':'middle'});});
     T(s,(x0+x1)/2,bot+40,'alarm budget (% of patient-hours)',{'class':'ann','text-anchor':'middle'});
-    var xo=sx(2.617);E('line',{x1:xo,x2:xo,y1:top-6,y2:bot,stroke:C.gd,'stroke-dasharray':'3 4'},s);T(s,xo+5,top+4,'our budget, 2.6%',{'class':'ann'});
     function line(arr,c){E('polyline',{points:arr.map(function(v,i){return sx(b[i])+','+sy(v);}).join(' '),fill:'none',stroke:c,'stroke-width':2,'stroke-linejoin':'round','stroke-linecap':'round'},s);
       arr.forEach(function(v,i){E('circle',{cx:sx(b[i]),cy:sy(v),r:4,fill:c,stroke:C.surf,'stroke-width':2},s);});}
     line(Ec,C.gray);line(S,C.blue);
     T(s,sx(10)+10,sy(86.82)+4,'Sentinel 86.8%',{'class':'val hi'});
     T(s,sx(10)+10,sy(79.74)+4,'eCART-style 79.7%',{'class':'val'});
     b.forEach(function(v,i){var xl=i===0?x0:(sx(b[i-1])+sx(v))/2,xr=i===b.length-1?x1:(sx(v)+sx(b[i+1]))/2;
-      hit(s,xl,top,xr-xl,bot-top,'<b>Budget '+(v===2.617?'2.6':v)+'% of hours</b><br>Sentinel '+S[i].toFixed(1)+'% · eCART-style '+Ec[i].toFixed(1)+'% · YAIB '+Y[i].toFixed(1)+'%');});
+      hit(s,xl,top,xr-xl,bot-top,'<b>Budget '+v+'% of patient-hours</b><br>caught: Sentinel '+S[i].toFixed(1)+'% · eCART-style '+Ec[i].toFixed(1)+'% · YAIB '+Y[i].toFixed(1)+'%<br>quiet stays alarmed: Sentinel '+Sf[i].toFixed(1)+'% · eCART-style '+Ef[i].toFixed(1)+'%');});
   })();
 
   (function(){
-    var rows=[{label:'Sentinel, two heads',p10:0.689,med:0.759,p90:0.842,hi:1},{label:'7 agents, one head',p10:0.677,med:0.754,p90:0.835},{label:'3 agents, one head',p10:0.658,med:0.728,p90:0.815}];
-    var W=500,rowH=50,top=10,L=150,R=24,n=rows.length,H=top+n*rowH+30,s=root('c-hosp',W,H,'Per-hospital AUROC on eICU. Sentinel two heads: 0.689, 0.759, 0.842. Seven agents one head: 0.677, 0.754, 0.835. Three agents: 0.658, 0.728, 0.815.');
+    var rows=[{label:'Sentinel, two heads',p10:0.689,med:0.759,p90:0.842,hi:1},{label:'Sentinel, one head',p10:0.677,med:0.754,p90:0.835},{label:'3-agent version',p10:0.658,med:0.728,p90:0.815}];
+    var W=500,rowH=50,top=10,L=150,R=24,n=rows.length,H=top+n*rowH+30,s=root('c-hosp',W,H,'Per-hospital AUROC on eICU. Sentinel two heads: 0.689, 0.759, 0.842. One head: 0.677, 0.754, 0.835. Three-agent version: 0.658, 0.728, 0.815.');
     var x0=L,x1=W-R,yb=top+n*rowH;function sx(v){return x0+(v-0.6)/0.3*(x1-x0);}
     [0.6,0.7,0.8,0.9].forEach(function(t){var x=sx(t);E('line',{x1:x,x2:x,y1:top,y2:yb,stroke:C.grid},s);T(s,x,yb+18,t.toFixed(2),{'class':'tick','text-anchor':'middle'});});
     rows.forEach(function(r,i){
@@ -799,6 +760,30 @@ ol.refs li{break-inside:avoid; margin-bottom:9px; padding-left:4px}
       T(s,cx,bot+20,r.a,{'class':'lab','text-anchor':'middle'});
       T(s,cx,bot+36,r.b,{'class':'tick','text-anchor':'middle'});
       hit(s,cx-slot/2,top,slot,bot-top,'<b>'+r.a+'</b><br>'+r.tip);
+    });
+  })();
+
+  (function(){
+    var P=[
+      {n:'flagship hourly',x:10.8,y:64.6,f:1,lx:-9,ly:18,a:'end',lead:'7.1 h',o:'0.201',d:'baseline'},
+      {n:'flagship on arrival',x:11.5,y:65.3,f:1,lx:10,ly:-10,a:'start',lead:'7.5 h',o:'0.258',d:'+30 min [12, 55]'},
+      {n:'TCN hourly',x:24.2,y:65.8,lx:0,ly:24,a:'middle',lead:'8.6 h',o:'0.254',d:'+44 min [−47, +135]'},
+      {n:'TCN real time',x:25.7,y:67.5,lx:0,ly:-13,a:'middle',lead:'9.6 h',o:'0.314',d:'+99 min [12, 185]'},
+      {n:'TCN-direct',x:20.5,y:72.1,lx:-11,ly:4,a:'end',lead:'9.0 h',o:'0.732',d:'+130 min [88, 176]'},
+      {n:'TCN-direct, same false-alarm cost',x:9.6,y:55.5,lx:30,ly:4,a:'start',lead:'5.0 h',o:'0.311',d:'−239 min [−336, −142]'}];
+    var W=700,H=320,x0=64,x1=680,top=22,bot=272,s=root('c-tcn',W,H,'Deteriorating stays caught against quiet stays with a false alarm. Flagship hourly 64.6% at 10.8%; flagship on arrival 65.3% at 11.5%; TCN hourly 65.8% at 24.2%; TCN real time 67.5% at 25.7%; TCN-direct 72.1% at 20.5%; TCN-direct at the same false-alarm cost 55.5% at 9.6%.');
+    function sx(v){return x0+v/30*(x1-x0);} function sy(v){return bot-(v-50)/25*(bot-top);}
+    [50,55,60,65,70,75].forEach(function(t){var y=sy(t);E('line',{x1:x0,x2:x1,y1:y,y2:y,stroke:t===50?C.base:C.grid},s);T(s,x0-8,y+4,t+'%',{'class':'tick','text-anchor':'end'});});
+    [0,10,20,30].forEach(function(t){var x=sx(t);if(t>0)E('line',{x1:x,x2:x,y1:top,y2:bot,stroke:C.grid},s);T(s,x,bot+18,t+'%',{'class':'tick','text-anchor':'middle'});});
+    E('line',{x1:x0,x2:x0,y1:top,y2:bot,stroke:C.base},s);
+    T(s,(x0+x1)/2,bot+40,'quiet stays that ever get a false alarm',{'class':'ann','text-anchor':'middle'});
+    T(s,14,(top+bot)/2,'deteriorating stays caught',{'class':'ann','text-anchor':'middle',transform:'rotate(-90 14 '+((top+bot)/2)+')'});
+    var xr=sx(10.8);E('line',{x1:xr,x2:xr,y1:top,y2:bot,stroke:C.gd,'stroke-dasharray':'3 4'},s);T(s,xr+6,top+12,"today's false-alarm rate, 10.8%",{'class':'ann'});
+    P.forEach(function(p){
+      var cx=sx(p.x),cy=sy(p.y),c=p.f?C.blue:C.gd;
+      E('circle',{cx:cx,cy:cy,r:6,fill:c,stroke:C.surf,'stroke-width':2},s);
+      T(s,cx+p.lx,cy+p.ly,p.n,{'class':p.f?'lab hi':'lab','text-anchor':p.a});
+      E('circle',{cx:cx,cy:cy,r:14,fill:'transparent','class':'hit','data-tip':'<b>'+p.n+'</b><br>'+p.y+'% of deteriorating stays caught<br>'+p.x+'% of quiet stays falsely alarmed<br>median lead '+p.lead+' · '+p.o+' alarm starts per stay-day<br>first alarm vs hourly flagship: '+p.d},s);
     });
   })();
 
