@@ -2389,6 +2389,76 @@ It does not survive contact with the data: the **single-head** 7-agent config
 scores ECE 0.0379 on eICU against the **two-head**'s 0.0378 — indistinguishable.
 The over-confidence comes from the transfer, not from the composition rule.
 
+## T26 — Swapping the vitals TCN for YAIB's TCN
+
+Is Sentinel's small vitals TCN the weak link? This swaps it for the TCN from
+YAIB (van de Water et al., ICLR 2024) and measures the change both standalone
+and inside the shipped flagship. Run 2026-10-15, ten seeds.
+
+**What was ported** (`src/agents/yaib_tcn.py`, read from `rvandewater/YAIB` @
+development):
+
+* the `TemporalConvNet` architecture, verbatim: weight-normed causal
+  convolutions with residual blocks and dilations 2^i, its depth computed from
+  `HORIZON = 24`;
+* YAIB's training recipe: class-balanced loss, Adam with weight decay 1e-6,
+  batch 64, up to 50 epochs, early stopping on val loss with patience 10;
+* its search space: lr 1e-6–3e-4, 32–256 channels, kernel 2–128, dropout 0–0.4.
+
+**What was held fixed, so the comparison isolates the network:**
+
+* the inputs: the same 19 vitals channels, not YAIB's 52 features;
+* the other seven agents, unchanged from the shipped caches.
+
+YAIB tunes with 30 Bayesian calls and 5-fold CV. Here a seeded 16-config
+random search over the same space ran on val. The winner was lr 1.15e-4,
+171 channels, kernel 10, dropout 0.12. That gives 2 levels, a **55-hour
+receptive field** and **914k parameters**, against the current TCN's 29 h and
+~20k. It was best both by val AUPRC (0.1963) and by YAIB's own criterion, val
+loss, so the choice of selection rule doesn't matter. One YAIB quirk is kept
+for fidelity: its `init_weights` is a no-op on the weight-normed convolutions.
+Tests confirm the port is causal and that its receptive field is exact.
+
+**Protocol.** For each seed in the T18 set {42, 1, …, 9}, both TCNs were fit
+at that seed. Each filled the vitals slot of the ALL-8 bank, and both flagship
+heads were refit at the same seed on CPU, so seed noise hits both arms alike.
+Paired, patient-clustered bootstrap: 300 resamples, shared across all 40 score
+arrays. The seed-42 current arm reproduces the shipped flagship exactly
+(0.3141).
+
+| 10 seeds, test | current TCN | YAIB TCN | YAIB − current, pooled 95% CI | per seed |
+| --- | --- | --- | --- | --- |
+| vitals agent alone, AUPRC | 0.1908 (sd 0.0096) | 0.1871 (sd 0.0066) | −0.0036 [−0.0076, +0.0003] | better 1, worse 4, tied 5 |
+| **flagship, AUPRC** | **0.3086** (sd 0.0057) | **0.3041** (sd 0.0075) | **−0.0045 [−0.0076, −0.0013]** | lower on 9/10; CI-clear worse 2, better 1 |
+| flagship lead at 2%, median | +1.05 h | +0.90 h | | |
+
+The pooled CI averages the per-seed difference inside each bootstrap resample,
+keeping the pairing. A consistent effect smaller than any single seed's
+interval needs that test.
+
+### Reading
+
+1. **On its own, YAIB's TCN is no better.** It ties, at −0.0036 with a CI
+   spanning zero. It is steadier across seeds (sd 0.0066 vs 0.0096), but it
+   reaches the same ranking with about 45× the parameters and twice the
+   receptive field.
+2. **Inside the flagship it is measurably worse.** The flagship loses 0.0045
+   AUPRC (CI clear of zero), is lower on 9 of 10 seeds, and its 2% lead
+   shortens slightly. A vitals agent that ranks about as well alone makes the
+   fused model worse. That fits the fusion being sensitive to what the latent
+   looks like, not only to how well the agent ranks. YAIB's latent is 171 wide
+   and non-negative (its blocks end in ReLU), against the current TCN's 32-wide
+   residual output. That explanation is a hypothesis; this run does not test it.
+3. **The current TCN stays.** Nothing here argues for the swap. The bigger
+   network would also cost the live engine more (branch `live-version`, T24):
+   914k parameters to run on every bedside reading, and a 55-row window per
+   provisional score instead of 29.
+
+**Scope.** One YAIB architecture, tuned less thoroughly than YAIB itself does
+(16 random draws, not 30 Bayesian calls × 5 folds), on Sentinel's inputs. A
+YAIB TCN on YAIB's 52 features would be a different experiment, testing
+inputs as well as the network.
+
 ## Reproduce
 
 ```bash
@@ -2581,4 +2651,9 @@ for S in 42 1 2 3 4 5 6 7 8 9; do
 done
 .venv/bin/python scripts/eicu_seed_ci.py --seeds 42 1 2 3 4 5 6 7 8 9 \
     --pattern "eicu_twohead_rs_s{seed}.npz"
+
+# T26: YAIB's TCN swapped in as the vitals agent, ten paired seeds. Search 19 min,
+# agents 20 min, heads 40 min (two at a time: ~10 GB RAM each), eval 6 min.
+.venv/bin/python scripts/yaib_tcn_swap.py
+.venv/bin/python -m pytest tests/test_yaib_tcn.py
 ```
