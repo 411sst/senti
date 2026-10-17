@@ -1,0 +1,406 @@
+% Sentinel -- arXiv preprint draft.
+% Every number in this file must carry an evidence ID from paper/evidence.md,
+% written as \ev{B1}. Do not quote a number that has no row there.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\ev}[1]{\textcolor{gray}{\scriptsize[#1]}}   % evidence pointer; strip before submission
+
+\title{Sentinel: Latent-Fusion Agents for Early Warning of ICU Deterioration, Validated on 208 External Hospitals}
+\author{\todo{author names and affiliations} \\ PES University}
+\date{\todo{date}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\todo{Write last. Problem; approach (agents pass latents + calibrated risks to two
+attention--TCN heads); main result \ev{B1,B2,B4}; operating-point result \ev{C1,C4};
+external validation \ev{G1,G2}; deployment footprint \ev{I1,I2}; one-line limits.}
+\end{abstract}
+
+% ---------------------------------------------------------------------------
+\section{Introduction}\label{sec:intro}
+% - Clinical problem: deterioration in the ICU, alarm fatigue, NEWS2 as the
+%   bedside standard \todo{cite RCP 2017}.
+% - ML early-warning scores exist (eCART, YAIB, HiRID benchmarks); gradient-
+%   boosted trees on tabular summaries are the bar \cite{churpek2025ecartv5,vandewater2024yaib,yeche2021hirid}.
+% - Multi-agent LLM systems are popular but pass text between agents; for
+%   numeric physiology this is lossy \ev{D1}. CLAIM WORDING DEPENDS ON D2 RE-RUN.
+% - Contributions (bullets): architecture; evaluation protocol (frozen
+%   thresholds, matched alarm budgets, patient-clustered CIs, 10 seeds);
+%   external validation; deployment + explanation measurements; negative results.
+\todo{draft}
+
+% ---------------------------------------------------------------------------
+\section{Related work}\label{sec:related}
+% 2.1 Clinical early-warning scores (NEWS2, eCART) and ML EWS on MIMIC/eICU.
+% 2.2 ICU benchmarks: YAIB, HiRID-ICU-Benchmark, MIMIC-Extract
+%     \cite{vandewater2024yaib,yeche2021hirid,wang2020mimicextract}.
+% 2.3 Same-label prior work: Sadanandan 2026 \cite{sadanandan2026multimodal}.
+% 2.4 Temporal convolutional networks; additive attention; mixture of experts.
+% 2.5 Multi-agent LLM systems in medicine \todo{verify and add citations}.
+\todo{draft}
+
+% ---------------------------------------------------------------------------
+\section{Problem setup}\label{sec:setup}
+
+\subsection{Cohort and outcome}
+We use MIMIC-IV v3.1 \cite{johnson2023mimiciv}, accessed through PhysioNet
+under its credentialed data use agreement. We include every ICU stay of at
+least 12 hours and represent it on an hourly grid that starts at ICU
+admission and is capped at 14 days. At each hour $t$ the target is a
+composite outcome: whether the first of three events occurs in the following
+24 hours \ev{A2}:
+\begin{enumerate}
+  \item onset of invasive mechanical ventilation (including tracheostomy),
+  \item onset of a vasoactive agent (norepinephrine, epinephrine, dopamine,
+        phenylephrine, vasopressin, dobutamine or milrinone), or
+  \item in-hospital death.
+\end{enumerate}
+A stay is censored at its first event; later hours are not prediction
+opportunities. Transfer to the ICU, the usual ward outcome, is undefined for
+patients who are already there.
+
+Without further restriction, 73\% of first events fall within six hours of
+ICU admission \ev{A3}. These are mostly patients who arrive already ventilated
+(for example, from surgery) or who start a vasopressor on arrival: the event
+is the reason for admission, not a deterioration that could have been
+anticipated. We therefore require a stay to be event-free through hour~6 and
+begin scoring there. Measurements from hours 0--5 enter only as
+carried-forward context at hour~6. The resulting cohort has 56{,}157 stays and
+2{,}460{,}983 scored patient-hours \ev{A1}.
+
+\subsection{Splits}
+Patients, not stays, are split 70/15/15 into training, validation and test
+sets with a fixed seed, so no patient contributes hours to more than one set
+\ev{A4}. The test set holds 361{,}229 patient-hours from 8{,}375 stays and
+6{,}335 patients; 4.74\% of its hours are positive \ev{A1}. Validation
+patients are further split in half, again by patient. The first half
+($V_{\text{fit}}$) fits the fusion heads' calibration; the second
+($V_{\text{freeze}}$) sets alarm thresholds and is used for any choice between
+model variants. Using different patients for the two steps keeps a threshold
+from being tuned on scores that were fitted to the same patients.
+Individual agents use the full validation set for early stopping and for their
+own calibration. The test set is scored once per reported configuration.
+
+\subsection{Leakage control}
+Every feature at hour $t$ uses only data recorded strictly before $t$
+\ev{A5}. Each channel is carried forward within a stay and then shifted by one
+hour. Carry-forward is bounded per channel, at roughly twice that channel's
+90th-percentile charting gap: 12 hours for vitals and the Glasgow Coma Scale
+(GCS), 8 hours for oxygen device and flow, and 24 hours for FiO$_2$ and
+laboratory values. Older values are treated as missing. Laboratory results
+are timed by when they became available in the record, not when blood was
+drawn (a median of 70 minutes later). An ECG is used only if it was recorded
+strictly before $t$ and is at most 72 hours old. Within an hour, vitals are
+averaged and GCS takes its worst value. All normalisation statistics come from
+the training set. Unit tests rewrite future inputs and check that earlier
+outputs do not change.
+
+\subsection{Metrics}
+The primary metric is the area under the precision--recall curve (AUPRC),
+computed as average precision,
+\begin{equation}
+  \mathrm{AP} = \sum_{n} (R_n - R_{n-1})\, P_n ,
+\end{equation}
+where $P_n$ and $R_n$ are precision and recall at the $n$-th distinct score
+threshold \ev{A6}. A random ranking scores the positive rate (0.047 on the
+test set). AUROC is reported alongside it for comparison with the
+early-warning literature. Confidence intervals are 95\% nonparametric
+bootstrap intervals that resample patients with replacement (1{,}000
+resamples), so hours from the same patient stay together. Paired differences
+between models are computed on the same resamples.
+
+\paragraph{Alarms and alarm budgets.}
+A model raises an alarm at hour $t$ when its risk reaches a threshold. To
+compare models at equal cost, each is given the same \emph{alarm budget}: the
+share of patient-hours on which it may alarm. Thresholds are set on
+$V_{\text{freeze}}$ and applied unchanged to the test set. For the head-to-head
+comparisons we anchor the budget to NEWS2. Its threshold is the
+$(1-b)$-quantile of NEWS2 on $V_{\text{freeze}}$. Because NEWS2 is
+integer-valued, its achieved volume $b'$ exceeds the nominal $b$: a 2\%
+budget gives a threshold of 11 and $b' = 2.62\%$. Every other model's threshold
+is then the $(1-b')$-quantile of its own $V_{\text{freeze}}$ scores. Realized
+alarm rates on the test set differ slightly between models, and we report them
+\ev{C2}. In the budget sweep (\S\ref{sec:results}), each model's threshold is
+simply its own $(1-b)$-quantile on $V_{\text{freeze}}$.
+
+\paragraph{Patient-level outcomes.}
+A deteriorating stay is \emph{caught} if the model's first alarm falls at or
+before the event, and caught \emph{early} if it falls at least 6 hours before.
+Warning time is the gap between the first alarm and the event. Lead over
+NEWS2 is computed on stays that both models catch, as NEWS2's first-alarm hour
+minus the model's; positive values mean the model alarmed first.
+
+% ---------------------------------------------------------------------------
+\section{Sentinel}\label{sec:method}
+
+\subsection{Agents}
+Sentinel has eight agents, one per kind of data (Table~\ref{tab:agents}). Each
+agent is trained on its own and, every hour, emits two things: a latent vector
+$z_{a,t}$ summarising what it sees, and a calibrated risk $r_{a,t}$ (its raw
+score passed through isotonic regression \todo{cite Zadrozny \& Elkan} fitted
+on validation data). When an agent's data are missing it emits a learned
+``no data'' value rather than an imputed reading. Because every agent shares
+this output format, an agent can be added or removed and only the fusion
+heads need to be retrained.
+
+Six agents are neural networks. Vital signs are the one input that arrives as
+a dense hourly sequence, so the vitals agent is a causal temporal
+convolutional network (TCN) \todo{cite Bai 2018; van den Oord 2016} whose
+penultimate layer is its latent. The other five read inputs that already
+summarise time (the latest value and its age, or counts over 1-, 6- and
+24-hour windows) and change slowly, so each is a two-layer multilayer
+perceptron whose hidden layer is its latent. The remaining two agents are not
+neural. The GBM agent is an XGBoost model \todo{cite Chen \& Guestrin} on 145
+features from vitals and laboratory values, including 6-, 12- and 24-hour
+changes and trailing minima, maxima and means. Trees have no embedding layer,
+so its latent is a single number, the log-odds of its prediction. Its
+training-set scores are produced out-of-fold (two patient-level folds) so that
+the fusion does not learn to trust over-confident in-sample predictions. The
+NEWS2 agent computes the score exactly to the Royal College of Physicians
+bands (SpO$_2$ Scale~1) \todo{cite RCP 2017}, and its latent is the vector of
+seven sub-scores. A missing vital scores zero, and consciousness is assessed
+from GCS (alert if GCS is 15; for intubated patients, eyes~4 and motor~6).
+
+\begin{table}[t]
+\centering
+\small
+\caption{The eight agents. Parameter counts are trained weights
+\ev{I1}.}\label{tab:agents}
+\begin{tabular}{@{}l p{0.52\linewidth} l r@{}}
+\toprule
+Agent & Inputs & Model & Params \\
+\midrule
+Vitals & HR, RR, SpO$_2$, systolic BP, temperature and the age of each; GCS;
+  2 flags; 6 missingness masks (19) & causal TCN & 19{,}681 \\
+ECG & cart machine read: 12 intervals and axes, statement count, 12 validity
+  flags, 26 statement flags; ECG age (52) & MLP & 10{,}996 \\
+Cadence & counts of lab draws, charting, orders by type and cultures over 1, 6,
+  24\,h; 3 acceleration ratios; 2 recency features (32) & MLP & 4{,}225 \\
+Labs & 24 analytes, each with value, age and an ever-measured flag (72) & MLP
+  & 3{,}713 \\
+Fluid & urine output over 1--24\,h, oliguria flags, intake, net and cumulative
+  balance (13) & MLP & 3{,}009 \\
+Resp & oxygen-support level (0--5), airway flag, recent maximum and
+  escalation, O$_2$ flow and FiO$_2$ with 6\,h changes (12) & MLP & 2{,}945 \\
+GBM & 145 vitals and laboratory features with trends & XGBoost & trees \\
+NEWS2 & seven sub-scores & fixed rule & 0 \\
+\midrule
+Fusion & both heads (\S\ref{sec:heads}) & attention + TCN & 52{,}036 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Agent training.}
+The vitals TCN uses 32 channels and three residual blocks (kernel 3,
+dilations 1, 2 and 4), each with two causal convolutions, per-timestep layer
+normalisation, ReLU and dropout 0.1. The MLP agents have 64 hidden units
+(128 for ECG), a 32-dimensional latent and dropout 0.2. All neural agents are
+trained with binary cross-entropy and Adam (learning rate $10^{-3}$), with
+early stopping on validation AUPRC. Continuous inputs are standardised with
+training statistics. The ECG agent sends every hour without a recent ECG the
+same learned vector, so it outputs one constant risk on those hours and cannot
+score well merely by noticing who had an ECG ordered. Its early stopping uses
+only validation hours that have an ECG.
+
+\subsection{Fusion heads}\label{sec:heads}
+Each fusion head reads the agent bank, the eight latents and eight risks at
+every hour (208 numbers), and returns one risk. Each agent's latent is first
+projected to a common width $d = 32$,
+\begin{equation}
+  h_{a,t} = W_a z_{a,t} + b_a .
+\end{equation}
+Additive attention \todo{cite Bahdanau 2015} scores each agent on
+its own and normalises across agents,
+\begin{equation}
+  e_{a,t} = v^{\top} \tanh(h_{a,t}) + c, \qquad
+  \alpha_{a,t} = \frac{\exp(e_{a,t})}{\sum_{a'} \exp(e_{a',t})} .
+\end{equation}
+The weights are recomputed every hour for every patient. Agents are never
+compared with one another, so this is not a Transformer. The weighted sum is
+combined with a projection of the eight calibrated risks, which reach the
+head whatever weight their agent received:
+\begin{equation}
+  u_t = \sum_{a} \alpha_{a,t} h_{a,t} + W_r r_t + b_r .
+\end{equation}
+A causal TCN with the same structure as the vitals agent (three residual
+blocks, kernel $k=3$, dilations $\delta \in \{1, 2, 4\}$) then reads $u_1, \ldots, u_t$.
+Each block adds $2(k-1)\delta$ hours of reach, so the head sees the current hour and
+the 28 before it, a 29-hour receptive field. A linear layer gives the head's
+logit. Heads are trained with binary cross-entropy over observed hours (padding
+masked), Adam with learning rate $10^{-3}$, batches of 64 stays, at most 8
+epochs and early stopping (patience 2) on validation AUPRC of the head's own
+target. Training runs on one CPU thread so that runs are bit-identical. Each
+head has 26{,}018 parameters.
+
+\subsection{Two heads and noisy-OR}
+A single head trained on the composite label must compromise between its
+components: treatment labels carry information about timing, while death
+labels carry most of the information needed to rank death. Sentinel therefore
+trains two heads with identical architecture on the same agent bank. The
+\emph{Treatment head} predicts ventilation or vasopressor onset within 24
+hours; the \emph{Mortality head} predicts death within 24 hours. Each head's
+raw score is calibrated with isotonic regression fitted on $V_{\text{fit}}$.
+A small rank-preserving tie-break removes isotonic plateaus, which would
+otherwise inflate alarm volume at a threshold. The two probabilities are
+combined by noisy-OR,
+\begin{equation}
+  s_t = 1 - \bigl(1 - p^{T}_t\bigr)\bigl(1 - p^{M}_t\bigr),
+\end{equation}
+the probability that either event occurs if the two are independent. The
+combination has no fitted weights \ev{B5}.
+
+\subsection{Explanation layer}
+When an alarm fires, a local language model (gemma4:12b, run through Ollama on
+the same machine) writes one sentence explaining it. It receives the attention
+weight and risk of each agent, the seven NEWS2 sub-scores and four-hour trends
+of five vital signs. It is not given the risk score or told that an alarm
+fired, and its output is never passed back to the model, so removing it leaves
+every score unchanged \ev{J1}.
+
+% ---------------------------------------------------------------------------
+\section{Experimental setup}\label{sec:experiments}
+
+\subsection{Baselines}
+\paragraph{NEWS2.} Computed every hour from carried-forward vitals as above,
+and thresholded with the same protocol as the models.
+
+\paragraph{Equal-information GBM.} To separate the effect of the architecture
+from the effect of data access, we train an XGBoost model on the same
+information the agents read: vitals, laboratory values and their staleness,
+plus 6-, 12- and 24-hour changes and trailing minima, maxima and means (145
+features) \ev{B2}. A small grid over tree depth $\{4, 6, 8\}$ and class
+weighting (none or fully rebalanced) is tuned on validation AUPRC, with
+learning rate 0.05, up to 3{,}000 trees and early stopping after 50 rounds.
+
+\paragraph{Published recipes.} We rebuild three published early-warning
+models and train them on our cohort \ev{B3}. These are rebuilds of each
+paper's feature recipe, not the commercial products.
+\begin{itemize}
+  \item \textbf{eCART-style GBM} \cite{churpek2025ecartv5}: current values,
+        24-hour minima, maxima and changes of vitals, oxygen settings, GCS and
+        laboratory values, plus time of day, age and sex (95 features);
+        XGBoost trained on data down-sampled to 50\% positive hours, as in the
+        paper.
+  \item \textbf{YAIB LightGBM} \cite{vandewater2024yaib}: forward-filled
+        signals with missingness indicators and running minimum, maximum,
+        mean and count over the stay so far, plus age and sex (218 features);
+        LightGBM over YAIB's published search space.
+  \item \textbf{Sadanandan XGBoost} \cite{sadanandan2026multimodal}, the only
+        published model we found with our exact composite label: current
+        values of its vital and laboratory channels plus age and sex.
+\end{itemize}
+Each recipe's departures from the paper are listed in
+Appendix~\ref{app:specs}. The most important are hourly scoring instead of
+eCART's 8-hour survival blocks, and our in-ICU outcome instead of eCART's
+ward outcome. All baselines are tuned on validation data, calibrated on
+$V_{\text{fit}}$ and thresholded on $V_{\text{freeze}}$ exactly as Sentinel is.
+
+\subsection{Seeds and inference}
+Sentinel's headline results are means over ten training seeds of the fusion
+heads (seeds 42 and 1--9), with the agent outputs held fixed. Baselines are
+trained once. Head-to-head operating-point analyses use seed 42 unless stated
+otherwise \ev{K4}. On eICU we additionally re-train every component (agents,
+GBM and heads) under ten further seeds.
+
+\subsection{External validation}
+We evaluate on eICU-CRD v2.0 \todo{cite Pollard 2018}, a multi-centre US
+database of 208 hospitals that are mostly community rather than academic
+centres. The eICU cohort is built by a query that mirrors the MIMIC one and
+reuses the same Python transformations, so the two datasets pass through one
+code path \ev{G1}. Event definitions are mapped as closely as the data allow:
+ventilation onset is the earlier of the recorded ventilator start and the
+first mechanical-ventilation care-plan entry; vasopressor onset comes from
+eICU's derived vasopressor table; and death is timed at ICU or hospital
+discharge. Nothing is fitted on eICU: weights, normalisation statistics,
+calibrators and thresholds all come from MIMIC. eICU has no order-entry data
+from which to build the cadence agent, so the external model is the
+seven-agent version of the two-head flagship, trained on MIMIC without
+cadence. eICU also has no ECG data, so the ECG agent sends its no-data value
+throughout. Because eICU records vitals less often than MIMIC, we report a
+matched-density analysis restricted to hours in which all five vitals were
+measured within the previous two hours, alongside the pooled result.
+Per-hospital results are reported for the 91 hospitals with at least 20{,}000
+scored hours and 50 positive hours.
+
+We also measure the cost of adapting to a new site. For fine-tuning, eICU is
+split by hospital into 129 training, 30 validation and 49 test hospitals, and
+we compare recalibration only, retraining the two heads, and full fine-tuning
+\ev{G7}. For calibration, we refit the final calibration on increasing numbers
+of local patients \ev{G8}.
+
+\subsection{Deployment measurements}
+We time end-to-end scoring of one patient-hour (all agents and both heads,
+with 29 hours of context) on one CPU thread on four laptops spanning three
+operating systems and two processor architectures, with any discrete GPU
+hidden or absent \ev{I2}. We also replay MIMIC test stays reading by reading,
+to compare hourly scoring with scoring each new reading as it arrives
+\ev{H1,H2}.
+
+% ---------------------------------------------------------------------------
+\section{Results}\label{sec:results}
+\subsection{Discrimination}
+% Table 1: AUPRC/AUROC with CIs for all baselines and the flagship
+%   \ev{B1,B2,B3,B4}. Mortality head on death \ev{B5}.
+\subsection{Patients caught at a fixed alarm budget}
+% Figure: catch rate vs budget, 0.5--10\% \ev{C4} (source script must be
+%   committed first). Cost: quiet-stay false alarms \ev{C3}.
+\subsection{How agents should communicate}
+% T20 LLM-text arm \ev{D1}. Same-fuser channel arms \ev{D2} -- PENDING RE-RUN
+%   ON THE FLAGSHIP. This subsection's claim is not final.
+\subsection{Ablations}
+% Agent additions \ev{E1}; ECG variants \ev{E2}; specialists vs one model
+%   \ev{E3}; per-unit thresholds \ev{E4}; YAIB TCN swap \ev{E6}.
+\subsection{Timing}
+% Lead vs NEWS2 \ev{F1}; death-stay analysis \ev{F2,F3}. State the modest size.
+\subsection{External validation and adaptation}
+% eICU zero-shot \ev{G1--G5}; fine-tuning \ev{G7}; calibration repair \ev{G8}.
+\subsection{Real-time scoring}
+% Reading-level replay \ev{H1}; vitals-only real time \ev{H2}.
+\subsection{Deployment footprint and explanations}
+% CPU latency across four machines \ev{I2,I3,I4}; card faithfulness \ev{J1,J2}.
+\todo{draft}
+
+% ---------------------------------------------------------------------------
+\section{Discussion}\label{sec:discussion}
+% What the evidence supports and what it does not; the validation ladder
+% (retrospective single-site, retrospective external, prospective silent,
+% independent replication).
+\subsection{Limitations}
+% \ev{K1--K7}: single development site, retrospective only; cadence reads
+% clinician behaviour; no clinician review of per-modality design yet;
+% single-seed experiments; hour-level metric; untested design choices (E9).
+\todo{draft}
+
+\section{Conclusion}\label{sec:conclusion}
+\todo{draft}
+
+% ---------------------------------------------------------------------------
+\section*{Data and code availability}
+% MIMIC-IV and eICU-CRD under the PhysioNet credentialed-access DUA; no
+% patient-level data released. Code: \todo{repository link and commit}.
+
+\bibliographystyle{plainnat}
+% For arXiv: copy references.bib next to main.tex (or upload main.bbl).
+\bibliography{../docs/references}
+
+\appendix
+\section{Cohort construction details}
+\section{Agent inputs and hyperparameters}
+\section{Per-seed results}
+\section{Published-spec rebuilds: deviations from each paper}\label{app:specs}
+
+\end{document}
