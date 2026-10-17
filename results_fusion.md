@@ -2389,6 +2389,184 @@ It does not survive contact with the data: the **single-head** 7-agent config
 scores ECE 0.0379 on eICU against the **two-head**'s 0.0378 — indistinguishable.
 The over-confidence comes from the transfer, not from the composition rule.
 
+## T26 — Swapping the vitals TCN for YAIB's TCN
+
+Is Sentinel's small vitals TCN the weak link? This swaps it for the TCN from
+YAIB (van de Water et al., ICLR 2024) and measures the change both standalone
+and inside the shipped flagship. Run 2026-10-15, ten seeds.
+
+**What was ported** (`src/agents/yaib_tcn.py`, read from `rvandewater/YAIB` @
+development):
+
+* the `TemporalConvNet` architecture, verbatim: weight-normed causal
+  convolutions with residual blocks and dilations 2^i, its depth computed from
+  `HORIZON = 24`;
+* YAIB's training recipe: class-balanced loss, Adam with weight decay 1e-6,
+  batch 64, up to 50 epochs, early stopping on val loss with patience 10;
+* its search space: lr 1e-6–3e-4, 32–256 channels, kernel 2–128, dropout 0–0.4.
+
+**What was held fixed, so the comparison isolates the network:**
+
+* the inputs: the same 19 vitals channels, not YAIB's 52 features;
+* the other seven agents, unchanged from the shipped caches.
+
+YAIB tunes with 30 Bayesian calls and 5-fold CV. Here a seeded 16-config
+random search over the same space ran on val. The winner was lr 1.15e-4,
+171 channels, kernel 10, dropout 0.12. That gives 2 levels, a **55-hour
+receptive field** and **914k parameters**, against the current TCN's 29 h and
+~20k. It was best both by val AUPRC (0.1963) and by YAIB's own criterion, val
+loss, so the choice of selection rule doesn't matter. One YAIB quirk is kept
+for fidelity: its `init_weights` is a no-op on the weight-normed convolutions.
+Tests confirm the port is causal and that its receptive field is exact.
+
+**Protocol.** For each seed in the T18 set {42, 1, …, 9}, both TCNs were fit
+at that seed. Each filled the vitals slot of the ALL-8 bank, and both flagship
+heads were refit at the same seed on CPU, so seed noise hits both arms alike.
+Paired, patient-clustered bootstrap: 300 resamples, shared across all 40 score
+arrays. The seed-42 current arm reproduces the shipped flagship exactly
+(0.3141).
+
+| 10 seeds, test | current TCN | YAIB TCN | YAIB − current, pooled 95% CI | per seed |
+| --- | --- | --- | --- | --- |
+| vitals agent alone, AUPRC | 0.1908 (sd 0.0096) | 0.1871 (sd 0.0066) | −0.0036 [−0.0076, +0.0003] | better 1, worse 4, tied 5 |
+| **flagship, AUPRC** | **0.3086** (sd 0.0057) | **0.3041** (sd 0.0075) | **−0.0045 [−0.0076, −0.0013]** | lower on 9/10; CI-clear worse 2, better 1 |
+| flagship lead at 2%, median | +1.05 h | +0.90 h | | |
+
+The pooled CI averages the per-seed difference inside each bootstrap resample,
+keeping the pairing. A consistent effect smaller than any single seed's
+interval needs that test.
+
+### Reading
+
+1. **On its own, YAIB's TCN is no better.** It ties, at −0.0036 with a CI
+   spanning zero. It is steadier across seeds (sd 0.0066 vs 0.0096), but it
+   reaches the same ranking with about 45× the parameters and twice the
+   receptive field.
+2. **Inside the flagship it is measurably worse.** The flagship loses 0.0045
+   AUPRC (CI clear of zero), is lower on 9 of 10 seeds, and its 2% lead
+   shortens slightly. A vitals agent that ranks about as well alone makes the
+   fused model worse. That fits the fusion being sensitive to what the latent
+   looks like, not only to how well the agent ranks. YAIB's latent is 171 wide
+   and non-negative (its blocks end in ReLU), against the current TCN's 32-wide
+   residual output. That explanation is a hypothesis; this run does not test it.
+3. **The current TCN stays.** Nothing here argues for the swap. The bigger
+   network would also cost the live engine more (branch `live-version`, T24):
+   914k parameters to run on every bedside reading, and a 55-row window per
+   provisional score instead of 29.
+
+**Scope.** One YAIB architecture, tuned less thoroughly than YAIB itself does
+(16 random draws, not 30 Bayesian calls × 5 folds), on Sentinel's inputs. A
+YAIB TCN on YAIB's 52 features would be a different experiment, testing
+inputs as well as the network.
+
+## T27 — The channel test on the flagship: latents buy earliness, not ranking
+
+The paper's central claim is that agents should hand the fusion latent
+vectors, not text or bare risk scores. `src/channel_arms.py` tested this on the
+August 3-agent orchestrator, but that run has no committed write-up, so none of
+its numbers are used here. T27 re-runs the inexpensive half on the shipped
+two-head ALL-8 flagship and asks one question: does the latent channel add
+anything over the agents' calibrated risks? Run 2026-10-17; trained arms at
+seeds 42, 1 and 2, untrained arms have no seed. Script:
+`scripts/channel_flagship.py`.
+
+| arm | what the fusion receives from each agent |
+| --- | --- |
+| LATENT | the flagship itself: its latent vector, through `two_head.fit_head`, isotonic on V_fit with the rank tiebreak, noisy-OR |
+| RISK-ONLY | the same pipeline, with each agent's latent replaced by its own 1-d calibrated risk. The shared risk pathway is unchanged, so the two arms differ only in the per-agent state channel |
+| MEAN-RISK | nothing trained: the mean of the eight calibrated risks |
+| HARD-VOTE | nothing trained: the count of agents (0–8) whose risk reaches that agent's own 2% quantile on V_freeze |
+
+**Gate.** LATENT at seed 42 reproduces `two_head.npz` `val_s42` and `test_s42`
+element for element (max |Δ| 0), so this is the shipped pipeline exactly.
+Thresholds are frozen on V_freeze through `FusionContext.evaluate_rung`; AUPRC
+CIs come from 1,000 patient-clustered resamples shared by every score.
+
+| score | AUPRC [95% CI] | AUROC | Δ AUPRC vs LATENT [95% CI] | lead vs NEWS2 at 2%: median, win [CI] | test alarm rate at 2% | distinct values |
+| --- | --- | --- | --- | --- | --- | --- |
+| LATENT s42 | 0.3141 [0.2913, 0.3370] | 0.8266 | — | +1.0 h, 57% [52, 61] | 2.79% | 360,801 |
+| LATENT s1 | 0.3069 [0.2839, 0.3298] | 0.8227 | — | +2.0 h, 59% [54, 64] | 2.76% | 360,928 |
+| LATENT s2 | 0.3017 [0.2781, 0.3244] | 0.8171 | — | +1.5 h, 58% [53, 62] | 2.80% | 360,958 |
+| RISK-ONLY s42 | 0.3100 [0.2879, 0.3336] | 0.8198 | −0.0041 [−0.0108, +0.0028] | +0.0 h, 48% [43, 53] | 2.60% | 359,930 |
+| RISK-ONLY s1 | 0.3055 [0.2842, 0.3287] | 0.8162 | −0.0014 [−0.0090, +0.0062] | +0.0 h, 47% [42, 52] | 2.57% | 359,855 |
+| RISK-ONLY s2 | 0.2975 [0.2750, 0.3212] | 0.8155 | −0.0042 [−0.0123, +0.0034] | +0.0 h, 42% [37, 47] | 2.53% | 359,123 |
+| MEAN-RISK | 0.3076 [0.2859, 0.3306] | 0.8208 | +0.0001 [−0.0078, +0.0075] vs LATENT mean | +0.0 h, 48% [43, 52] | 2.63% | 360,386 |
+| HARD-VOTE | 0.1897 [0.1736, 0.2074] | 0.7076 | −0.118 [−0.131, −0.105] vs LATENT mean | +0.0 h, 48% [44, 53] | 3.89% | 9 |
+
+Means over the three seeds: LATENT AUPRC 0.3075, AUROC 0.8221; RISK-ONLY
+0.3043, 0.8172. Pooled over seeds (the seed-averaged difference inside each
+shared resample), **RISK-ONLY − LATENT = −0.0032 [−0.0099, +0.0033]**. NEWS2's
+own test alarm rate at the 2% budget is 2.28%.
+
+Lead vs NEWS2 across budgets (median first-alarm lead on jointly caught stays,
+then the share of those stays where the arm fires first):
+
+| arm | 1% | 2% | 5% |
+| --- | --- | --- | --- |
+| LATENT, 3 seeds | +0.0 h · 42–49% | **+1.0 to +2.0 h · 57–59%** | +1.0 h · 51–55% |
+| RISK-ONLY, 3 seeds | +0.0 h · 38–39% | +0.0 h · 42–48% | +1.0 h · 53–57% |
+| MEAN-RISK | +0.0 h · 41% | +0.0 h · 48% | +0.0 h · 50% |
+| HARD-VOTE | +0.0 h · 46% (1.44% alarm rate) | +0.0 h · 48% (3.89%) | +2.0 h · 63% (14.36%) |
+
+### Head to head: LATENT against RISK-ONLY
+
+The NEWS2 races leave a confound: at the same val-matched threshold LATENT
+fires a little more on test (2.76–2.80% vs 2.53–2.60%), so some of its lead
+could be extra alarms. Racing the two arms directly settles it. Each arm is
+thresholded at the same quantile of its own test scores, so both fire on
+exactly the same share of test hours. Test labels are never read, but test
+scores set the thresholds, so this is a diagnostic for the volume confound
+and not a protocol. Same seed for both arms; jointly caught stays only; the
+CI on "LATENT first" is patient-clustered (1,000 resamples), while the sign
+test on the discordant stays ignores clustering and is kept for continuity
+with the earlier tables.
+
+| seed | budget | jointly caught | LATENT first | RISK-ONLY first | sign test p | caught only by LATENT / only by RISK-ONLY |
+| --- | --- | --- | --- | --- | --- | --- |
+| 42 | 1% | 591 | 13% [10, 15] | 12% | 0.9 | 95 / 55 |
+| 42 | 2% | 814 | 14% [11, 16] | 12% | 0.4 | 51 / 68 |
+| 42 | 5% | 1082 | 11% [9, 12] | 5% | <0.001 | 82 / 19 |
+| 1 | 1% | 611 | 14% [12, 17] | 8% | <0.001 | 99 / 36 |
+| 1 | 2% | 804 | 17% [14, 19] | 7% | <0.001 | 114 / 23 |
+| 1 | 5% | 1106 | 9% [7, 11] | 4% | <0.001 | 68 / 18 |
+| 2 | 1% | 524 | 19% [15, 22] | 12% | 0.007 | 127 / 51 |
+| 2 | 2% | 755 | 23% [20, 25] | 6% | <0.001 | 128 / 27 |
+| 2 | 5% | 1100 | 11% [9, 12] | 6% | <0.001 | 61 / 53 |
+
+On most jointly caught stays the two arms alarm in the same hour, so the
+median difference is 0 h in every cell. Where they differ, **LATENT fires
+first more often in all 9 cells, significantly in 7 of 9** (the exceptions
+are seed 42 at 1% and 2%), and **it catches more stays that RISK-ONLY misses
+in 8 of 9**. Thresholding each arm on its own V_freeze scores instead (the
+deployable rule) points the same way in 8 of 9 cells. So the timing
+advantage is not an artefact of alarm volume. It is real but uneven: strong at
+seeds 1 and 2, marginal at seed 42.
+
+### Reading
+
+1. **On ranking, the latent channel adds nothing measurable.** RISK-ONLY ties
+   LATENT at every seed and pooled. An untrained mean of the eight calibrated
+   risks matches the flagship's mean AUPRC (0.3076 vs 0.3075). The flagship's
+   ranking comes from its eight agents and their calibration, not from what
+   they pass beyond a risk.
+2. **On timing, it does.** At the 2% budget LATENT fires before NEWS2 by a
+   median 1–2 h on 57–59% of jointly caught stays, every win-rate interval
+   clear of 50%. RISK-ONLY and MEAN-RISK lose the lead entirely (+0.0 h,
+   42–48%; at seed 2 NEWS2 is ahead). At 1% no arm leads, and at 5% the arms
+   converge. Head to head at equal alarm volume, LATENT also fires first and
+   catches more of the stays the other arm misses, though the margin varies
+   with the seed.
+3. **HARD-VOTE is not a usable alarm.** It has nine possible scores, so its
+   frozen thresholds overshoot: 3.89% of test hours at a 2% budget and 14.36%
+   at 5%. Its 5% lead is bought with three times NEWS2's alarm volume.
+
+### Caveats
+
+* Three seeds, with the agent bank fixed at the shipped caches, as in T9/T18.
+* The text arm (ClinicalBERT sentences through the same fusion) is not re-run
+  here. Since risk scores alone tie latents on ranking, that arm is now the
+  deciding test of "latent vs text" on the flagship.
+
 ## Reproduce
 
 ```bash
@@ -2581,4 +2759,15 @@ for S in 42 1 2 3 4 5 6 7 8 9; do
 done
 .venv/bin/python scripts/eicu_seed_ci.py --seeds 42 1 2 3 4 5 6 7 8 9 \
     --pattern "eicu_twohead_rs_s{seed}.npz"
+
+# T26: YAIB's TCN swapped in as the vitals agent, ten paired seeds. Search 19 min,
+# agents 20 min, heads 40 min (two at a time: ~10 GB RAM each), eval 6 min.
+.venv/bin/python scripts/yaib_tcn_swap.py
+.venv/bin/python -m pytest tests/test_yaib_tcn.py
+
+# T27: the channel test on the flagship. LATENT s42 must equal two_head.npz
+# element for element or the run stops. ~15 min (3 head fits at a time),
+# including the direct LATENT vs RISK-ONLY race; --race-only reruns just
+# the race from the cached scores.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/channel_flagship.py
 ```
