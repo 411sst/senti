@@ -2567,6 +2567,109 @@ seeds 1 and 2, marginal at seed 42.
   here. Since risk scores alone tie latents on ranking, that arm is now the
   deciding test of "latent vs text" on the flagship.
 
+## T28 — Operating points for the paper: the budget sweep at ten seeds, and every race at equal alarm volume
+
+Two numbers the paper needs had no committed write-up. The catch-rate sweep
+across alarm budgets existed only for seed 42 and two comparators (demo bundle).
+And every lead-vs-NEWS2 race so far compares unequal realized volumes: at a 2%
+budget NEWS2 fires on 2.28% of test hours, while the flagship, frozen on V_freeze
+at NEWS2's matched volume, fires on ~2.76%. T28 runs both from the cached scores
+(`two_head.npz`, ten seeds; `lit_gbm_scores.npz`). No training, ~20 s on a
+laptop CPU. Script: `scripts/paper_operating_points.py`.
+
+**Gate.** At seed 42 and the 2.617% matched volume the script reproduces the
+demo bundle's head-to-head catch rates exactly (Sentinel 0.6545, eCART-style
+0.5357, YAIB 0.5182), and the sweep endpoints at 0.5% and 10% (0.3468, 0.8682).
+
+### Budget sweep: the flagship catches more at every budget
+
+Each model is thresholded at its own (1 − b) quantile on V_freeze; realized test
+alarm rates in brackets. "Caught" means the first alarm falls at or before the
+event.
+
+| budget | Sentinel catch, 10-seed mean [min, max] | realized alarm | eCART-style | YAIB | Sadanandan | lead over best |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.5% | 34.4% [33.4%, 36.6%] | 0.63% | 26.8% (0.56%) | 26.8% (0.52%) | 28.8% (0.49%) | +5.6 pts |
+| 1.0% | 46.0% [45.1%, 48.0%] | 1.13% | 35.8% (1.03%) | 35.5% (0.99%) | 38.1% (0.98%) | +8.0 pts |
+| 2.0% | 58.6% [56.0%, 61.4%] | 2.14% | 47.7% (1.96%) | 46.7% (1.84%) | 50.3% (2.06%) | +8.4 pts |
+| 3.0% | 66.3% [61.2%, 68.8%] | 3.13% | 55.8% (2.90%) | 54.5% (2.84%) | 56.9% (3.02%) | +9.4 pts |
+| 5.0% | 74.6% [70.5%, 77.1%] | 5.16% | 65.1% (4.71%) | 64.5% (4.85%) | 66.5% (5.08%) | +8.1 pts |
+| 7.5% | 82.0% [78.8%, 83.8%] | 7.68% | 73.6% (7.16%) | 71.6% (7.40%) | 73.2% (7.69%) | +8.4 pts |
+| 10.0% | 86.5% [83.4%, 88.7%] | 10.20% | 79.7% (10.00%) | 77.2% (10.06%) | 77.3% (10.28%) | +6.8 pts |
+
+Two checks on that lead. **Volume:** the flagship's realized alarm rate is a
+little above the comparators' at every budget, but its 2% row (2.14% of hours,
+58.6% caught) still beats the best comparator's 3% row (Sadanandan, 3.02%,
+56.9%). **First-hour flags:** many catches are stays flagged at the first scored
+hour. Ignoring every first-hour alarm and counting only alarms after it:
+
+| budget | Sentinel, caught after the first scored hour | eCART-style | YAIB | Sadanandan |
+| --- | --- | --- | --- | --- |
+| 0.5% | 28.4% [27.1%, 30.1%] | 23.0% | 22.9% | 25.6% |
+| 1.0% | 40.0% [38.3%, 41.0%] | 32.2% | 31.7% | 35.4% |
+| 2.0% | 53.3% [51.4%, 55.3%] | 43.8% | 42.7% | 48.1% |
+| 3.0% | 60.9% [58.0%, 62.9%] | 52.4% | 51.4% | 54.7% |
+| 5.0% | 69.2% [65.9%, 71.5%] | 61.6% | 61.2% | 64.8% |
+| 7.5% | 77.2% [75.4%, 78.6%] | 70.5% | 68.9% | 72.0% |
+| 10.0% | 82.6% [79.9%, 84.1%] | 76.7% | 75.1% | 76.3% |
+
+The lead holds at every budget. (A cruder "mid-stay" count, first alarm strictly
+after the first hour, is not used: it penalises a model for every stay it
+already flagged at hour 6.) Note that on catches the strongest comparator at
+budgets up to 5% is Sadanandan's recipe, the weakest of the three on AUPRC.
+
+### Lead over NEWS2 at equal alarm volume
+
+"Volume matched" re-sets the flagship's threshold to fire on exactly NEWS2's
+realized test volume. Test labels are never read, but test scores set that
+threshold, so like T27's head-to-head this is a diagnostic for the volume
+confound, not a deployable protocol. Paired first alarms on jointly caught
+stays; the sign test on discordant stays ignores clustering, as in earlier tables.
+
+| budget | thresholds | NEWS2 alarm | Sentinel alarm | jointly caught (mean) | median lead, mean of seeds (range) | Sentinel first when they differ, mean [min, max] | sign test p<0.05 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1% | protocol | 1.03% | 1.36% | 262 | +0.10 h (+0.0 to +1.0) | 55% [51%, 60%] | 4/10 |
+| 1% | volume matched | 1.03% | 1.03% | 231 | +0.00 h (+0.0 to +0.0) | 51% [45%, 57%] | 0/10 |
+| 2% | protocol | 2.28% | 2.76% | 422 | +0.95 h (+0.0 to +2.0) | 69% [59%, 75%] | 10/10 |
+| 2% | volume matched | 2.28% | 2.28% | 400 | +0.50 h (+0.0 to +1.0) | 62% [54%, 69%] | 9/10 |
+| 5% | protocol | 4.71% | 5.21% | 586 | +0.80 h (+0.0 to +1.0) | 73% [67%, 77%] | 10/10 |
+| 5% | volume matched | 4.71% | 4.71% | 573 | +0.70 h (+0.0 to +1.0) | 71% [65%, 76%] | 10/10 |
+
+### First alarms against the published comparators, at equal volume
+
+At the 2% NEWS2-matched volume (V_freeze), then with the flagship re-set to each
+comparator's realized test volume:
+
+| comparator | thresholds | comparator alarm | Sentinel alarm | jointly caught (mean) | median lead, mean of seeds | Sentinel first when they differ, mean [min, max] | sign test p<0.05 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| eCART-style | protocol | 2.56% | 2.76% | 760 | +0.00 h | 70% [56%, 79%] | 10/10 |
+| eCART-style | volume matched | 2.56% | 2.56% | 754 | +0.00 h | 67% [53%, 76%] | 9/10 |
+| YAIB | protocol | 2.43% | 2.76% | 740 | +0.00 h | 66% [53%, 74%] | 9/10 |
+| YAIB | volume matched | 2.43% | 2.43% | 728 | +0.00 h | 59% [46%, 68%] | 8/10 |
+| Sadanandan | protocol | 2.66% | 2.76% | 745 | +0.00 h | 69% [58%, 73%] | 10/10 |
+| Sadanandan | volume matched | 2.66% | 2.66% | 743 | +0.00 h | 68% [58%, 73%] | 10/10 |
+
+### Reading
+
+1. **The catch-rate advantage is robust.** +5.6 to +9.4 points over the best
+   comparator at every budget from 0.5% to 10%, over ten seeds, and it survives
+   both the volume check and ignoring first-hour flags.
+2. **The lead over NEWS2 is partly alarm volume.** At equal volume it roughly
+   halves at 2% (median +0.95 h → +0.5 h; first-when-differ 69% → 62%) but stays
+   in Sentinel's favour in 9 of 10 seeds. At 5% it barely moves. At 1% there is
+   no lead either way. Any lead-vs-NEWS2 number must be quoted with its volume.
+3. **Against the comparators, first alarms are mostly simultaneous** (median 0 h).
+   Where they differ, Sentinel is first about two times in three against
+   eCART-style and Sadanandan at equal volume; against YAIB the margin is smaller
+   (59%) and not significant in 2 of 10 seeds.
+
+### Caveats
+
+* Comparators are single fits; only the flagship varies by seed.
+* The volume-matched rows use test-score quantiles (diagnostic, as in T27).
+* The sign test ignores patient clustering; per-seed patient-clustered CIs for
+  the race medians and win rates are in `data/cache/paper_operating_points.json`.
+
 ## Reproduce
 
 ```bash
@@ -2770,4 +2873,8 @@ done
 # including the direct LATENT vs RISK-ONLY race; --race-only reruns just
 # the race from the cached scores.
 OMP_NUM_THREADS=1 .venv/bin/python scripts/channel_flagship.py
+
+# T28: operating points for the paper (sweep at ten seeds; equal-volume races).
+# Reads two_head.npz + lit_gbm_scores.npz only; ~20 s on a laptop CPU.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/paper_operating_points.py
 ```
