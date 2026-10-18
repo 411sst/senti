@@ -33,11 +33,12 @@ external validation \ev{G1,G2}; deployment footprint \ev{I1,I2}; one-line limits
 % ---------------------------------------------------------------------------
 \section{Introduction}\label{sec:intro}
 % - Clinical problem: deterioration in the ICU, alarm fatigue, NEWS2 as the
-%   bedside standard \todo{cite RCP 2017}.
+%   bedside standard \cite{rcp2017news2}.
 % - ML early-warning scores exist (eCART, YAIB, HiRID benchmarks); gradient-
 %   boosted trees on tabular summaries are the bar \cite{churpek2025ecartv5,vandewater2024yaib,yeche2021hirid}.
 % - Multi-agent LLM systems are popular but pass text between agents; for
-%   numeric physiology this is lossy \ev{D1}. CLAIM WORDING DEPENDS ON D2 RE-RUN.
+%   numeric physiology this is lossy \ev{D1}. On the flagship, per-agent
+%   calibrated risks carry the ranking and latents carry the earliness \ev{D2,D3}.
 % - Contributions (bullets): architecture; evaluation protocol (frozen
 %   thresholds, matched alarm budgets, patient-clustered CIs, 10 seeds);
 %   external validation; deployment + explanation measurements; negative results.
@@ -151,7 +152,7 @@ minus the model's; positive values mean the model alarmed first.
 Sentinel has eight agents, one per kind of data (Table~\ref{tab:agents}). Each
 agent is trained on its own and, every hour, emits two things: a latent vector
 $z_{a,t}$ summarising what it sees, and a calibrated risk $r_{a,t}$ (its raw
-score passed through isotonic regression \todo{cite Zadrozny \& Elkan} fitted
+score passed through isotonic regression \cite{zadrozny2002calibration} fitted
 on validation data). When an agent's data are missing it emits a learned
 ``no data'' value rather than an imputed reading. Because every agent shares
 this output format, an agent can be added or removed and only the fusion
@@ -159,19 +160,19 @@ heads need to be retrained.
 
 Six agents are neural networks. Vital signs are the one input that arrives as
 a dense hourly sequence, so the vitals agent is a causal temporal
-convolutional network (TCN) \todo{cite Bai 2018; van den Oord 2016} whose
+convolutional network (TCN) \cite{bai2018tcn,oord2016wavenet} whose
 penultimate layer is its latent. The other five read inputs that already
 summarise time (the latest value and its age, or counts over 1-, 6- and
 24-hour windows) and change slowly, so each is a two-layer multilayer
 perceptron whose hidden layer is its latent. The remaining two agents are not
-neural. The GBM agent is an XGBoost model \todo{cite Chen \& Guestrin} on 145
+neural. The GBM agent is an XGBoost model \cite{chen2016xgboost} on 145
 features from vitals and laboratory values, including 6-, 12- and 24-hour
 changes and trailing minima, maxima and means. Trees have no embedding layer,
 so its latent is a single number, the log-odds of its prediction. Its
 training-set scores are produced out-of-fold (two patient-level folds) so that
 the fusion does not learn to trust over-confident in-sample predictions. The
 NEWS2 agent computes the score exactly to the Royal College of Physicians
-bands (SpO$_2$ Scale~1) \todo{cite RCP 2017}, and its latent is the vector of
+bands (SpO$_2$ Scale~1) \cite{rcp2017news2}, and its latent is the vector of
 seven sub-scores. A missing vital scores zero, and consciousness is assessed
 from GCS (alert if GCS is 15; for intubated patients, eyes~4 and motor~6).
 
@@ -223,7 +224,7 @@ projected to a common width $d = 32$,
 \begin{equation}
   h_{a,t} = W_a z_{a,t} + b_a .
 \end{equation}
-Additive attention \todo{cite Bahdanau 2015} scores each agent on
+Additive attention \cite{bahdanau2015attention} scores each agent on
 its own and normalises across agents,
 \begin{equation}
   e_{a,t} = v^{\top} \tanh(h_{a,t}) + c, \qquad
@@ -317,7 +318,7 @@ otherwise \ev{K4}. On eICU we additionally re-train every component (agents,
 GBM and heads) under ten further seeds.
 
 \subsection{External validation}
-We evaluate on eICU-CRD v2.0 \todo{cite Pollard 2018}, a multi-centre US
+We evaluate on eICU-CRD v2.0 \cite{pollard2018eicu}, a multi-centre US
 database of 208 hospitals that are mostly community rather than academic
 centres. The eICU cohort is built by a query that mirrors the MIMIC one and
 reuses the same Python transformations, so the two datasets pass through one
@@ -352,38 +353,330 @@ to compare hourly scoring with scoring each new reading as it arrives
 
 % ---------------------------------------------------------------------------
 \section{Results}\label{sec:results}
+
 \subsection{Discrimination}
-% Table 1: AUPRC/AUROC with CIs for all baselines and the flagship
-%   \ev{B1,B2,B3,B4}. Mortality head on death \ev{B5}.
+Table~\ref{tab:discrimination} reports test discrimination. Sentinel reaches an
+AUPRC of 0.309 (mean of ten seeds; 95\% CI 0.291--0.337) and an AUROC of 0.823
+\ev{B1}, against 0.114 for NEWS2 and 0.047 for random ranking. The
+equal-information GBM reaches 0.287 and the three published recipes 0.239--0.281
+\ev{B2,B3}. The two strongest recipes, eCART-style and YAIB, are statistically
+tied with our GBM, which suggests the GBM is a fair representative of the current
+bar. Sentinel's paired advantage over the GBM is clear of zero in all ten seeds,
+and over the eCART-style recipe it is $+0.0287$ AUPRC (95\% CI $+0.0252$ to
+$+0.0323$), again clear in ten of ten seeds \ev{B2,B4}. Scored on death alone,
+the Mortality head reaches an AUPRC of 0.340 and an AUROC of 0.946, against 0.189
+for the GBM \ev{B5}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Discrimination on the MIMIC-IV test set (361{,}229 patient-hours, 4.74\%
+positive). 95\% CIs from 1{,}000 patient-clustered bootstrap resamples.
+Published recipes are our rebuilds, trained on our cohort.}\label{tab:discrimination}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Model & AUPRC & 95\% CI & AUROC \\
+\midrule
+NEWS2 & 0.114 & 0.102--0.128 & 0.683 \\
+Sadanandan XGBoost (recipe) & 0.239 & 0.220--0.261 & 0.766 \\
+eCART-style GBM (recipe) & 0.280 & 0.257--0.304 & 0.814 \\
+YAIB LightGBM (recipe) & 0.281 & 0.258--0.306 & 0.808 \\
+Equal-information GBM & 0.287 & 0.264--0.311 & 0.807 \\
+\textbf{Sentinel} (10-seed mean) & \textbf{0.309} & 0.291--0.337 & \textbf{0.823} \\
+\midrule
+Mortality head, scored on death only & 0.340 & 0.288--0.415 & 0.946 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Patients caught at a fixed alarm budget}
-% Figure: catch rate vs budget, 0.5--10\% \ev{C4} (source script must be
-%   committed first). Cost: quiet-stay false alarms \ev{C3}.
+Table~\ref{tab:sweep} reports, for each alarm budget, the share of the 1{,}540
+deteriorating test stays that each model catches \ev{C4}. Sentinel catches more
+at every budget from 0.5\% to 10\% of patient-hours, by 5.6 to 9.4 percentage
+points over the strongest comparator at that budget (ten-seed means). At budgets
+up to 5\% the strongest comparator on this measure is the Sadanandan recipe,
+even though it ranks lowest of the three on AUPRC. Two checks guard against an
+inflated lead. First, realized test alarm rates are close but not identical, and
+Sentinel's is slightly higher at every budget. Even so, Sentinel at a 2\% budget
+(2.14\% of hours, 58.6\% caught) outperforms the best comparator at a 3\% budget
+(3.02\%, 56.9\%). Second, many catches come from stays flagged at the first
+scored hour. Ignoring every first-hour alarm, Sentinel still catches more at
+every budget: 53.3\% against 48.1\% for the best comparator at 2\% \ev{C7}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Share of deteriorating stays caught before the event, by alarm budget.
+Thresholds are each model's own $(1-b)$-quantile on $V_{\text{freeze}}$.
+Sentinel: mean over ten seeds [range]. ``After hour~6'' ignores alarms at the
+first scored hour.}\label{tab:sweep}
+\begin{tabular}{@{}rccccc@{}}
+\toprule
+& \multicolumn{2}{c}{Caught} & & \multicolumn{2}{c}{Caught after hour 6} \\
+\cmidrule{2-3}\cmidrule{5-6}
+Budget & Sentinel & Best comparator & & Sentinel & Best comparator \\
+\midrule
+0.5\% & 34.4\% [33.4, 36.6] & 28.8\% (Sad.) & & 28.4\% & 25.6\% (Sad.) \\
+1\%   & 46.0\% [45.1, 48.0] & 38.1\% (Sad.) & & 40.0\% & 35.4\% (Sad.) \\
+2\%   & 58.6\% [56.0, 61.4] & 50.3\% (Sad.) & & 53.3\% & 48.1\% (Sad.) \\
+3\%   & 66.3\% [61.2, 68.8] & 56.9\% (Sad.) & & 60.9\% & 54.7\% (Sad.) \\
+5\%   & 74.6\% [70.5, 77.1] & 66.5\% (Sad.) & & 69.2\% & 64.8\% (Sad.) \\
+7.5\% & 82.0\% [78.8, 83.8] & 73.6\% (eCART) & & 77.2\% & 72.0\% (Sad.) \\
+10\%  & 86.5\% [83.4, 88.7] & 79.7\% (eCART) & & 82.6\% & 76.7\% (eCART) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The cost of these extra catches is that Sentinel spreads its alarms over more
+patients. At the NEWS2-matched 2.62\% volume (seed~42), 11.8\% of stays that
+never deteriorate receive at least one Sentinel alarm, against 6.8\% for the
+eCART-style recipe and 6.2\% for YAIB. Of the stays Sentinel alarms on, 55.5\%
+deteriorate, against 63.9\% and 65.5\% \ev{C3}.
+
 \subsection{How agents should communicate}
-% T20 LLM-text arm \ev{D1}. Same-fuser channel arms \ev{D2} -- PENDING RE-RUN
-%   ON THE FLAGSHIP. This subsection's claim is not final.
+We compare four ways for the agents to reach the fusion, holding the agents,
+the fusion architecture, the training protocol and the calibration fixed
+(Table~\ref{tab:channel}) \ev{D2,D3}. On ranking, passing each agent's latent
+vector adds nothing measurable over passing its calibrated risk alone: the
+pooled difference is $-0.0032$ AUPRC (95\% CI $-0.0099$ to $+0.0033$). An
+untrained average of the eight calibrated risks matches the trained flagship
+exactly (0.3076 against 0.3075). The ranking gain over single models therefore
+comes from decomposing the data into calibrated per-modality agents, not from
+the latent channel. On timing, the latent channel is what matters. At the frozen thresholds, with
+latents, Sentinel's first alarm precedes NEWS2's by a median of 1 to 2 hours, on 57--59\%
+of jointly caught stays. With risks only, or their mean, the lead disappears
+(median 0~h, 42--48\%). Raced directly against the risk-only version at equal
+alarm volume, the latent version fires first more often in all nine
+seed--budget cells (significantly in seven) and catches more of the stays the
+other misses in eight \ev{D3}. Majority voting is unusable as an alarm: with nine
+possible scores its thresholds overshoot the budget (3.89\% of hours at a
+nominal 2\%).
+
+Text is a poor channel when a language model does the fusing. On a 150-stay
+subset with the original three agents, a local Llama-3.1-8B reading templated
+agent sentences reaches an AUPRC of 0.090 after calibration, against 0.244 for
+latent fusion on the same rows; on death it reaches 0.025 against 0.193
+\ev{D1}. A text channel encoded by a clinical language model and fed to the same
+trained fusion was not run on the flagship \ev{D4}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{What the agents pass to the fusion. Two-head eight-agent flagship;
+trained arms are three-seed means. Lead is the median first-alarm lead over
+NEWS2 at a 2\% budget on jointly caught stays.}\label{tab:channel}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Channel & AUPRC & Lead vs NEWS2 & Sentinel first \\
+\midrule
+Latent vector + risk (flagship) & 0.3075 & +1.0 to +2.0\,h & 57--59\% \\
+Calibrated risk only & 0.3043 & +0.0\,h & 42--48\% \\
+Mean of the eight risks (untrained) & 0.3076 & +0.0\,h & 48\% \\
+Majority vote (untrained) & 0.1897 & +0.0\,h & 48\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Ablations}
-% Agent additions \ev{E1}; ECG variants \ev{E2}; specialists vs one model
-%   \ev{E3}; per-unit thresholds \ev{E4}; YAIB TCN swap \ev{E6}.
+Each added agent was kept only if it improved the fusion. Adding cadence and
+fluid to the earlier agents gives an AUPRC of 0.282; adding the respiratory
+agent gives 0.306; and the two-head design gives 0.309 \ev{E1}. For the ECG, the
+cart's machine-read measurements were the only representation that helped
+($+0.0049$ AUPRC, positive in three of three seeds). Six waveform models,
+including two large pretrained ECG foundation models, did not, and the largest
+of them harmed the fusion ($-0.0385$) \ev{E2}. Replacing the vitals TCN with the
+TCN from the YAIB benchmark (914k parameters and a 55-hour receptive field,
+against 19{,}681 parameters and 29 hours) left the agent's own AUPRC unchanged
+($-0.0036$, CI spanning zero) and lowered the flagship's ($-0.0045$, 95\% CI
+$-0.0076$ to $-0.0013$; lower in nine of ten seeds) \ev{E6}.
+
+A clinician suggested separate models for different ICU types. Specialist
+models for cardiac, neurological and respiratory ICUs, retrained on each
+type's stays, never beat the single model: all 18 specialist results across
+three seeds and two designs fell below it, nine with intervals clear of zero
+\ev{E3}. Keeping one model but setting the alarm threshold per ICU type reduced
+the spread in alarm burden across unit types from 5.3-fold to 1.7-fold \ev{E4}.
+
 \subsection{Timing}
-% Lead vs NEWS2 \ev{F1}; death-stay analysis \ev{F2,F3}. State the modest size.
+At a 2\% budget with thresholds frozen on $V_{\text{freeze}}$, Sentinel's median
+lead over NEWS2 is $+0.95$ hours (95\% CI $+0.52$ to $+1.38$ across seeds),
+positive in eight of ten seeds, and it alarms first in 68.5\% of jointly caught
+stays where the two first alarms differ \ev{F1}. About 70\% of leads of 12 hours
+or more are stays flagged at the first scored hour. These races compare unequal
+alarm volumes, because NEWS2 fires on 2.28\% of test hours and Sentinel on about
+2.76\% \ev{C2,C8}. With Sentinel re-thresholded to NEWS2's exact test volume, the
+lead roughly halves at 2\% (median $+0.5$\,h; first in 62\% of discordant stays)
+but remains in Sentinel's favour in nine of ten seeds. At 5\% it barely changes
+(71\%, ten of ten), and at 1\% there is no lead either way \ev{C8}. Against the
+published recipes, first alarms are usually simultaneous (median 0\,h); where
+they differ at equal volume, Sentinel is first in 67\% of cases against
+eCART-style, 68\% against Sadanandan and 59\% against YAIB \ev{C6}.
+
+The death-stay analysis limits the claim further. On death stays where no
+care-limitation decision is recorded in the chart or the discharge notes, the
+lead over NEWS2 is $+0.5$\,h at a 50\% win rate, which is no lead \ev{F2}. A model
+trained only on treatment labels nevertheless warns 3--4 hours early on stays
+where death came first, so the lead is not purely anticipation of treatment
+orders \ev{F3}.
+
 \subsection{External validation and adaptation}
-% eICU zero-shot \ev{G1--G5}; fine-tuning \ev{G7}; calibration repair \ev{G8}.
+The eICU-CRD cohort spans 208 hospitals, 133{,}229 stays and 5{,}965{,}716
+patient-hours, 3.38\% of them positive, and nothing was refitted on it \ev{G1}. On hours with
+all five vitals measured in the previous two hours, Sentinel reaches an AUPRC of
+0.153 (ten-seed mean) against 0.139 for YAIB, 0.139 for eCART-style and 0.133 for
+Sadanandan. All 30 seed--comparator intervals are clear of zero, and again 30 of
+30 when every component is retrained under new seeds \ev{G2}. Over all hours,
+including sparsely charted ones, Sentinel ties the two strongest recipes and
+beats Sadanandan \ev{G3}. NEWS2, which has no learned parameters, keeps its lift
+over random (2.41 on MIMIC, 2.46 on eICU) \ev{G4}. This suggests that the learned
+models' lower eICU scores come from sparser charting rather than from label or
+cohort errors. Across the 91 hospitals with enough data, Sentinel's
+per-hospital AUROC has a median of 0.759 (10th--90th percentile 0.689--0.842)
+\ev{G5}.
+
+Ranking transfers, but calibration does not: expected calibration error rises
+from 0.0020 on MIMIC to 0.0381 on eICU \ev{G8}. A label-free correction for the
+local event rate halves it (0.0202), recalibration on 500 local patients brings
+it to 0.0059, and 5{,}000 patients to 0.0017. Fine-tuning on eICU, split by
+hospital, raises the AUPRC on 49 held-out hospitals from 0.129 to 0.189 (+46\%).
+Retraining only the two heads recovers about three quarters of that gain. The
+fine-tuned model is worse on MIMIC (0.305 to 0.271), so each site needs its own
+copy \ev{G7}.
+
 \subsection{Real-time scoring}
-% Reading-level replay \ev{H1}; vitals-only real time \ev{H2}.
+Rebuilding the pipeline at the level of individual readings reproduces all
+2{,}460{,}983 hourly rows exactly \ev{H1}. Re-scoring on each new vital-sign
+reading moves Sentinel's first alarm 30 minutes earlier on average (95\% CI
+12--55), with a median gain of zero, at the cost of 28\% more alarm onsets. About
+80\% of first alarms that still arrive late are waiting on an agent that updates
+hourly. When vitals reach the record only after nurse validation, rather than
+directly from the monitor, the AUPRC falls from 0.314 to 0.292. The vitals TCN
+alone ranks far worse than the flagship (0.188 against 0.314). Run in real time,
+it alarms on 25.7\% of stays that never deteriorate, against 10.8\% for the
+hourly flagship. Held to the flagship's false-alarm rate, a hybrid that uses the
+TCN between hours catches 55.5\% of deteriorating stays against 64.6\%, and
+alarms about four hours later \ev{H2}.
+
 \subsection{Deployment footprint and explanations}
-% CPU latency across four machines \ev{I2,I3,I4}; card faithfulness \ev{J1,J2}.
-\todo{draft}
+Sentinel has 96{,}605 trained parameters \ev{I1}. Scoring one patient-hour with
+29 hours of context on one CPU thread takes 0.73--1.99\,ms across four laptops.
+The slowest is an Intel Core i9-13900H with integrated graphics only \ev{I2}. A
+20-bed ICU therefore needs at most about 40\,ms of CPU time per hour; additional
+threads do not help at this batch size \ev{I3}. The serving process uses about
+320\,MB of memory (537\,MB on Linux), and a full rebuild of every model fits in
+8\,GB of RAM \ev{I4}.
+
+On 200 held-out cases, explanations written by gemma4:12b name the agent with
+the highest attention weight in 97\% of cases and the largest NEWS2 sub-score in
+78\%, and invent 0.13 unsupported drivers per sentence. A separate classifier
+recovers whether an alarm fired from the sentence alone with an AUROC of 0.836
+(0.823 with numbers and medical terms removed). The medically fine-tuned
+medgemma:4b performs worst of the four models tested \ev{J1}. Generating a
+sentence takes 3 to 11 seconds on CPU, depending on model size \ev{J2}.
 
 % ---------------------------------------------------------------------------
 \section{Discussion}\label{sec:discussion}
-% What the evidence supports and what it does not; the validation ladder
-% (retrospective single-site, retrospective external, prospective silent,
-% independent replication).
+
+\paragraph{What the results support.}
+Splitting the patient record into per-modality agents, each with its own
+calibrated risk, ranks deterioration better than any single model we compared,
+including an equal-information GBM and rebuilds of three published early-warning
+recipes \ev{B1--B4}. At a fixed alarm budget it also catches 6 to 9 percentage
+points more deteriorating patients, and this holds when first-hour flags are
+ignored and when realized alarm volume is accounted for \ev{C4,C7}. On densely charted
+hours, the advantage over the published recipes carries to 208 hospitals whose
+data were never used for training or tuning \ev{G2}. All of this runs on a single laptop CPU core
+\ev{I2}.
+
+\paragraph{What the fusion contributes.}
+The channel experiment changes how these gains should be attributed
+\ev{D2,D3}. An untrained average of the eight calibrated agent risks ranks
+exactly as well as the trained two-head fusion. The ranking gain therefore comes
+from the decomposition into calibrated per-modality agents, not from the learned
+fusion or the latent vectors it reads. Because every agent is calibrated on
+validation data, their risks share a probability scale and can be pooled
+directly. What the latent channel adds is timing: with latents, the fusion's
+first alarms precede NEWS2's, and head-to-head at equal alarm volume they precede
+a risk-only fusion's. Without latents the lead over NEWS2 disappears. A useful
+reading is that each agent's risk says how likely deterioration is, while its
+latent carries how the patient is changing, which the temporal fusion turns into
+earlier alarms.
+
+This also refines the comparison with text. When a language model reads agents'
+outputs as sentences and produces the risk itself, performance collapses (AUPRC
+0.090 against 0.244) \ev{D1}. Agents that pass calibrated numbers do not have
+this problem, whether or not they also pass latents. Whether a text channel
+encoded by a clinical language model and read by the same trained fusion would
+match the latent channel on timing is untested on the flagship \ev{D4}.
+
+\paragraph{How large the timing gain is.}
+The timing gain is real but modest, and it depends on how it is measured. At
+frozen thresholds Sentinel leads NEWS2 by about an hour at the median
+\ev{F1}. At equal realized alarm volume that roughly halves at a 2\% budget,
+persists at 5\%, and is absent at 1\% \ev{C8}. Against the published recipes,
+first alarms are usually simultaneous \ev{C6}. Many long leads are patients
+flagged at the first scored hour, and on death stays without a recorded
+care-limitation decision there is no lead \ev{F1,F2}. We therefore present
+Sentinel's main operating-point benefit as catching more deteriorating patients
+at a given alarm budget, with a small and volume-sensitive gain in timing.
+
+\paragraph{Deploying at a new hospital.}
+Three settings have to be chosen locally. The alarm budget is a staffing
+decision; Sentinel's advantage holds from 0.5\% to 10\% of patient-hours
+\ev{C4}. The threshold that meets the chosen budget depends only on the score
+distribution, so it can be set from a period of silent scoring, without
+outcome labels. Calibration does not transfer, but a label-free correction for
+the local event rate halves the error and about 500 local patients repair most of
+it \ev{G8}. Retraining only the two fusion heads recovers most of the benefit of
+full fine-tuning \ev{G7}. Per-unit thresholds even out alarm load across ICU types
+without separate models \ev{E3,E4}.
+
+\paragraph{Clinical readiness.}
+Sentinel has been validated retrospectively at one development site and
+retrospectively on an external multi-centre database. It has not run
+prospectively, even silently, and has not been replicated by an independent
+team. These are the next two steps before any clinical use.
+
 \subsection{Limitations}
-% \ev{K1--K7}: single development site, retrospective only; cadence reads
-% clinician behaviour; no clinician review of per-modality design yet;
-% single-seed experiments; hour-level metric; untested design choices (E9).
-\todo{draft}
+\begin{itemize}
+  \item \textbf{Retrospective data.} All results come from historical records.
+        Development used a single academic centre, and the eICU validation is
+        retrospective \ev{K1}.
+  \item \textbf{The outcome.} Two of the three events, ventilation and
+        vasopressor onset, are clinical decisions, so their timing reflects
+        clinician judgement as well as physiology. On eICU, ventilation onset is
+        documentation time and death is timed at discharge, which makes eICU
+        warning times conservative.
+  \item \textbf{Clinician behaviour as an input.} The cadence agent counts
+        orders, laboratory draws and culture collections, so it partly reads
+        clinicians' concern. Nursing-documentation patterns have been used as an
+        early-warning signal in a randomised trial \cite{rossetti2025concern},
+        and the external model on eICU, which has no cadence agent, still beats
+        the published recipes \ev{G1,G2}. The MIMIC results include it \ev{K2}.
+  \item \textbf{Clinical review.} Clinicians shaped the deployment design (per-unit
+        thresholds, condition rosters, the specialist test), but the choices
+        inside each agent, such as staleness bounds and the ECG statement
+        mapping, have not been reviewed by clinicians \ev{K3}.
+  \item \textbf{Seeds and protocol.} Headline results vary the fusion heads over
+        ten seeds with the agents held fixed. Several analyses use one seed
+        \ev{K4}. Agents use the full validation set for early stopping and
+        calibration, so only the fusion keeps calibration and thresholds on
+        separate patients. The equal-volume races set thresholds from test
+        scores and are diagnostics, not a deployable protocol \ev{C8}.
+  \item \textbf{Metrics.} AUPRC is computed per patient-hour, which counts the
+        early hours of each 24-hour window, when little has changed, as
+        positives. Patient-level results are reported only at fixed alarm
+        budgets \ev{K5}.
+  \item \textbf{Design choices.} The TCN's depth, kernel size and receptive
+        field, the agents' widths, and the choice of MLPs rather than sequence
+        models for the slower agents were set by design rather than by search.
+        The only architecture comparison is the YAIB TCN swap \ev{E6,E8}.
+  \item \textbf{Comparators.} The published models are rebuilt from their papers
+        and trained on our cohort. They are not the commercial products, and each
+        rebuild departs from its paper in documented ways (Appendix~\ref{app:specs}).
+  \item \textbf{Explanations.} We measure whether explanations are faithful to
+        the model, not whether they help clinicians \ev{J1}.
+\end{itemize}
 
 \section{Conclusion}\label{sec:conclusion}
 \todo{draft}

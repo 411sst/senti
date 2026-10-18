@@ -260,6 +260,34 @@ Scientific Data 10, 1 (2023). Accessed via BigQuery `physionet-data.mimiciv_3_1_
 under the PhysioNet credentialed-access DUA. No patient-level data appears in any
 committed file or published artifact.
 
+
+## 6. Methods and data cited in the paper draft
+
+Added 2026-10-18 for `paper/main.tex`. These are cited for a method, a dataset
+or a scoring standard, not for a number, so no figures are quoted. BibTeX keys
+in brackets.
+
+- **Royal College of Physicians**, *NEWS2* (2017) [`rcp2017news2`]. The scoring
+  bands implemented in `src/news2.py` (SpO2 Scale 1).
+- **Pollard et al.**, *The eICU Collaborative Research Database*, Scientific
+  Data 5, 180178 (2018) [`pollard2018eicu`]. External validation cohort (T22).
+- **Bai, Kolter, Koltun**, arXiv:1803.01271 (2018) [`bai2018tcn`] and **van den
+  Oord et al.**, *WaveNet*, arXiv:1609.03499 (2016) [`oord2016wavenet`]. Causal,
+  dilated temporal convolutions (vitals agent, fusion heads).
+- **Moor et al.**, MLHC 2019 [`moor2019sepsis`] and **Lauritsen et al.**,
+  Nature Communications 11, 3852 (2020) [`lauritsen2020xaiews`]. Prior TCNs on
+  ICU and hospital EHR data.
+- **Chen and Guestrin**, *XGBoost*, KDD 2016 [`chen2016xgboost`]. GBM agent and
+  baselines.
+- **Bahdanau, Cho, Bengio**, ICLR 2015 [`bahdanau2015attention`]. Additive
+  attention over agents.
+- **Zadrozny and Elkan**, KDD 2002 [`zadrozny2002calibration`]. Isotonic
+  calibration of agent and head scores.
+- **Rossetti et al.**, *Nature Medicine* (2025),
+  doi:10.1038/s41591-025-03609-7 [`rossetti2025concern`]. The CONCERN trial:
+  nursing documentation patterns as an early-warning signal; context for the
+  cadence agent. Only the trial's design is cited, not its effect sizes.
+
 ---
 
 ## Where these are used

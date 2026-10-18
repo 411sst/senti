@@ -13,7 +13,7 @@
   eprint  = {2603.14719},
   archivePrefix = {arXiv},
   primaryClass  = {cs.LG},
-  note    = {MIMIC-IV; composite label = ICU death or vasopressor onset or
+  annote    = {MIMIC-IV; composite label = ICU death or vasopressor onset or
              ventilation onset within 24h; XGBoost baseline AUROC 0.7486,
              AUPRC 0.1123}
 }
@@ -26,7 +26,7 @@
   year    = {2025},
   pmid    = {38562803},
   pmcid   = {PMC11949291},
-  note    = {FDA-cleared. AUROC 0.834 vs NEWS 0.766, yet median lead time
+  annote    = {FDA-cleared. AUROC 0.834 vs NEWS 0.766, yet median lead time
              16h vs NEWS 17h -- ranking gain without earliness gain}
 }
 
@@ -39,7 +39,7 @@
   year      = {2024},
   eprint    = {2306.05109},
   archivePrefix = {arXiv},
-  note      = {MIMIC-IV LGBM: mortality 87.7/44.2, AKI 83.8/53.3,
+  annote      = {MIMIC-IV LGBM: mortality 87.7/44.2, AKI 83.8/53.3,
                sepsis 77.5/5.9 (AUROC/AUPRC x100)}
 }
 
@@ -54,7 +54,7 @@
   year      = {2021},
   eprint    = {2111.08536},
   archivePrefix = {arXiv},
-  note      = {LGBM with hand-extracted features beats every deep model on
+  annote      = {LGBM with hand-extracted features beats every deep model on
                circulatory (AUPRC 38.8) and respiratory failure (60.4)}
 }
 
@@ -67,7 +67,7 @@
   year      = {2020},
   eprint    = {1907.08322},
   archivePrefix = {arXiv},
-  note      = {Canonical ventilation/vasopressor intervention-onset task.
+  annote      = {Canonical ventilation/vasopressor intervention-onset task.
                Baselines are LR/RF/GRU-D/CNN/LSTM -- no gradient boosting}
 }
 
@@ -84,7 +84,7 @@
   pages   = {364--373},
   year    = {2020},
   doi     = {10.1038/s41591-020-0789-4},
-  note    = {AUROC 94.0, AUPRC 63.0; 81.8\% of events flagged >2h ahead.
+  annote    = {AUROC 94.0, AUPRC 63.0; 81.8\% of events flagged >2h ahead.
              Boosting library not named in the abstract -- verify before
              citing as a GBM result}
 }
@@ -97,7 +97,7 @@
   year    = {2026},
   eprint  = {2602.20168},
   archivePrefix = {arXiv},
-  note    = {MIMIC-IV-ED triage snapshot; XGBoost 0.809/0.382 for in-hospital
+  annote    = {MIMIC-IV-ED triage snapshot; XGBoost 0.809/0.382 for in-hospital
              mortality. Not comparable to an hourly in-ICU AUPRC}
 }
 
@@ -110,7 +110,7 @@
   journal = {Frontiers in Cardiovascular Medicine},
   year    = {2026},
   doi     = {10.3389/fcvm.2025.1694001},
-  note    = {Specialty-specific ICU model transfers MIMIC-IV <-> eICU with
+  annote    = {Specialty-specific ICU model transfers MIMIC-IV <-> eICU with
              under 4\% AUROC loss -- the counterweight to per-unit modelling}
 }
 
@@ -123,7 +123,7 @@
   year    = {2025},
   eprint  = {2509.18145},
   archivePrefix = {arXiv},
-  note    = {Triggers are vital-sign threshold crossings, not clinical events;
+  annote    = {Triggers are vital-sign threshold crossings, not clinical events;
              no AUPRC reported}
 }
 
@@ -138,4 +138,109 @@
   number  = {1},
   year    = {2023},
   doi     = {10.1038/s41597-022-01899-x}
+}
+
+% --- Methods and data cited in the paper draft (added 2026-10-18) -----------
+
+@techreport{rcp2017news2,
+  author      = {{Royal College of Physicians}},
+  title       = {National Early Warning Score ({NEWS}) 2: Standardising the
+                 assessment of acute-illness severity in the {NHS}},
+  institution = {Royal College of Physicians},
+  address     = {London},
+  type        = {Updated report of a working party},
+  year        = {2017}
+}
+
+@article{pollard2018eicu,
+  author  = {Pollard, Tom J. and Johnson, Alistair E. W. and Raffa, Jesse D.
+             and Celi, Leo A. and Mark, Roger G. and Badawi, Omar},
+  title   = {The {eICU} Collaborative Research Database, a freely available
+             multi-center database for critical care research},
+  journal = {Scientific Data},
+  volume  = {5},
+  pages   = {180178},
+  year    = {2018},
+  doi     = {10.1038/sdata.2018.178}
+}
+
+@article{bai2018tcn,
+  author  = {Bai, Shaojie and Kolter, J. Zico and Koltun, Vladlen},
+  title   = {An Empirical Evaluation of Generic Convolutional and Recurrent
+             Networks for Sequence Modeling},
+  journal = {arXiv preprint arXiv:1803.01271},
+  year    = {2018}
+}
+
+@article{oord2016wavenet,
+  author  = {van den Oord, A{\"a}ron and Dieleman, Sander and Zen, Heiga and
+             Simonyan, Karen and Vinyals, Oriol and Graves, Alex and
+             Kalchbrenner, Nal and Senior, Andrew and Kavukcuoglu, Koray},
+  title   = {{WaveNet}: A Generative Model for Raw Audio},
+  journal = {arXiv preprint arXiv:1609.03499},
+  year    = {2016}
+}
+
+@inproceedings{moor2019sepsis,
+  author    = {Moor, Michael and Horn, Max and Rieck, Bastian and Roqueiro,
+               Damian and Borgwardt, Karsten},
+  title     = {Early Recognition of Sepsis with {Gaussian} Process Temporal
+               Convolutional Networks and Dynamic Time Warping},
+  booktitle = {Proceedings of the 4th Machine Learning for Healthcare
+               Conference},
+  series    = {Proceedings of Machine Learning Research},
+  volume    = {106},
+  year      = {2019},
+  note      = {arXiv:1902.01659}
+}
+
+@article{lauritsen2020xaiews,
+  author  = {Lauritsen, Simon Meyer and Kristensen, Mads and Olsen, Mathias
+             Vassard and Larsen, Morten Skaarup and others},
+  title   = {Explainable artificial intelligence model to predict acute
+             critical illness from electronic health records},
+  journal = {Nature Communications},
+  volume  = {11},
+  pages   = {3852},
+  year    = {2020},
+  doi     = {10.1038/s41467-020-17431-x}
+}
+
+@inproceedings{chen2016xgboost,
+  author    = {Chen, Tianqi and Guestrin, Carlos},
+  title     = {{XGBoost}: A Scalable Tree Boosting System},
+  booktitle = {Proceedings of the 22nd ACM SIGKDD International Conference on
+               Knowledge Discovery and Data Mining},
+  pages     = {785--794},
+  year      = {2016},
+  doi       = {10.1145/2939672.2939785}
+}
+
+@inproceedings{bahdanau2015attention,
+  author    = {Bahdanau, Dzmitry and Cho, Kyunghyun and Bengio, Yoshua},
+  title     = {Neural Machine Translation by Jointly Learning to Align and
+               Translate},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2015},
+  note      = {arXiv:1409.0473}
+}
+
+@inproceedings{zadrozny2002calibration,
+  author    = {Zadrozny, Bianca and Elkan, Charles},
+  title     = {Transforming Classifier Scores into Accurate Multiclass
+               Probability Estimates},
+  booktitle = {Proceedings of the 8th ACM SIGKDD International Conference on
+               Knowledge Discovery and Data Mining},
+  pages     = {694--699},
+  year      = {2002},
+  doi       = {10.1145/775047.775151}
+}
+
+@article{rossetti2025concern,
+  author  = {Rossetti, Sarah Collins and others},
+  title   = {Real-time surveillance system for patient deterioration: a
+             pragmatic cluster-randomized controlled trial},
+  journal = {Nature Medicine},
+  year    = {2025},
+  doi     = {10.1038/s41591-025-03609-7}
 }

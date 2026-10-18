@@ -47,17 +47,20 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | C1 | Catch rate at the NEWS2-matched budget | Of 1,540 event stays: Sentinel 65.5% (1,008), eCART-style 53.6% (825), YAIB 51.8% (798). Caught ≥6 h early: 34.9 / 28.2 / 27.1% | `data/cache/demo/cohort.json` `h2h.funnel`, built by `scripts/build_demo_bundle.py` | s42 | CACHE |
 | C2 | **Realized test alarm rates are not equal** | Budget set on V_freeze (matched 2.617%); realized on test: Sentinel 2.79%, eCART-style 2.56%, YAIB 2.43%. Paper must report these. The sweep (C4) shows eCART-style at a 3% budget still catches only 55.8% | `cohort.json` `h2h.alarm_rate_test` | s42 | CACHE; **must be stated in the paper** |
 | C3 | Cost | Quiet stays with ≥1 alarm: 11.8 / 6.8 / 6.2%. Stay-level precision: 55.5 / 63.9 / 65.5% | `cohort.json` `h2h.cost` | s42 | CACHE |
-| C4 | Budget sweep, 0.5–10% | Sentinel 34.7→86.8%, eCART-style 26.8→79.7%, YAIB 26.8→77.2%; gap +7 to +13 points at every budget. Each model thresholded at its own (1−b) V_freeze quantile | `scripts/build_demo_bundle.py` l.470–488 (`h2h.sweep`); the local `cohort.json` predates this code | s42 | CACHE: re-run the bundle builder to regenerate before citing |
+| C4 | Budget sweep, 0.5–10% (10 seeds) | Sentinel mean catch 34.4 / 46.0 / 58.6 / 66.3 / 74.6 / 82.0 / 86.5% at 0.5 / 1 / 2 / 3 / 5 / 7.5 / 10%. Best comparator per budget: Sadanandan 28.8 / 38.1 / 50.3 / 56.9 / 66.5% (≤5%), eCART-style 73.6 / 79.7% (7.5, 10%). Gap over the best: +5.6 / +8.0 / +8.4 / +9.4 / +8.1 / +8.4 / +6.8 points. Realized test alarm rate slightly higher for Sentinel (2.14% vs 1.84–2.06% at 2%); Sentinel at 2% (2.14%) still beats Sadanandan at 3% (3.02%): 58.6 vs 56.9% | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py`; seed-42 values reproduce the demo bundle | 10 | VERIFIED |
 | C5 | First-alarm race (jointly caught stays) | vs eCART-style: Sentinel first 214, same hour 470, eCART first 78 (of 762). vs YAIB: 191 / 458 / 94 (of 743) | `cohort.json` `h2h.race` | s42 | CACHE |
-| C7 | **Mid-stay catches** (first alarm after the stay's first scored hour) | Sentinel 23.2% (357), eCART-style 24.7% (380), YAIB 24.5% (377). Sentinel's catch-rate lead comes from stays it flags at the first scored hour. Must be discussed in the paper | `cohort.json` `h2h.funnel.midstay`; definition in `src/demo_bundle.py` l.95–115 | s42 | CACHE; **must be stated** |
-| C6 | Race over 10 seeds; median warning | Significant 10/10 vs eCART-style, 9/10 vs YAIB; median warning 7.3 / 6.9 / 6.7 h (10 seeds: 7.1 h, 6.3–7.8) | "Sentinel in Numbers" artifact | 10 | CHECK: locate source |
+| C7 | Catches are not just first-hour flags | Caught by an alarm AFTER the first scored hour (first-hour alarms ignored), 2% budget: Sentinel 53.3% vs Sadanandan 48.1%, eCART-style 43.8%, YAIB 42.7%; Sentinel ahead at every budget. (The earlier 'mid-stay' count, first alarm > first hour, penalised models that flag at hour 6 and is not a fair comparison) | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py` | 10 | VERIFIED |
+| C8 | Lead over NEWS2 at equal realized volume | NEWS2 alarms 1.03 / 2.28 / 4.71% of test hours at 1 / 2 / 5% budgets; Sentinel at protocol thresholds 1.36 / 2.76 / 5.21%. Re-thresholded to NEWS2's exact volume: 2% first-when-differ 69 → 62%, median lead +0.95 → +0.5 h, sign test 10/10 → 9/10 seeds; 5% 73 → 71%, 10/10; 1% 55 → 51%, 0/10. The lead shrinks but survives at 2% and 5% | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py`; diagnostic (test-score quantiles), not protocol | 10 | VERIFIED; **report alongside F1** |
+| C6 | Race vs comparators at the 2% NEWS2-matched volume | First alarm when the two differ (mean over 10 seeds), protocol → equal realized volume: eCART-style 70 → 67%, YAIB 66 → 59%, Sadanandan 69 → 68%. Sign test significant at equal volume in 9 / 8 / 10 of 10 seeds. Median lead 0 h (most jointly caught stays tie) | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py` | 10 | VERIFIED |
 
 ## D. How agents communicate (the thesis claim)
 
 | ID | Claim | Numbers | Source | Seeds | Status |
 |---|---|---|---|---|---|
 | D1 | LLM-as-fuser text arm loses | 150 stays, 6,185 hours, 4.41% positive; llama3.1:8b, 4 h window, temp 0. AUPRC text 0.100 raw / 0.090 calibrated vs latent 0.244; AUROC 0.732 vs 0.787; death component 0.025 vs 0.193 | T20 `results_fusion.md` l.1798–1827 | 1 (core-3, subset) | VERIFIED |
-| D2 | Same-fuser channel arms | Core-3, full test: TEXT (templated sentences → frozen Bio_ClinicalBERT → PCA-128) 0.254 [0.236, 0.275] **>** LATENT 0.232 [0.215, 0.251]; RISK-ONLY 0.231; MEAN-RISK 0.244; HARD-VOTE 0.133. Timing: LATENT +2 h vs TEXT 0–1 h | `src/channel_arms.py`; `data/cache/channel_arms_scores.npz`; Aug-19 session notes. **Not written up in any results file** | 1 (core-3) | **RERUN on the flagship and write up. The paper's central claim depends on it** |
+| D2 | T27: latents add nothing to ranking | Two-head ALL-8, 3 seeds. LATENT 0.3075 (mean) vs RISK-ONLY 0.3043; pooled Δ −0.0032 [−0.0099, +0.0033]. MEAN-RISK (untrained mean of the 8 calibrated risks) 0.3076. HARD-VOTE 0.1897 (9 distinct scores; overshoots budget, 3.89% at 2%) | T27 `results_fusion.md` l.2462+; `scripts/channel_flagship.py` | 3 | VERIFIED |
+| D3 | T27: latents buy earliness | Lead vs NEWS2 @2%: LATENT +1.0 to +2.0 h, win 57–59% (CIs clear of 50%); RISK-ONLY and MEAN-RISK +0.0 h, 42–48%. Head-to-head at equal test volume: LATENT first more often in 9/9 cells (7/9 significant), catches more stays the other misses in 8/9; strong at seeds 1, 2, marginal at 42 | T27 | 3 | VERIFIED (head-to-head uses test-quantile thresholds: diagnostic, not protocol) |
+| D4 | Text arm on the flagship | ClinicalBERT sentence channel through the same fusion; the remaining test of latent vs text | not run | — | OPEN (optional; ~half day code + 2–4 h compute) |
 
 ## E. Architecture choices and ablations
 
@@ -68,7 +71,7 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | E3 | One model beats specialists | 18/18 specialist cells below the generalist, 9/18 CI clear; cardiac 0.353 vs 0.340/0.337; neuro 0.187 vs 0.168/0.171; respiratory 0.310 vs 0.244/0.250 | T14 `results_fusion.md` l.1190–1272 | 3 | VERIFIED |
 | E4 | Per-unit thresholds | Alarm-burden spread across ICU types 5.3× → 1.7× | T12 `results_fusion.md` l.1071, 1138 | 5 | VERIFIED |
 | E5 | Condition → top agents | Sepsis/pneumonia lean on resp; AKI on cadence; GI bleed on labs (lift 3.9) | T13 `results_fusion.md` l.1142–1188 | — | VERIFIED |
-| E6 | YAIB TCN swap (vitals agent) | Inside flagship ΔAUPRC −0.0045 [−0.0076, −0.0013], lower in 9/10 seeds; agent alone −0.0036 (CI spans 0); 914k vs 19,681 params; receptive field 55 h vs 29 h; 16 random draws of YAIB's search space | T26 artifact `6tFTHBgxSoXnx5N3yAfevD`; `results_live.md` T26 not committed | 10 | UNCOMMITTED |
+| E6 | YAIB TCN swap (vitals agent) | Inside flagship ΔAUPRC −0.0045 [−0.0076, −0.0013], lower in 9/10 seeds; agent alone −0.0036 (CI spans 0); 914k vs 19,681 params; receptive field 55 h vs 29 h; 16 random draws of YAIB's search space | T26 `results_fusion.md` l.2392+; `scripts/yaib_tcn_swap.py`, `src/agents/yaib_tcn.py`, `tests/test_yaib_tcn.py` | 10 | VERIFIED |
 | E7 | Notes and other candidate agents did not ship | core-3+notes val Δ −0.0038 [−0.0081, +0.0007]; neuro-status and infection agents benched | `src/orchestrator/fusion.py` l.51; T15 | 3–5 | CHECK: cite the results rows, not code comments |
 | E8 | Untested design choices | TCN depth/dilations/kernel; per-agent sequence models; MLP widths; hyperparameter search | none in any branch | — | OPEN: ablate, or list as a limitation |
 
@@ -98,7 +101,7 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | ID | Claim | Numbers | Source | Seeds | Status |
 |---|---|---|---|---|---|
 | H1 | Reading-level replay (T24) | Rebuild lossless (0 mismatches / 2,460,983 rows); on-arrival scoring +30 min mean [12, 55], median 0, +28% alarm onsets; ~80% of later first alarms wait on hourly agents; AUPRC 0.314 (monitor clock) → 0.292 (EHR clock); 52.5% of vitals reach the EHR after their hour is scored; 4.5% of vital hour-cells hold >1 reading | `origin/live-version:results_live.md` T24 | s42 | BRANCH; CHECK the two "median minutes late" figures (29 vs 34 min) |
-| H2 | Vitals-only real time (T25) | TCN alone AUPRC 0.188 vs 0.314; real-time TCN alarms on 25.7% of quiet stays vs 10.8%; TCN-direct at matched false-alarm cost catches 55.5% vs 64.6%, first alarm −239 min [−336, −142]; 81% of TCN catches at first scored hour | T25 artifact `QrzrYZs61gUurvqo1BSakB` | s42 | UNCOMMITTED |
+| H2 | Vitals-only real time (T25) | TCN alone AUPRC 0.188 vs 0.314; real-time TCN alarms on 25.7% of quiet stays vs 10.8%; TCN-direct at matched false-alarm cost catches 55.5% vs 64.6%, first alarm −239 min [−336, −142]; 81% of TCN catches at first scored hour | T25 `origin/live-version:results_live.md` l.212+; `scripts/live_tcn_direct.py` | s42 | BRANCH |
 
 ## I. Deployment footprint
 
@@ -128,19 +131,18 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | K6 | Code default is still core-3 (`DEFAULT_CONFIG`); paper results use two-head ALL-8. Fix before releasing code | `src/orchestrator/fusion.py` |
 | K7 | Untested design choices (E8) | — |
 
-## Citations to add to `docs/references.bib`
+## Citations
 
-Verify each entry before adding (title, venue, year). Add a matching register entry to `docs/references.md`.
+Added to `docs/references.bib` (with register entries in `docs/references.md` §6) on 2026-10-18:
+RCP NEWS2 (`rcp2017news2`), Pollard eICU (`pollard2018eicu`), Bai TCN (`bai2018tcn`),
+WaveNet (`oord2016wavenet`), Moor (`moor2019sepsis`), Lauritsen (`lauritsen2020xaiews`),
+XGBoost (`chen2016xgboost`), Bahdanau (`bahdanau2015attention`), Zadrozny and Elkan
+(`zadrozny2002calibration`), CONCERN (`rossetti2025concern`).
 
-- Royal College of Physicians, NEWS2 (2017)
-- Pollard et al., eICU-CRD, *Scientific Data* 5, 180178 (2018)
-- Bai, Kolter, Koltun, TCN vs RNN, arXiv:1803.01271 (2018)
-- van den Oord et al., WaveNet, arXiv:1609.03499 (2016)
-- Moor et al., sepsis TCN, MLHC 2019 / arXiv:1902.01659
-- Lauritsen et al., *Nature Communications* 11, 3852 (2020)
-- Chen and Guestrin, XGBoost, KDD 2016
-- Bahdanau, Cho, Bengio, additive attention, ICLR 2015
-- Zadrozny and Elkan, isotonic calibration, KDD 2002
-- Rossetti et al., CONCERN trial, *Nature Medicine* 2025, doi:10.1038/s41591-025-03609-7
-- TRIPOD+AI reporting guideline (Collins et al., BMJ 2024): verify
-- Multi-agent LLM systems in medicine (e.g. MedAgents, MDAgents): find and verify
+The register's own notes on the older entries were moved from `note` to `annote`, so they
+no longer print in the reference list.
+
+Still to find and verify before Related work:
+- TRIPOD+AI reporting guideline (Collins et al., BMJ 2024)
+- Multi-agent LLM systems in medicine (e.g. MedAgents, MDAgents)
+- Full author lists for `lauritsen2020xaiews` and `rossetti2025concern` (currently "and others")
