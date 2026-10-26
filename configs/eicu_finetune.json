@@ -1,0 +1,35 @@
+{
+  "_comment": "Settings for scripts/finetune_eicu.py. Keys starting with _ are ignored; any other unknown key is an error. CLI flags override this file.",
+
+  "_agents": "The T22 flagship: ALL-8 minus cadence (eICU has no order-entry table).",
+  "agents": ["vitals_tcn", "news2", "labs", "ecg_meas", "gbm", "fluid", "resp"],
+
+  "_split": "hospital = test hospitals never seen in fine-tuning (comparable to T22). patient = within-hospital, easier.",
+  "split_by": "hospital",
+  "split_fracs": [0.6, 0.2, 0.2],
+  "split_seed": 42,
+  "_train_patients": "0 = all eICU train patients; set e.g. 500/2000/10000 for a learning curve.",
+  "train_patients": 0,
+
+  "_seed": "The MIMIC source stack and the eICU split are fitted once at seed; each of seeds re-rolls everything trained on eICU (agent fine-tunes, continued boosting and its folds, both heads).",
+  "seed": 42,
+  "seeds": [42, 1, 2, 3, 4],
+  "_source": "MIMIC source fit, same as score_eicu.py.",
+  "source_epochs": 8,
+  "source_fusion_epochs": 8,
+
+  "_finetune": "Warm-started from MIMIC weights at 10x lower LR. Early stopping on eICU val, seeded with the pretrained score.",
+  "agent_ft_lr": 0.0001,
+  "agent_ft_epochs": 6,
+  "head_ft_lr": 0.0001,
+  "head_ft_epochs": 8,
+  "gbm_ft_eta": 0.02,
+  "gbm_ft_rounds": 500,
+  "_gbm_device": "cpu is deterministic; cuda is faster but not bit-reproducible.",
+  "gbm_device": "cpu",
+  "_freeze_agents": "ecg_meas sees no ECGs on eICU, so there is nothing to adapt.",
+  "freeze_agents": ["ecg_meas"],
+
+  "scratch": false,
+  "bootstrap_reps": 300
+}

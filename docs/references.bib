@@ -1,0 +1,141 @@
+% Sentinel bibliography. Prose entries, the exact figures quoted from each
+% source, and the reason each is cited live in docs/references.md -- keep the
+% two in step.
+
+@article{sadanandan2026multimodal,
+  author  = {Sadanandan, Binesh},
+  title   = {Multimodal Deep Learning for Early Prediction of Patient
+             Deterioration in the {ICU}: Integrating Time-Series {EHR} Data
+             with Clinical Notes},
+  journal = {arXiv preprint arXiv:2603.14719},
+  year    = {2026},
+  month   = {mar},
+  eprint  = {2603.14719},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  note    = {MIMIC-IV; composite label = ICU death or vasopressor onset or
+             ventilation onset within 24h; XGBoost baseline AUROC 0.7486,
+             AUPRC 0.1123}
+}
+
+@article{churpek2025ecartv5,
+  author  = {Churpek, Matthew M. and others},
+  title   = {Multicenter Development and Prospective Validation of {eCARTv5}:
+             A Gradient-Boosted Machine-Learning Early Warning Score},
+  journal = {Critical Care Explorations},
+  year    = {2025},
+  pmid    = {38562803},
+  pmcid   = {PMC11949291},
+  note    = {FDA-cleared. AUROC 0.834 vs NEWS 0.766, yet median lead time
+             16h vs NEWS 17h -- ranking gain without earliness gain}
+}
+
+@inproceedings{vandewater2024yaib,
+  author    = {van de Water, Robin and Schmidt, Hendrik and Elbers, Paul and
+               Thoral, Patrick and Arnrich, Bert and Rockenschaub, Patrick},
+  title     = {Yet Another {ICU} Benchmark: A Flexible Multi-Center Framework
+               for Clinical {ML}},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  eprint    = {2306.05109},
+  archivePrefix = {arXiv},
+  note      = {MIMIC-IV LGBM: mortality 87.7/44.2, AKI 83.8/53.3,
+               sepsis 77.5/5.9 (AUROC/AUPRC x100)}
+}
+
+@inproceedings{yeche2021hirid,
+  author    = {Y{\`e}che, Hugo and Kuznetsova, Rita and Zimmermann, Marc and
+               H{\"u}ser, Matthias and Lyu, Xinrui and Faltys, Martin and
+               R{\"a}tsch, Gunnar},
+  title     = {{HiRID-ICU-Benchmark} --- A Comprehensive Machine Learning
+               Benchmark on High-resolution {ICU} Data},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS),
+               Datasets and Benchmarks Track},
+  year      = {2021},
+  eprint    = {2111.08536},
+  archivePrefix = {arXiv},
+  note      = {LGBM with hand-extracted features beats every deep model on
+               circulatory (AUPRC 38.8) and respiratory failure (60.4)}
+}
+
+@inproceedings{wang2020mimicextract,
+  author    = {Wang, Shirly and McDermott, Matthew B. A. and Chauhan, Geeticka
+               and Ghassemi, Marzyeh and Hughes, Michael C. and Naumann, Tristan},
+  title     = {{MIMIC-Extract}: A Data Extraction, Preprocessing, and
+               Representation Pipeline for {MIMIC-III}},
+  booktitle = {ACM Conference on Health, Inference, and Learning (CHIL)},
+  year      = {2020},
+  eprint    = {1907.08322},
+  archivePrefix = {arXiv},
+  note      = {Canonical ventilation/vasopressor intervention-onset task.
+               Baselines are LR/RF/GRU-D/CNN/LSTM -- no gradient boosting}
+}
+
+@article{hyland2020circulatory,
+  author  = {Hyland, Stephanie L. and Faltys, Martin and H{\"u}ser, Matthias
+             and Lyu, Xinrui and Gumbsch, Thomas and Esteban, Crist{\'o}bal
+             and Bock, Christian and Horn, Max and Moor, Michael and Rieck,
+             Bastian and Zimmermann, Marc and Bodenham, Dean and Borgwardt,
+             Karsten and R{\"a}tsch, Gunnar and Merz, Tobias M.},
+  title   = {Early prediction of circulatory failure in the intensive care
+             unit using machine learning},
+  journal = {Nature Medicine},
+  volume  = {26},
+  pages   = {364--373},
+  year    = {2020},
+  doi     = {10.1038/s41591-020-0789-4},
+  note    = {AUROC 94.0, AUPRC 63.0; 81.8\% of events flagged >2h ahead.
+             Boosting library not named in the abstract -- verify before
+             citing as a GBM result}
+}
+
+@article{solaiman2026benchmarking,
+  author  = {Solaiman, K. M. A. and Sebastian, Joshua and Tobden, Karma},
+  title   = {Benchmarking Early Deterioration Prediction Across Hospital-Rich
+             and {MCI}-Like Emergency Triage Under Constrained Sensing},
+  journal = {arXiv preprint arXiv:2602.20168},
+  year    = {2026},
+  eprint  = {2602.20168},
+  archivePrefix = {arXiv},
+  note    = {MIMIC-IV-ED triage snapshot; XGBoost 0.809/0.382 for in-hospital
+             mortality. Not comparable to an hourly in-ICU AUPRC}
+}
+
+@article{gao2026hemodynamic,
+  author  = {Gao, S. and Zhang, Y. and Deng, M. and Liu, H. and Xu, W. and
+             Luo, M. and Tian, Y. and Zhang, B.},
+  title   = {Machine learning-based early warning system for hemodynamic
+             deterioration in cardiovascular {ICU} patients: a bidirectional
+             cross-validation study},
+  journal = {Frontiers in Cardiovascular Medicine},
+  year    = {2026},
+  doi     = {10.3389/fcvm.2025.1694001},
+  note    = {Specialty-specific ICU model transfers MIMIC-IV <-> eICU with
+             under 4\% AUROC loss -- the counterweight to per-unit modelling}
+}
+
+@article{bukhari2025escalation,
+  author  = {Bukhari, Syed Ahmad Chan and Singh, Amritpal and Hossain, Shifath
+             and Wajahat, Iram},
+  title   = {Early Prediction of Multi-Label Care Escalation Triggers in the
+             Intensive Care Unit Using Electronic Health Records},
+  journal = {arXiv preprint arXiv:2509.18145},
+  year    = {2025},
+  eprint  = {2509.18145},
+  archivePrefix = {arXiv},
+  note    = {Triggers are vital-sign threshold crossings, not clinical events;
+             no AUPRC reported}
+}
+
+@article{johnson2023mimiciv,
+  author  = {Johnson, Alistair E. W. and Bulgarelli, Lucas and Shen, Lu and
+             Gayles, Alvin and Shammout, Ayad and Horng, Steven and Pollard,
+             Tom J. and Hao, Sicheng and Moody, Benjamin and Gow, Brian and
+             Lehman, Li-wei H. and Celi, Leo A. and Mark, Roger G.},
+  title   = {{MIMIC-IV}, a freely accessible electronic health record dataset},
+  journal = {Scientific Data},
+  volume  = {10},
+  number  = {1},
+  year    = {2023},
+  doi     = {10.1038/s41597-022-01899-x}
+}

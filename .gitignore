@@ -1,0 +1,46 @@
+# Data (contents ignored, folder kept).
+# Everything under data/ is credentialed PhysioNet material (MIMIC-IV, MIMIC-IV-Note)
+# or derived from it. It must never be committed -- the DUA forbids redistribution.
+data/*
+!data/.gitkeep
+
+# Pretrained model weights (contents ignored, folder kept).
+# ECG-FM is a 1.0 GB checkpoint and Bio_ClinicalBERT is fetched to the HF cache;
+# both are re-downloadable (scripts/ + huggingface_hub), so keeping them out of
+# git avoids a gigabyte in history for no benefit.
+models/*
+!models/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+.venv-ecgfm/
+venv/
+env/
+
+# Run logs (training/fetch output; regenerable, occasionally large)
+logs/
+
+# Testing / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+.claude/
+CLAUDE.md
