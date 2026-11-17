@@ -3489,6 +3489,223 @@ move its realized rate off the budget.
 * the pooled paired catch CI is above zero at 1%, 2% and 5% against every
   comparator.
 
+### Results (run 2026-11-18)
+
+**Gate passed.** The no-cadence GBM refit equals T30's arm exactly on MIMIC
+test (max |Δ| 0, AUPRC 0.3218). It then scored 1,360,286 val-hospital hours
+and 990,683 test-hospital hours. The split matched the expected 129 / 30 / 49
+hospitals. Run cost: GBM stage 8 min (13 GB peak), evaluation 1.5 min.
+
+**Pre-registered verdicts:**
+* **regular-charting hours: FAIL;**
+* **all hours: PASS**, which the exploratory stay-level check below reverses.
+
+Catches are the share of event stays with an alarm at or before the event.
+The flagship figure is the ten-seed mean. Realized test alarm rates are in
+brackets. Every model hits its budget on the val hospitals, except NEWS2,
+whose integer ties overshoot.
+
+#### Regular-charting hours
+
+All five vitals were measured in the previous 2 h. This covers 28.6% of test
+hours: 283,543 hours, 17,956 stays and 2,156 event stays.
+
+| budget | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.5% | 8.5% (0.32%) | **10.8%** (0.42%) | 7.2% (0.35%) | 9.0% (0.38%) | 10.7% (0.46%) | 4.6% (0.22%) |
+| 1% | 15.4% (0.70%) | 16.0% (0.83%) | 12.1% (0.72%) | 16.5% (0.80%) | **17.7%** (1.07%) | 8.1% (0.42%) |
+| 2% | 25.4% (1.51%) | 25.4% (1.69%) | 18.3% (1.40%) | 25.2% (1.68%) | **26.4%** (2.28%) | 13.1% (0.81%) |
+| 3% | 33.1% (2.34%) | 31.0% (2.54%) | 23.1% (2.06%) | 31.3% (2.52%) | **37.2%** (4.47%) | 17.5% (1.25%) |
+| 5% | **43.5%** (3.99%) | 40.4% (4.29%) | 30.9% (3.40%) | 40.8% (4.24%) | 37.2% (4.47%) | 25.2% (2.39%) |
+| 7.5% | **52.3%** (6.03%) | 50.0% (6.48%) | 39.0% (5.04%) | 49.2% (6.43%) | 49.5% (8.26%) | 35.4% (4.13%) |
+| 10% | 58.9% (8.15%) | 57.8% (8.77%) | 45.5% (6.82%) | 55.5% (8.72%) | **59.7%** (13.90%) | 45.4% (6.27%) |
+
+Paired catch difference (flagship − comparator, points, pooled over seeds,
+patient-clustered 95% CI):
+
+| budget | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- |
+| 1% | −0.6 [−1.9, +0.7] | +3.3 [+2.2, +4.4] | −1.1 [−2.5, +0.3] | −2.3 [−4.0, −0.8] | +7.3 [+6.2, +8.4] |
+| 2% | −0.0 [−1.6, +1.5] | +7.1 [+5.8, +8.5] | +0.2 [−1.5, +1.9] | −1.1 [−2.8, +0.7] | +12.3 [+10.9, +13.7] |
+| 5% | +3.1 [+1.4, +4.9] | +12.5 [+10.8, +14.2] | +2.7 [+0.9, +4.4] | +6.2 [+4.2, +8.2] | +18.3 [+16.6, +19.9] |
+
+The flagship's ten-seed mean misses the pass rule at 0.5–3%, against
+eCART-style, Sadanandan and NEWS2 (and at 10% against NEWS2). The CI is not
+above zero at 1% or 2% against those three.
+
+On regular hours every model fires below budget on the test hospitals, and
+the flagship most of all (1.51% at a 2% budget). Re-thresholded to each
+comparator's realized test volume (diagnostic), the flagship catches more
+than every comparator at every budget. The one exception is eCART-style at
+0.5% (−0.1 pt). At 2% the margins are:
+
+| comparator | flagship margin at its test volume (points) |
+| --- | --- |
+| eCART-style | +1.8 |
+| YAIB | +5.9 |
+| Sadanandan | +1.9 |
+| NEWS2 | +6.1 |
+| no-cadence GBM | +4.0 |
+
+≥6 h catches at 2%:
+
+| | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| ≥6 h catch | 18.3% | 18.2% | 13.5% | 19.0% | 20.3% | 9.1% |
+
+Paired at 1% (points):
+
+| eCART-style | Sadanandan | NEWS2 |
+| --- | --- | --- |
+| −0.7 [−1.8, +0.5] | −1.7 [−2.8, −0.4] | −3.0 [−4.5, −1.7] |
+
+Median warning time among caught stays at 2%:
+
+| | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| median warning | 15.1 h [5.2, 43.4] | 16.3 h | 15.5 h | 19.0 h | 19.0 h | 13.2 h |
+
+The flagship's warning time rises from 12.7 h at 0.5% to 18.2 h at 10%.
+
+Races on jointly caught stays. The share is the flagship-first rate when the
+first alarms differ, pooled over seeds; the median lead is 0 h in every cell:
+
+| budget | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- |
+| 1% | 54% [45, 62] | 71% [63, 79] | 59% [50, 66] | 60% [51, 67] | 79% [71, 87] |
+| 2% | 60% [53, 65] | 78% [72, 83] | 63% [57, 69] | 68% [62, 73] | 87% [82, 92] |
+| 5% | 64% [59, 68] | 79% [75, 83] | 68% [63, 72] | 75% [71, 79] | 86% [81, 89] |
+
+#### All hours
+
+990,683 hours, 23,668 stays, 2,909 event stays.
+
+| budget | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.5% | **21.0%** (0.59%) | 15.1% (0.44%) | 12.7% (0.41%) | 16.3% (0.47%) | 18.5% (0.69%) | 9.7% (0.29%) |
+| 1% | **32.9%** (1.24%) | 23.0% (0.92%) | 21.0% (0.89%) | 25.8% (1.03%) | 27.5% (1.50%) | 15.0% (0.60%) |
+| 2% | **46.6%** (2.36%) | 33.6% (1.95%) | 31.0% (1.82%) | 37.5% (2.12%) | 37.6% (2.98%) | 24.3% (1.21%) |
+| 3% | **55.4%** (3.46%) | 39.6% (3.03%) | 35.3% (2.71%) | 44.4% (3.21%) | 37.6% (2.98%) | 30.5% (1.89%) |
+| 5% | **66.1%** (5.47%) | 50.2% (4.97%) | 44.6% (4.56%) | 55.4% (5.35%) | 48.8% (5.67%) | 40.4% (3.41%) |
+| 7.5% | **73.8%** (7.93%) | 60.3% (7.38%) | 54.9% (6.94%) | 63.2% (8.28%) | 58.1% (9.81%) | 52.3% (5.70%) |
+| 10% | **78.6%** (10.48%) | 67.6% (9.78%) | 62.7% (9.47%) | 68.9% (11.35%) | 58.1% (9.81%) | 59.0% (8.40%) |
+
+Paired catch difference (points):
+
+| budget | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- |
+| 1% | +9.9 [+8.3, +11.5] | +11.9 [+10.6, +13.3] | +7.1 [+5.5, +8.7] | +5.4 [+3.5, +7.4] | +17.9 [+16.5, +19.4] |
+| 2% | +13.0 [+11.3, +14.6] | +15.6 [+14.1, +17.2] | +9.1 [+7.4, +10.9] | +9.0 [+7.1, +11.1] | +22.4 [+20.9, +23.8] |
+| 5% | +15.9 [+14.0, +17.6] | +21.5 [+19.9, +23.0] | +10.6 [+8.9, +12.3] | +17.3 [+15.2, +19.4] | +25.7 [+24.0, +27.1] |
+
+Every comparison is ahead in 10/10 seeds. At the comparator's test hour
+volume (diagnostic) the flagship is still ahead at 2%:
+
+| comparator | flagship margin at its test volume (points) |
+| --- | --- |
+| eCART-style | +8.8 |
+| YAIB | +10.1 |
+| Sadanandan | +6.9 |
+| NEWS2 | +14.6 |
+| no-cadence GBM | +8.1 |
+
+≥6 h catch at 2%:
+
+| | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| ≥6 h catch | 34.6% | 24.2% | 21.8% | 27.6% | 29.8% | 17.1% |
+
+Every paired ≥6 h CI is above zero from 1% up.
+
+Median warning time at 2%:
+
+| | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| median warning | 19.4 h [5.8, 62.1] | 16.8 h | 15.5 h | 18.7 h | 21.9 h | 15.9 h |
+
+Races, flagship first when the alarms differ (median lead 0 h, except 1 h
+against the GBM at 2%):
+
+| budget | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- |
+| 1% | 53% [48, 58] | 65% [60, 70] | 62% [58, 67] | 49% [44, 54] | 75% [71, 80] |
+| 2% | 69% [65, 73] | 76% [72, 80] | 71% [68, 74] | 62% [59, 66] | 89% [87, 92] |
+| 5% | 80% [77, 83] | 87% [84, 89] | 81% [78, 83] | 77% [74, 80] | 92% [90, 93] |
+
+#### Exploratory, added after the run: what the catch lead costs
+
+*Not part of the pass rule.* `--stage cost` writes `t35_eicu_stay_cost.json`
+at protocol thresholds.
+
+* "Quiet alarmed" is the share of stays with no event that get at least one
+  alarm.
+* "Catch at matched quiet share" is the best catch the flagship reaches while
+  alarming on no more quiet stays than the comparator does at its protocol
+  threshold. It is read off each model's stay-level curve, which uses the
+  per-stay maximum score up to the event (diagnostic).
+
+| hour set, 2% budget | flagship | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| all: quiet alarmed | **21.8%** | 7.7% | 5.6% | 8.8% | 12.7% | 3.9% |
+| all: stay precision | 23.2% | 38.0% | 43.5% | 37.3% | 29.4% | 46.8% |
+| all: flagship catch at the comparator's quiet share (comparator's catch) | — | 18.5% (33.6%) | 16.6% (31.0%) | 19.6% (37.6%) | 26.7% (37.6%) | 14.7% (24.3%) |
+| regular: quiet alarmed | 3.6% | 3.7% | 1.9% | 4.1% | 6.7% | 1.1% |
+| regular: stay precision | 49.8% | 48.2% | 56.2% | 45.7% | 35.1% | 62.2% |
+| regular: flagship catch at the comparator's quiet share (comparator's catch) | — | 26.2% (25.4%) | 17.7% (18.3%) | 27.8% (25.2%) | 37.0% (26.4%) | 12.7% (13.2%) |
+
+Summary measures:
+
+| | flagship (10 seeds) | eCART-style | YAIB | Sadanandan | NEWS2 | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| stay-level AUROC, all hours | 0.710 (0.694–0.719) | 0.735 | 0.769 | 0.743 | 0.680 | 0.758 |
+| stay-level AUROC, regular hours | **0.796** (0.789–0.801) | 0.755 | 0.795 | 0.775 | 0.712 | 0.795 |
+| hour AUPRC, all hours (prevalence 3.76%) | 0.124 | 0.131 | **0.143** | 0.135 | 0.093 | 0.139 |
+| hour AUPRC, regular hours | **0.166** | 0.149 | 0.159 | 0.154 | 0.107 | 0.156 |
+
+At matched quiet share, across all seven budgets:
+
+| hour set | flagship ahead in | against |
+| --- | --- | --- |
+| all hours | 0 of 10 seeds, at every budget | the three recipes and the GBM |
+| all hours | 0 of 10 seeds up to 5%, 7 of 10 at 7.5% and 10% | NEWS2 |
+| regular hours, 1% and up | 9–10 of 10 seeds | eCART-style, NEWS2 |
+| regular hours, 1% and up | 6–10 of 10 seeds | Sadanandan |
+| regular hours | 0–8 of 10 seeds, within about 1.5 pts | YAIB and the GBM |
+
+### What T35 means
+
+1. **Regular-charting hours: FAIL by the rule.**
+   * At protocol thresholds the flagship does not catch more than eCART-style,
+     Sadanandan or NEWS2 below 3%.
+   * Most of the shortfall is threshold transfer. On these hours the flagship
+     fires further below its budget than the comparators do. At equal hour
+     volume, or at an equal share of quiet stays alarmed, it catches more than
+     eCART-style, Sadanandan and NEWS2, and is level with YAIB and the GBM.
+   * It has the best hour AUPRC and stay-level AUROC of all six models here.
+     This is the operating-point version of G2.
+2. **All hours: PASS by the rule, but not a real gain.**
+   * The flagship catches 9 to 26 points more at every budget, 10/10 seeds,
+     with ≥6 h catches and races ahead too.
+   * But it alarms on 2 to 6 times as many stays that never deteriorate
+     (21.8% of quiet stays at 2%). At an equal quiet-stay share it catches
+     fewer than every comparator in every seed.
+   * Its stay-level AUROC (0.710) and hour AUPRC (0.124) are the lowest of
+     the learned models.
+   * So the extra catches come from spreading alarms over more stays, not
+     from finding deterioration better.
+   * The likely source is the sparsely charted hours that the regular set
+     excludes. On those hours the MIMIC-trained flagship scores quiet stays
+     high. That is a hypothesis; it was not tested here.
+3. **For the paper:**
+   * The pre-registered all-hours pass should not be written as "catches more
+     patients at external hospitals" without the quiet-stay cost.
+   * The defensible external claim stays where G2 put it: on regularly charted
+     hours the flagship ranks best.
+   * At matched alarm cost, it catches more than eCART-style, Sadanandan and
+     NEWS2 there.
+   * The test covers 49 held-out hospitals, with thresholds from 30 others,
+     not all 208.
+
 ## T36 — Rebuilding the flagship on this laptop, CPU only (H1, pre-registered)
 
 *Pre-registered 2026-11-18, before the rebuild. Results are added below
@@ -3804,6 +4021,7 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage eval
 # stage refits T30's no-cadence GBM (gated against T30) and scores eICU.
 .venv/bin/python scripts/t35_eicu_operating_points.py --stage gbm --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t35_eicu_operating_points.py --stage eval
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t35_eicu_operating_points.py --stage cost   # exploratory stay-level cost
 
 # T36 (H1): CPU-only rebuild in an ISOLATED clone (copied inputs, empty
 # embeddings/, torch +cpu venv). Never in a working repository.

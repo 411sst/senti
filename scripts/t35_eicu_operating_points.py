@@ -51,6 +51,7 @@ LIT = CACHE / "eicu_lit_scores.npz"
 T30_SCORES = CACHE / "allfeat_gbm_scores.npz"
 GBM_OUT = CACHE / "t35_eicu_gbm.npz"
 OUT = CACHE / "t35_eicu_operating_points.json"
+COST_OUT = CACHE / "t35_eicu_stay_cost.json"
 SEEDS = (42, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 SEED_GBM = 42
 LIT_NAMES = ("ecart", "yaib", "sadanandan")
@@ -383,14 +384,154 @@ def stage_eval(reps):
     log(f"[saved] {OUT} ({time.time() - t0:.0f} s)")
 
 
+def quiet_alarm_share(test, scores, thr):
+    """Share of quiet stays (no event) with at least one alarm, and their count.
+
+    ``test`` is sorted by (stay_id, hour); ``scores`` is aligned to it.
+    """
+    codes, _ = pd.factorize(test["stay_id"], sort=False)
+    n = int(codes.max()) + 1
+    alarmed = np.bincount(codes, weights=(scores >= thr).astype(float), minlength=n) > 0
+    quiet = np.bincount(codes, weights=test["event_h"].isna().to_numpy(float), minlength=n) > 0
+    q = int(quiet.sum())
+    return (float(alarmed[quiet].sum() / q) if q else float("nan")), q
+
+
+def stay_max_scores(test, scores):
+    """Per-stay maximum score over the hours that can raise a catch or a quiet
+    alarm: for event stays the hours at or before the event, for quiet stays
+    every hour. Returns ``(event_stay_max, quiet_stay_max)``; -inf when an
+    event stay has no such hour. ``test`` is sorted by (stay_id, hour)."""
+    codes, _ = pd.factorize(test["stay_id"], sort=False)
+    n = int(codes.max()) + 1
+    ev = test["event_h"].to_numpy(dtype=float)
+    counts = np.isnan(ev) | (test["hour"].to_numpy(dtype=float) <= ev)
+    m = np.full(n, -np.inf)
+    np.maximum.at(m, codes, np.where(counts, np.asarray(scores, dtype=float), -np.inf))
+    is_event = np.zeros(n, dtype=bool)
+    is_event[codes[~np.isnan(ev)]] = True
+    return m[is_event], m[~is_event]
+
+
+def catch_at_quiet_share(event_max, quiet_max, q):
+    """Best catch reachable while alarming on at most a share ``q`` of quiet
+    stays (the upper envelope of the stay-level curve, linearly interpolated)."""
+    thr = np.unique(np.concatenate([event_max, quiet_max]))[::-1]
+    thr = thr[np.isfinite(thr)]
+    qs, es = np.sort(quiet_max), np.sort(event_max)
+    quiet = 1.0 - np.searchsorted(qs, thr, side="left") / len(qs)
+    catch = 1.0 - np.searchsorted(es, thr, side="left") / len(es)
+    qu, inv = np.unique(quiet, return_inverse=True)
+    best = np.zeros(len(qu))
+    np.maximum.at(best, inv, catch)
+    if qu[0] > 0:                    # no threshold alarms on zero quiet stays
+        qu, best = np.r_[0.0, qu], np.r_[0.0, best]
+    return float(np.interp(q, qu, best))
+
+
+def stage_cost():
+    """Exploratory, added after the pre-registered run (not part of the pass
+    rule): what the stay-level catch lead costs in quiet stays alarmed, as T30
+    reported on MIMIC, plus AUPRC/AUROC within each hour set. Protocol
+    thresholds only (each model's own val-hospital quantile)."""
+    from demo_bundle import assert_aggregate_only
+    from metrics import auprc, auroc
+    from paper_operating_points import early_stats, stay_first_alarms
+
+    t0 = time.time()
+    frames, _ = eicu_frames()
+    flag, comps = load_scores(frames)
+    out = {}
+    for name in ("regular", "all"):
+        mv = regular_mask(frames["val"]) if name == "regular" else np.ones(len(frames["val"]), bool)
+        mt = regular_mask(frames["test"]) if name == "regular" else np.ones(len(frames["test"]), bool)
+        test = frames["test"][mt].reset_index(drop=True)
+        y = test["label_24h"].to_numpy(dtype=float)
+        models = {**{f"flagship_s{s}": {"val": f["val"][mv], "test": f["test"][mt]} for s, f in flag.items()},
+                  **{n: {"val": c["val"][mv], "test": c["test"][mt]} for n, c in comps.items()}}
+        rank = {m: {"auprc": float(auprc(y, v["test"])), "auroc": float(auroc(y, v["test"]))}
+                for m, v in models.items()}
+        rows = []
+        for b in SWEEP_BUDGETS:
+            row = {"budget": b}
+            for m, v in models.items():
+                thr = float(np.quantile(v["val"], 1.0 - b))
+                st = early_stats(stay_first_alarms(test, v["test"], thr))
+                qshare, n_quiet = quiet_alarm_share(test, v["test"], thr)
+                caught = st["catch"] * st["n_event_stays"]
+                quiet = qshare * n_quiet
+                row[m] = {"catch": st["catch"], "quiet_alarmed": qshare,
+                          "stay_precision": float(caught / (caught + quiet)) if caught + quiet else float("nan"),
+                          "alarm_hours_per_alarmed_stay":
+                              float((v["test"] >= thr).sum() / (caught + quiet)) if caught + quiet else float("nan"),
+                          "test_alarm_rate": float((v["test"] >= thr).mean())}
+            fl = [row[f"flagship_s{s}"] for s in flag]
+            row["flagship_mean"] = {k: float(np.mean([x[k] for x in fl])) for k in fl[0]}
+            for s in flag:
+                del row[f"flagship_s{s}"]
+            rows.append(row)
+            log(f"[cost] {name} {b:>5.1%}: " + " | ".join(
+                f"{m[:8]} catch {x['catch']:.1%} quiet {x['quiet_alarmed']:.1%} prec {x['stay_precision']:.1%}"
+                for m, x in row.items() if m != "budget"))
+        # Stay-level diagnostic: catch at each comparator's protocol quiet-stay
+        # share, and the stay-level AUROC (event-stay max vs quiet-stay max).
+        from sklearn.metrics import roc_auc_score
+        smax = {m: stay_max_scores(test, v["test"]) for m, v in models.items()}
+
+        def stay_auroc(e, q):
+            lo = min(np.min(e[np.isfinite(e)]), np.min(q)) - 1.0
+            x = np.concatenate([np.where(np.isfinite(e), e, lo), q])
+            return float(roc_auc_score(np.r_[np.ones(len(e)), np.zeros(len(q))], x))
+
+        stay_auc = {m: stay_auroc(*smax[m]) for m in models}
+        matched = []
+        for row in rows:
+            mrow = {"budget": row["budget"]}
+            for n in comps:
+                qn = row[n]["quiet_alarmed"]
+                per = {s: catch_at_quiet_share(*smax[f"flagship_s{s}"], qn) for s in flag}
+                own = catch_at_quiet_share(*smax[n], qn)
+                mrow[n] = {"quiet_alarmed": qn, "comparator_catch": row[n]["catch"],
+                           "comparator_envelope_catch": own,
+                           "flagship_catch_mean": float(np.mean(list(per.values()))),
+                           "seeds_ahead_of_envelope": int(sum(v > own for v in per.values()))}
+            matched.append(mrow)
+            log(f"[stay] {name} {row['budget']:>5.1%} at comparator quiet share: " + " | ".join(
+                f"{n[:8]} q{x['quiet_alarmed']:.1%} {x['comparator_envelope_catch']:.1%} vs F "
+                f"{x['flagship_catch_mean']:.1%} ({x['seeds_ahead_of_envelope']}/10)"
+                for n, x in mrow.items() if n != "budget"))
+        fl_auc = [stay_auc[f"flagship_s{s}"] for s in flag]
+        log(f"[stay] {name} stay-level AUROC flagship {np.mean(fl_auc):.4f} ("
+            f"{min(fl_auc):.4f}-{max(fl_auc):.4f}) " + ", ".join(f"{n} {stay_auc[n]:.4f}" for n in comps))
+        fl_rank = [rank[f"flagship_s{s}"] for s in flag]
+        out[name] = {"rows": rows, "ranking": {
+            "flagship_mean": {k: float(np.mean([x[k] for x in fl_rank])) for k in ("auprc", "auroc")},
+            **{n: rank[n] for n in comps}, "prevalence": float(y.mean())},
+            "stay_level": {"auroc": {"flagship_mean": float(np.mean(fl_auc)),
+                                     "flagship_min": float(min(fl_auc)), "flagship_max": float(max(fl_auc)),
+                                     **{n: stay_auc[n] for n in comps}},
+                           "catch_at_comparator_quiet_share": matched,
+                           "n_event_stays": int(len(smax[n][0])), "n_quiet_stays": int(len(smax[n][1]))}}
+        log(f"[cost] {name} AUPRC " + ", ".join(f"{k} {v['auprc']:.4f}" for k, v in out[name]["ranking"].items()
+                                                  if k != "prevalence"))
+    payload = {"test": "T35-cost (exploratory)", "seeds": list(SEEDS), "hour_sets": out,
+               "note": "aggregate-only; protocol thresholds; added after the pre-registered run"}
+    payload = json.loads(json.dumps(payload, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
+    assert_aggregate_only(payload)
+    COST_OUT.write_text(json.dumps(payload, indent=1))
+    log(f"[saved] {COST_OUT} ({time.time() - t0:.0f} s)")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stage", choices=("gbm", "eval"), required=True)
+    ap.add_argument("--stage", choices=("gbm", "eval", "cost"), required=True)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--reps", type=int, default=REPS)
     args = ap.parse_args()
     if args.stage == "gbm":
         stage_gbm(args.device)
+    elif args.stage == "cost":
+        stage_cost()
     else:
         stage_eval(args.reps)
 
