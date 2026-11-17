@@ -3288,6 +3288,77 @@ move its realized rate off the budget.
 * the pooled paired catch CI is above zero at 1%, 2% and 5% against every
   comparator.
 
+## T36 — Rebuilding the flagship on this laptop, CPU only (H1, pre-registered)
+
+*Pre-registered 2026-11-18, before the rebuild. Results are added below
+whichever way they come out.*
+
+**Question.** Can the shipped flagship be rebuilt on one laptop from the
+hourly extracts, with no GPU? If so, how long does it take, how much memory
+and disk does it need, and does it reproduce the published seed-42 scores?
+
+**Setup.**
+* The run happens in an isolated clone of this branch. `data/cache` is a real
+  directory holding *copied* inputs, checked by sha256 against the originals:
+  * the MIMIC cohort, labs, cadence, fluids and respiratory hourly parquets;
+  * `ecg_index.parquet` and `ecg_machine_measurements.parquet`.
+* `embeddings/` starts empty. Several stages overwrite cached agent outputs,
+  and `scripts/results_table.py` is never run in a working repository.
+* The environment is a fresh venv with **torch 2.11.0+cpu**, the CPU-only
+  wheel, and the same numpy, pandas, scikit-learn, xgboost, lightgbm and
+  pyarrow versions as the main venv.
+* `CUDA_VISIBLE_DEVICES=` and `OMP_NUM_THREADS=1` are set throughout.
+* Nothing else runs on the machine during the rebuild.
+
+**Stages** (`scripts/h1_rebuild.sh`). Each stage is timed and its peak RSS is
+taken from `/usr/bin/time`.
+
+| stage | builds |
+| --- | --- |
+| ecg_features | `ecg_meas_features.npz` from the machine-measurement parquet |
+| core3_agents | `scripts/results_table.py`: vitals-TCN, NEWS2 and labs agent caches (and the script's own GBM and core-3 fusion) |
+| ecg_meas_agent | `scripts/train_ecg_meas_agent.py` |
+| fair_gbm | `src/baselines_fair.py --variants FAIR+TRAJ --device cpu` (the GBM agent's val/test scores; bootstrap reps cut to 10) |
+| gbm_agent | the GBM pseudo-agent cache (`orch_gbm_agent.build_gbm_agent_cache`, CPU) |
+| tab_agents | `scripts/train_new_agents.py --agent cadence,fluid,resp` |
+| heads | both heads at seed 42, two_head.py's loop exactly |
+
+**Recorded.**
+* Wall time and peak memory per stage, and in total.
+* Disk use for inputs, outputs and environment.
+* CPU model, logical CPUs, RAM, OS, kernel, Python and torch. No user or host
+  names are recorded.
+
+**Pass rule (from the brief).** Both must hold:
+* the rebuilt seed-42 test AUPRC is 0.3141;
+* the val and test scores equal `two_head.npz` exactly.
+
+If not, the max |Δ| is reported, per agent and for the composite.
+
+**Expectation, stated before the run.** An exact match is unlikely:
+* The shipped vitals-TCN was fit on a GPU, and the October rerun found that
+  GPU fit non-deterministic.
+* The shipped GBM agent's scores also come from a GPU XGBoost fit.
+
+So the CPU rebuild is a fresh draw for everything downstream. Per-agent
+differences will show where it diverges.
+
+## T37 — Serving latency and explanation cards on this laptop (H2, pre-registered)
+
+*Pre-registered 2026-11-18. No pass rule. This is a measurement that adds
+this machine's column to `docs/cpu_benchmark_matrix.md` Part A.*
+
+**Method.** `scripts/bench_single_node.py` runs in the T36 clone, with the
+CPU-only torch wheel and `CUDA_VISIBLE_DEVICES=`, alone on the machine:
+* End-to-end latency for one patient-hour with 29 h of context, on 1 thread
+  (also 2/4/8). The p50 and p95 are over 100 reps after warm-up.
+* Vitals-TCN-only latency, batched throughput and serving peak RSS.
+* Explanation cards on local ollama 0.30.10 with `num_gpu: 0`, for
+  `medgemma:4b` and `gemma4:12b`, 4 cards each. The prompt is the real card
+  prompt filled with a synthetic context, so no patient data is involved.
+  Reported as seconds per card and tokens per second, at ollama's default
+  thread choice.
+
 ## Reproduce
 
 ```bash
@@ -3532,4 +3603,13 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage eval
 # stage refits T30's no-cadence GBM (gated against T30) and scores eICU.
 .venv/bin/python scripts/t35_eicu_operating_points.py --stage gbm --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t35_eicu_operating_points.py --stage eval
+
+# T36 (H1): CPU-only rebuild in an ISOLATED clone (copied inputs, empty
+# embeddings/, torch +cpu venv). Never in a working repository.
+bash scripts/h1_rebuild.sh
+.venv/bin/python scripts/h1_rebuild.py compare --shipped <published data/cache>
+
+# T37 (H2): serving latency and cards, in the same clone, alone on the machine
+CUDA_VISIBLE_DEVICES= .venv/bin/python scripts/bench_single_node.py \
+  --threads 1,2,4,8 --reps 100 --llm-cards 4 --llm-models medgemma:4b,gemma4:12b
 ```
