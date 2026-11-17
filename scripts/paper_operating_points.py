@@ -40,6 +40,7 @@ os.chdir(REPO)
 sys.path.insert(0, str(REPO / "src"))
 
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from baselines_mimic import load_splits  # noqa: E402
 from demo_bundle import first_alarm_table  # noqa: E402
@@ -231,6 +232,163 @@ def print_races(races, key, label):
                   f"first-when-differ {np.mean([x['earlier_when_differ'] for x in r]):.0%} | {sig}/{len(r)}")
 
 
+# --- early catches (T33 / L1) ----------------------------------------------------
+
+EARLY_HOURS = 6.0
+EARLY_OUT = CACHE / "paper_early_catches.json"
+
+
+def stay_first_alarms(test_ordered, scores, thr, skip_first_hour=False):
+    """One row per EVENT stay: patient, event hour, first alarm at or before it.
+
+    ``first_alarm`` is NaN when the stay is not caught. With
+    ``skip_first_hour`` an alarm at the stay's first scored hour does not count
+    (the stay can still be caught by a later one).
+    """
+    t = test_ordered
+    crossed = np.asarray(scores, dtype=float) >= thr
+    hour = t["hour"].to_numpy(dtype=float)
+    if skip_first_hour:
+        crossed &= hour > t.groupby("stay_id")["hour"].transform("min").to_numpy(dtype=float)
+    frame = pd.DataFrame({"stay_id": t["stay_id"].to_numpy(),
+                          "patient_id": t["patient_id"].to_numpy(),
+                          "event_h": t["event_h"].to_numpy(dtype=float),
+                          "fa": np.where(crossed, hour, np.nan)})
+    g = frame.groupby("stay_id", sort=True).agg(
+        patient_id=("patient_id", "first"), event_h=("event_h", "first"),
+        fa=("fa", "min")).reset_index()
+    g = g[g["event_h"].notna()].reset_index(drop=True)
+    g["first_alarm"] = g["fa"].where(g["fa"] <= g["event_h"])
+    return g.drop(columns="fa")
+
+
+def early_stats(table):
+    """Catch, >= 6 h catch and warning time (median, IQR) among caught stays."""
+    caught = table["first_alarm"].notna().to_numpy()
+    warn = (table["event_h"] - table["first_alarm"]).to_numpy(dtype=float)
+    early = caught & (warn >= EARLY_HOURS)
+    w = warn[caught]
+    return {"n_event_stays": int(len(table)), "catch": float(caught.mean()),
+            "catch_6h": float(early.mean()),
+            "warning_median": float(np.median(w)) if w.size else float("nan"),
+            "warning_q25": float(np.percentile(w, 25)) if w.size else float("nan"),
+            "warning_q75": float(np.percentile(w, 75)) if w.size else float("nan")}
+
+
+def early_flags(table):
+    warn = (table["event_h"] - table["first_alarm"]).to_numpy(dtype=float)
+    return (table["first_alarm"].notna().to_numpy() & (warn >= EARLY_HOURS)).astype(float)
+
+
+def early_catches(ctx, seeds, flagship, comps, reps):
+    """>= 6 h catches and warning times, protocol and equal realized volume.
+
+    Comparators sit at their own V_freeze (1 - b) quantile. The flagship is
+    reported at its own protocol threshold and, as the volume diagnostic,
+    re-thresholded on TEST score quantiles to fire on exactly each
+    comparator's realized test volume. Paired CIs resample patients, shared by
+    every model at a budget; the pooled difference is the ten-seed mean.
+    """
+    from baselines_fair import bootstrap_indices
+    from config import SEED
+
+    t = ctx.test_ordered
+    out = []
+    for b in SWEEP_BUDGETS:
+        row = {"budget": b, "comparators": {}, "flagship_protocol": {},
+               "flagship_equal_volume": {}, "paired_6h_equal_volume": {}}
+        for skip in (False, True):
+            tag = "no_first_hour" if skip else "all_alarms"
+            flags_c, flags_f, comp_rates = {}, {}, {}
+            for n, c in comps.items():
+                thr = freeze_quantile(ctx, c["val"], b)
+                comp_rates[n] = test_rate(ctx, c["test"], thr)
+                tab = stay_first_alarms(t, c["test"], thr, skip)
+                row["comparators"].setdefault(n, {})[tag] = {
+                    **early_stats(tab), "test_alarm_rate": comp_rates[n]}
+                flags_c[n] = early_flags(tab)
+                patients = tab["patient_id"].to_numpy()
+            prot, eqv = [], {n: [] for n in comps}
+            for s in seeds:
+                f = flagship[s]
+                thr = freeze_quantile(ctx, f["val"], b)
+                prot.append({**early_stats(stay_first_alarms(t, f["test"], thr, skip)),
+                             "test_alarm_rate": test_rate(ctx, f["test"], thr)})
+                for n in comps:
+                    thr_vm = float(np.quantile(f["test"][ctx.alertable_test],
+                                               1.0 - comp_rates[n]))
+                    tab = stay_first_alarms(t, f["test"], thr_vm, skip)
+                    eqv[n].append({**early_stats(tab),
+                                   "test_alarm_rate": test_rate(ctx, f["test"], thr_vm)})
+                    flags_f[(n, s)] = early_flags(tab)
+            keys = ("catch", "catch_6h", "warning_median", "warning_q25",
+                    "warning_q75", "test_alarm_rate")
+            row["flagship_protocol"][tag] = {
+                **{k: float(np.mean([p[k] for p in prot])) for k in keys},
+                "catch_6h_min": float(min(p["catch_6h"] for p in prot)),
+                "catch_6h_max": float(max(p["catch_6h"] for p in prot))}
+            row["flagship_equal_volume"][tag] = {
+                n: {**{k: float(np.mean([p[k] for p in eqv[n]])) for k in keys},
+                    "catch_6h_min": float(min(p["catch_6h"] for p in eqv[n])),
+                    "seeds_ahead_6h": int(sum(p["catch_6h"] > row["comparators"][n][tag]["catch_6h"]
+                                              for p in eqv[n]))}
+                for n in comps}
+            # Paired >= 6 h catch difference at equal volume, pooled over seeds.
+            diffs = {n: [] for n in comps}
+            for idx in bootstrap_indices(patients, reps, SEED):
+                for n in comps:
+                    base = flags_c[n][idx].mean()
+                    diffs[n].append(np.mean([flags_f[(n, s)][idx].mean() - base
+                                             for s in seeds]))
+            row["paired_6h_equal_volume"][tag] = {
+                n: {"delta": float(np.mean([flags_f[(n, s)].mean() for s in seeds])
+                                   - flags_c[n].mean()),
+                    "ci": [float(np.percentile(diffs[n], 2.5)),
+                           float(np.percentile(diffs[n], 97.5))]}
+                for n in comps}
+        out.append(row)
+        best = max(comps, key=lambda n: row["comparators"][n]["all_alarms"]["catch_6h"])
+        e = row["flagship_equal_volume"]["all_alarms"][best]
+        d = row["paired_6h_equal_volume"]["all_alarms"][best]
+        print(f"[early] {b:>5.1%}: best comparator {best} >=6h "
+              f"{row['comparators'][best]['all_alarms']['catch_6h']:.1%} | flagship at its "
+              f"volume {e['catch_6h']:.1%} | d {d['delta']:+.1%} "
+              f"[{d['ci'][0]:+.1%}, {d['ci'][1]:+.1%}] | warning median "
+              f"{e['warning_median']:.1f} h vs "
+              f"{row['comparators'][best]['all_alarms']['warning_median']:.1f} h")
+    return out
+
+
+def early_verdict(rows, names):
+    """Pass rule (T33): at equal realized volume the flagship's >= 6 h catch
+    beats every comparator in ``names`` at every budget (ten-seed mean), and
+    against the best of them the pooled paired CI is above zero at 1/2/5%."""
+    beats, ci_ok = {}, {}
+    for r in rows:
+        b = r["budget"]
+        beats[b] = all(r["flagship_equal_volume"]["all_alarms"][n]["catch_6h"]
+                       > r["comparators"][n]["all_alarms"]["catch_6h"] for n in names)
+        if b in RACE_BUDGETS:
+            best = max(names, key=lambda n: r["comparators"][n]["all_alarms"]["catch_6h"])
+            ci_ok[b] = {"best": best,
+                        "ci_above_zero": r["paired_6h_equal_volume"]["all_alarms"][best]["ci"][0] > 0}
+    passed = all(beats.values()) and all(v["ci_above_zero"] for v in ci_ok.values())
+    return {"beats_every_budget": beats, "ci_at_race_budgets": ci_ok, "pass": passed}
+
+
+def load_allfeat(ctx):
+    """The T30 all-features GBM (seed 42), alignment-checked, if cached."""
+    path = CACHE / "allfeat_gbm_scores.npz"
+    if not path.exists():
+        return None
+    z = np.load(path, allow_pickle=False)
+    for split, frame in (("val", ctx.val_ordered), ("test", ctx.test_ordered)):
+        if not (z[f"{split}_stay_id"] == frame["stay_id"].to_numpy()).all():
+            raise RuntimeError(f"allfeat_gbm_scores.npz is not aligned with {split}")
+    return {"val": z["val_allfeat_s42"].astype(float),
+            "test": z["test_allfeat_s42"].astype(float)}
+
+
 # --- reporting -----------------------------------------------------------------
 
 def print_sweep(rows):
@@ -250,6 +408,9 @@ def print_sweep(rows):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--reps", type=int, default=1000)
+    ap.add_argument("--early", action="store_true",
+                    help="T33: >= 6 h catches and warning times (after the gates); "
+                         "writes data/cache/paper_early_catches.json")
     args = ap.parse_args()
 
     ctx = FusionContext(load_splits())
@@ -271,6 +432,30 @@ def main():
         if abs(got_b - want) > 5e-4:
             raise RuntimeError(f"sweep does not reproduce at {b}: {got_b:.4f}")
     print_sweep(rows)
+
+    if args.early:
+        from demo_bundle import assert_aggregate_only
+        allfeat = load_allfeat(ctx)
+        early_comps = dict(comps)
+        if allfeat is not None:
+            early_comps["allfeat"] = allfeat
+        early = early_catches(ctx, seeds, flagship, early_comps, args.reps)
+        payload = {"test": "T33", "seeds": seeds, "reps": args.reps,
+                   "early_hours": EARLY_HOURS, "rows": early,
+                   "verdict_published": early_verdict(early, COMPARATORS),
+                   "verdict_with_allfeat": (early_verdict(early, (*COMPARATORS, "allfeat"))
+                                            if allfeat is not None else None),
+                   "note": "aggregate-only; equal-volume rows set the flagship "
+                           "threshold from test score quantiles (diagnostic)"}
+        payload = json.loads(json.dumps(payload, default=float))
+        assert_aggregate_only(payload)
+        EARLY_OUT.write_text(json.dumps(payload, indent=1))
+        for k in ("verdict_published", "verdict_with_allfeat"):
+            if payload[k] is not None:
+                print(f"[verdict] {k}: {'PASS' if payload[k]['pass'] else 'FAIL'} "
+                      f"{payload[k]['ci_at_race_budgets']}")
+        print(f"[saved] {EARLY_OUT}")
+        return
 
     races = news2_races(ctx, seeds, flagship, args.reps)
     print_races(races, "budget", "Lead over NEWS2")

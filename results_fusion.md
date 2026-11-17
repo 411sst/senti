@@ -3007,6 +3007,47 @@ GBM, both must hold:
 After T30, the no-cadence GBM is expected to fail part 1. The rule is kept as
 the spec states it.
 
+## T33 — Early catches over ten seeds (L1, pre-registered)
+
+*Pre-registered 2026-11-17, before scoring. Results are added below whichever
+way they come out.*
+
+**Question.** Does the flagship catch more deteriorating stays at least 6 h
+ahead than the comparators? The test is at equal realized alarm volume, so
+extra alarms cannot buy the lead.
+
+**Scores.**
+* The flagship: two-head ALL-8, ten seeds.
+* The three published recipes: their cached single fits.
+* The all-features GBM (T30, seed 42).
+
+**Method.** `scripts/paper_operating_points.py --early`, run after the script's
+existing T28 gates.
+* Per budget (0.5, 1, 2, 3, 5, 7.5 and 10%), each comparator sits at its own
+  (1 − b) V_freeze quantile.
+* Reported for each of the 1,540 event stays:
+  * catch;
+  * ≥6 h catch (first alarm at least 6 h before the event);
+  * warning time among caught stays (median and IQR).
+* The flagship is reported two ways, and both are labelled:
+  * at its own protocol threshold;
+  * re-thresholded on test-score quantiles to fire on exactly each
+    comparator's realized test volume. This is the equal-volume diagnostic.
+* Everything is reported with all alarms, and again with first-hour alarms
+  ignored.
+* Paired CIs resample patients (1,000 resamples, shared by every model at a
+  budget). The pooled difference is the ten-seed mean within each resample.
+
+**Pass rule.** At equal realized volume, using all alarms, two things must
+hold:
+1. the flagship's ten-seed mean ≥6 h catch beats every published comparator at
+   every budget;
+2. at 1%, 2% and 5%, the pooled paired difference against the best published
+   comparator (the highest ≥6 h catch at that budget) has its 95% CI above zero.
+
+The same rule is reported a second time with the all-features GBM added to the
+comparators. That is a second, labelled verdict.
+
 ## Reproduce
 
 ```bash
@@ -3235,4 +3276,8 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t31_baseline_seeds.py --stage eval
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t32_no_cadence.py --stage heads --parallel 2
 .venv/bin/python scripts/t32_no_cadence.py --stage gbm --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t32_no_cadence.py --stage eval
+
+# T33 (L1): >= 6 h catches and warning times at ten seeds. Runs the T28 gates
+# first, then writes data/cache/paper_early_catches.json.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/paper_operating_points.py --early
 ```
