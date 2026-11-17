@@ -3227,6 +3227,67 @@ stops.
 The August core-3 text arm (`src/channel_arms.py`) has no committed write-up,
 so none of its numbers are used.
 
+## T35 — Operating points on eICU, trained on MIMIC only (A3 + L2, pre-registered)
+
+*Pre-registered 2026-11-17, before any eICU operating-point scoring. Results
+are added below whichever way they come out.*
+
+**Question.** Earlier eICU work ranked the models: on matched charting density
+the flagship beat the three published recipes, and pooled over every hour it
+tied the two strongest. The question here is about alarms. Thresholds are
+chosen on one set of hospitals and used on another. Does the MIMIC-only
+flagship then catch more deteriorating stays than every comparator?
+
+**Models.** All are trained on MIMIC only. Nothing is refit or recalibrated on
+eICU.
+
+| model | source |
+| --- | --- |
+| flagship | two-head ALL-7 (no cadence, which has no eICU mapping), ten seeds varying the fusion only (`eicu_twohead_all7{,_s1..s9}.npz`) |
+| eCART-style, YAIB, Sadanandan | the three published recipes (`eicu_lit_scores.npz`) |
+| NEWS2 | the cohort score |
+| no-cadence all-features GBM | T30's arm at seed 42. It is refit on MIMIC with T30's exact recipe, and the run stops unless the refit reproduces T30's MIMIC test AUPRC within 5e-4. eICU features come from the same builders with eICU sources (`src/eicu_allfeat.py`, tested). eICU has no MIMIC-IV-ECG, so the ECG block is the no-ECG state, as for the flagship's ECG agent |
+
+**Split.** `eicu_finetune.assign_splits(by="hospital", fracs=(0.6, 0.2, 0.2))`.
+* Thresholds come from the 30 val hospitals.
+* Evaluation is on the 49 test hospitals: 23,668 stays and 990,683 hours.
+* The 129 train hospitals are not used.
+
+**Hour sets.** Everything is done twice, and the verdict is given separately
+for each.
+* *Regular*: hours where all five vitals were measured in the previous 2 h.
+* *All*: every hour.
+
+Within a set, both the thresholds and the alarms use only that set's hours.
+
+**Thresholds.** For each model and budget b, the threshold is the (1 − b)
+quantile of the model's own scores on the val-hospital hours. Realized
+alarm rates are reported on both val and test. NEWS2's integer ties will
+move its realized rate off the budget.
+
+**Reported.**
+* At 0.5/1/2/3/5/7.5/10%:
+  * catch;
+  * ≥6 h catch;
+  * warning time among caught stays (median, IQR);
+  * realized alarm rates.
+* Per seed, and the ten-seed mean.
+* Paired differences, flagship − comparator, for catch and for ≥6 h catch. These
+  are pooled over seeds, with 1,000 patient-clustered resamples of test event
+  stays shared by every model.
+* First-alarm races at 1/2/5% against each comparator, on jointly caught stays,
+  pooled over seeds. The statistic is the flagship-first share among discordant
+  stays, with a patient-clustered CI.
+* As a labelled diagnostic: the flagship re-thresholded to each comparator's
+  realized test volume.
+* AUPRC and AUROC on test-hospital hours, as context.
+
+**Pass rule, per hour set.** Both must hold:
+* the flagship's ten-seed mean catch beats every comparator (the three recipes,
+  NEWS2 and the no-cadence GBM) at all seven budgets;
+* the pooled paired catch CI is above zero at 1%, 2% and 5% against every
+  comparator.
+
 ## Reproduce
 
 ```bash
@@ -3466,4 +3527,9 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/paper_operating_points.py --early
 .venv/bin/python scripts/t34_text_vs_latent.py --stage encode --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage heads --parallel 2
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage eval
+
+# T35 (A3 + L2): eICU operating points, models trained on MIMIC only. The gbm
+# stage refits T30's no-cadence GBM (gated against T30) and scores eICU.
+.venv/bin/python scripts/t35_eicu_operating_points.py --stage gbm --device cuda
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t35_eicu_operating_points.py --stage eval
 ```

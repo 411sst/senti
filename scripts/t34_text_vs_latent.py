@@ -120,11 +120,20 @@ def stage_sentences():
             per_split[s][agent] = august[s][col].to_numpy(dtype=object)
         log(f"[sentences] {s}: {len(keys):,} rows ({time.time() - t0:.0f} s)")
         del X
+    import pandas as pd
     payload = {}
     counts = {}
     for agent in ALL8:
-        allv = np.concatenate([per_split[s][agent] for s in SPLITS]).astype(str)
-        uniq, inv = np.unique(allv, return_inverse=True)
+        # Hash-based dedupe on the object array (a fixed-width str array of
+        # 2.5M sentences would need GBs), then sorted uniques so the codes are
+        # deterministic.
+        allv = np.concatenate([per_split[s][agent] for s in SPLITS])
+        raw_codes, raw_uniq = pd.factorize(allv, sort=False)
+        order = np.argsort(np.asarray(raw_uniq, dtype=str), kind="stable")
+        uniq = np.asarray(raw_uniq, dtype=str)[order]
+        rank = np.empty(len(order), dtype=np.int64)
+        rank[order] = np.arange(len(order))
+        inv = rank[raw_codes]
         offsets = np.cumsum([0] + [len(per_split[s][agent]) for s in SPLITS])
         payload[f"uniq_{agent}"] = uniq
         for i, s in enumerate(SPLITS):
@@ -200,25 +209,39 @@ def stage_encode(device, batch_size):
 # --- stage: heads ---------------------------------------------------------------------
 
 def text_bank(splits):
-    """ALL-8 AgentBank whose per-agent latent is that agent's sentence embedding."""
+    """ALL-8 AgentBank whose per-agent latent is that agent's sentence embedding.
+
+    The risk block is the latent bank's, unchanged, so the shared risk pathway
+    sees exactly what it sees in LATENT. The matrix (~2.5M x ~900 float32) is
+    filled in place to avoid a second full-size copy.
+    """
     import pandas as pd
     from orchestrator.fusion import AgentBank
     from two_head import ALL8
     latent = AgentBank.load(agent_names=ALL8)
     zc, ze = np.load(CODES), np.load(EMB)
-    keys, blocks = [], []
+    proj = {a: ze[f"proj_{a}"] for a in ALL8}
+    dims = {a: int(proj[a].shape[1]) for a in ALL8}
+    width = sum(dims.values()) + len(ALL8)
+    n = sum(len(splits[s]) for s in SPLITS)
+    matrix = np.empty((n, width), dtype=np.float32)
+    keys, row = [], 0
     for s in SPLITS:
         ordered = splits[s].sort_values(["stay_id", "hour"]).reset_index(drop=True)
         X, k = latent.lookup(ordered)
         _, risks = latent.split_features(X)
-        per = [ze[f"proj_{a}"][zc[f"codes_{a}_{s}"]] for a in ALL8]
-        blocks.append(np.concatenate(per + [risks.astype(np.float32)], axis=1))
+        m, col = len(k), 0
+        for a in ALL8:
+            matrix[row:row + m, col:col + dims[a]] = proj[a][zc[f"codes_{a}_{s}"]]
+            col += dims[a]
+        matrix[row:row + m, col:] = risks
         keys.append(k)
-        del X
-    dims = {a: int(ze[f"proj_{a}"].shape[1]) for a in ALL8}
+        row += m
+        del X, risks
+    if row != n:
+        raise ValueError("text bank rows do not cover the splits")
     del latent
-    return AgentBank(pd.concat(keys, ignore_index=True),
-                     np.concatenate(blocks, axis=0).astype(np.float32), dims, list(ALL8))
+    return AgentBank(pd.concat(keys, ignore_index=True), matrix, dims, list(ALL8))
 
 
 def head_fingerprint(arm, seed):
