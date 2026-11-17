@@ -3307,6 +3307,127 @@ timing at 1%, 2% and 5%, and for the lead over NEWS2. Two changes follow.
 The August core-3 text arm (`src/channel_arms.py`) has no committed write-up,
 so none of its numbers are used.
 
+### Results (run 2026-11-18)
+
+**Gate passed.** LATENT seed 42, refit by this script's worker, equals
+`two_head.npz` element for element (max |Δ| 0). The rest of the run:
+
+| stage | time | peak memory | notes |
+| --- | --- | --- | --- |
+| sentences | 2.5 min | 13 GB | |
+| encode | 15 min | | GPU, offline, local weights |
+| TEXT heads | 58 min | 20 GB per worker | 907-wide bank, ten seeds one at a time |
+| evaluation | 6.5 min | | |
+
+**Sentences and embeddings.** Distinct sentences and the share of embedding
+variance kept by PCA-128 on train-appearing sentences:
+
+| agent | distinct sentences | PCA variance kept |
+| --- | --- | --- |
+| vitals_tcn | 997,295 | 99.67% |
+| labs | 257,146 | 99.55% |
+| ecg_meas | 12,360 | 99.62% |
+| cadence | 3,531 | 99.73% |
+| resp | 2,600 | 99.88% |
+| fluid | 732 | 99.99% |
+| news2 | 402 | 99.97% |
+| gbm | 4 | — |
+
+The GBM's four risk words get 3 dimensions.
+
+**Verdicts: ranking *tie*; timing *latent earlier* (by the amended rule, at 1%
+and 5% but not 2%).**
+
+#### Ranking
+
+| | LATENT (10 seeds) | TEXT-128 (10 seeds) | LATENT − TEXT pooled [95% CI] | seeds with CI > 0 / < 0 |
+| --- | --- | --- | --- | --- |
+| AUPRC | 0.3087 (0.3017–0.3155) | 0.3051 (0.2967–0.3113) | **+0.0036 [−0.0026, +0.0106]** | 2 / 0 |
+| AUROC | 0.8225 (0.8171–0.8266) | 0.8214 (0.8170–0.8243) | +0.0011 [−0.0022, +0.0047] | 1 / 0 |
+
+LATENT is ahead in 8 of 10 seeds, by up to 0.009, but the pooled CI spans
+zero.
+
+On T27's seeds (42, 1, 2), against RISK-ONLY:
+
+| arm − RISK-ONLY | ΔAUPRC | ΔAUROC |
+| --- | --- | --- |
+| TEXT | +0.0003 [−0.0076, +0.0076] | +0.0043 [+0.0003, +0.0082] |
+| LATENT | +0.0032 [−0.0033, +0.0099] | +0.0050 [+0.0019, +0.0082] |
+
+All three channels tie on AUPRC.
+
+#### Timing: LATENT against TEXT, head to head
+
+* At equal volume, each arm sits at the same quantile of its own test scores
+  (a diagnostic).
+* Protocol means each arm at its own V_freeze quantile, with realized rates
+  1.11–1.13%, 2.13–2.14% and 5.16–5.21%.
+* The "first when they differ" figures are pooled over ten seeds, with a
+  patient-clustered CI.
+* "Only L / only T" counts event stays caught by one arm and missed by the
+  other, summed over seeds.
+
+| budget | jointly caught (pooled) | same hour | LATENT first when they differ: equal volume | protocol | seeds > 50% (eq. vol.) | only L / only T |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1% | 5,733 | 4,202 | **56.8% [52.2, 61.4]** | 58.7% [54.2, 63.3] | 8 | 968 / 576 |
+| 2% | 8,074 | 6,079 | 48.9% [44.9, 52.9] | 49.8% [45.7, 54.0] | 4 | 738 / 733 |
+| 5% | 10,730 | 8,868 | **57.7% [52.9, 62.3]** | 56.8% [51.8, 61.7] | 8 | 692 / 513 |
+
+The median difference is 0 h in every cell, because most jointly caught stays
+alarm in the same hour.
+
+#### Lead over NEWS2
+
+This uses the T27/T28 protocol: the arm is matched to NEWS2's achieved
+V_freeze volume. The figures are pooled over seeds and give the arm-first
+share when the alarms differ, which is the statistic in F1. T27's "win"
+column is a different statistic, so the two are not compared here.
+
+| budget | LATENT (10 seeds) | TEXT (10 seeds) | RISK-ONLY (T27's 3 seeds) |
+| --- | --- | --- | --- |
+| 1% | 55.5% [49.1, 61.1], +0 h | 58.5% [52.7, 64.0], +0 h | 48.0% [41.1, 54.3], +0 h |
+| 2% | **68.7% [64.6, 73.3], +1 h** | **69.9% [65.8, 74.3], +1 h** | 60.3% [55.4, 65.1], +0 h |
+| 5% | 73.2% [69.3, 77.0], +1 h | 71.3% [67.5, 75.1], +1 h | 75.7% [71.7, 79.7], +1 h |
+
+Realized test alarm rates: LATENT 2.76% and TEXT 2.77% at 2%, against NEWS2's
+2.28%.
+
+### What T34 means
+
+1. **Text ties latents on ranking.** An eight-agent fusion fed ClinicalBERT
+   embeddings of templated sentences ranks hours as well as the shipped
+   latent fusion: ΔAUPRC +0.004, CI spanning zero. Bare calibrated risks tie
+   both on AUPRC. As in T27, the ranking comes from the agents and their
+   calibration, not from the channel.
+2. **Latents are a little earlier than text, not at every budget.**
+   * At 1% and 5%, when the two arms first alarm in different hours, LATENT
+     is first in 57–58%, with CIs clear of 50%. It also catches more stays
+     that TEXT misses (968 against 576 at 1%).
+   * At 2%, the budget the paper's headline uses, there is no difference:
+     49%, 4 of 10 seeds.
+   * The pre-registered rule calls this *latent earlier*. The size is small,
+     and most jointly caught stays alarm in the same hour.
+3. **Text keeps the lead over NEWS2 that bare risks lose.** TEXT is first in
+   70% of discordant stays at 2%, with a median lead of +1 h. That is the
+   same as LATENT and well above RISK-ONLY (60%, +0 h). So the timing signal
+   lies in the agents' state, which both a latent and a sentence carry, and
+   not in the latent format as such.
+
+### Caveats
+
+* The sentences are deterministic templates at verbal precision. They are not
+  free text from a language model. D1 (T20) covers the LLM-as-fuser arm.
+* The GBM agent's sentence carries only its risk word, by design. Its latent
+  is one number too.
+* Equal-volume races set thresholds from test-score quantiles (a diagnostic).
+  The protocol rows agree.
+* The optional August core-3 note is not given:
+  * `channel_text_embeddings.npz` is not cached;
+  * reproducing `channel_arms_scores.npz` would mean re-encoding the August
+    sentences;
+  * the brief makes that note optional.
+
 ## T35 — Operating points on eICU, trained on MIMIC only (A3 + L2, pre-registered)
 
 *Pre-registered 2026-11-17, before any eICU operating-point scoring. Results
