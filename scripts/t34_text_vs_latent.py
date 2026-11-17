@@ -467,23 +467,48 @@ def stage_eval(workers):
                 f"{r['latent_first_when_differ']:.1%} [{r['ci'][0]:.1%}, {r['ci'][1]:.1%}] "
                 f"(n {r['n_pair']}, ties {r['ties']})")
 
+    # Lead over NEWS2 per arm (T27/T28 protocol: NEWS2 at its V_freeze budget
+    # quantile, the arm matched to NEWS2's achieved V_freeze volume), pooled.
+    from fair_capability import frozen_thresholds
+    from paper_stats import pooled_race
+    fm = ctx.freeze_mask
+    news2_lead = {}
+    for b in RACE_BUDGETS:
+        news2_lead[str(b)] = {}
+        for arm, scores, seeds in (("latent", latent, SEEDS), ("text", text, SEEDS),
+                                   ("risk_t27", risk, RISK_SEEDS)):
+            thr = [frozen_thresholds(ctx.news2_val[fm], scores[s]["val"][fm],
+                                     ctx.alertable_val[fm], b) for s in seeds]
+            r = pooled_race(ctx.test_ordered, [scores[s]["test"] for s in seeds],
+                            [x[1] for x in thr], ctx.news2_test, thr[0][0], reps=REPS, seed=SEED)
+            r["arm_test_rate_mean"] = float(np.mean([test_rate(ctx, scores[s]["test"], thr[i][1])
+                                                     for i, s in enumerate(seeds)]))
+            r["news2_test_rate"] = test_rate(ctx, ctx.news2_test, thr[0][0])
+            news2_lead[str(b)][arm] = r
+            log(f"[news2] {b:.0%} {arm:<8} first when they differ {r['share_when_differ']:.1%} "
+                f"[{r['ci'][0]:.1%}, {r['ci'][1]:.1%}], median lead {r['median_lead_h']:+.1f} h")
+
     lo, hi = ranking["auprc"]["latent_minus_text"]["pooled"]["ci"]
     rank_verdict = "latent better" if lo > 0 else ("text better" if hi < 0 else "tie")
-    lo2, hi2 = timing["0.02"]["equal_volume"]["pooled"]["ci"]
-    time_verdict = ("latent earlier" if lo2 > 0.5 else
-                    ("text earlier" if hi2 < 0.5 else "no difference"))
+    # Timing (amended before scoring): the equal-volume LATENT vs TEXT race at
+    # 1/2/5%. Latent earlier if its CI is above 50% at >= 2 budgets and below
+    # at none; text earlier symmetrically; otherwise no difference.
+    above = sum(timing[str(b)]["equal_volume"]["pooled"]["ci"][0] > 0.5 for b in RACE_BUDGETS)
+    below = sum(timing[str(b)]["equal_volume"]["pooled"]["ci"][1] < 0.5 for b in RACE_BUDGETS)
+    time_verdict = ("latent earlier" if above >= 2 and below == 0 else
+                    ("text earlier" if below >= 2 and above == 0 else "no difference"))
     zc, ze = np.load(CODES), np.load(EMB)
     payload = {
         "test": "T34", "seeds": list(SEEDS), "risk_seeds": list(RISK_SEEDS), "reps": REPS,
         "gate": gate, "sentences": json.loads(str(zc["counts_json"])),
         "encoding": json.loads(str(ze["meta_json"])),
-        "ranking": ranking, "timing": timing,
+        "ranking": ranking, "timing": timing, "news2_lead": news2_lead,
         "verdict": {"ranking": rank_verdict, "timing": time_verdict},
         "rules": {"ranking": "pooled dAUPRC (LATENT - TEXT) CI above zero: latent better; "
                              "below zero: text better; else tie",
-                  "timing": "2% equal-volume direct race, pooled over seeds: LATENT-first "
-                            "share of discordant stays, CI above 50%: latent earlier; below "
-                            "50%: text earlier; else no difference"},
+                  "timing": "equal-volume direct race at 1/2/5%, pooled over seeds: LATENT-first "
+                            "share of discordant stays; CI above 50% at >= 2 budgets and below at "
+                            "none: latent earlier; the reverse: text earlier; else no difference"},
         "note": "aggregate-only; equal-volume thresholds use test score quantiles (diagnostic)",
     }
     payload = json.loads(json.dumps(payload, default=float))

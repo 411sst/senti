@@ -383,6 +383,35 @@ def stage_eval(workers):
             f"{np.mean(c8):.1%} | " + " ".join(
                 f"{n} {row['comparators'][n]['catch']:.1%}" for n in COMPARATORS))
 
+    # Races (reported, no verdict): ALL-7 against each comparator and NEWS2 at
+    # 1/2/5%, pooled over seeds, at protocol V_freeze thresholds and, as a
+    # labelled diagnostic, with ALL-7 at the opponent's realized test volume.
+    from paper_operating_points import RACE_BUDGETS, freeze_quantile, test_rate
+    from paper_stats import pooled_race
+    races = {}
+    opps = {**comps, "news2": {"val": ctx.news2_val, "test": ctx.news2_test}}
+    tests7 = [all7[s]["test"] for s in SEEDS]
+    for b in RACE_BUDGETS:
+        thr7 = [freeze_quantile(ctx, all7[s]["val"], b) for s in SEEDS]
+        races[str(b)] = {}
+        for n, c in opps.items():
+            thr_c = freeze_quantile(ctx, c["val"], b)
+            rate = test_rate(ctx, c["test"], thr_c)
+            thr_eq = [float(np.quantile(all7[s]["test"][ctx.alertable_test], 1.0 - rate))
+                      for s in SEEDS]
+            races[str(b)][n] = {
+                "opponent_test_rate": rate,
+                "all7_test_rate_mean": float(np.mean([test_rate(ctx, all7[s]["test"], thr7[i])
+                                                      for i, s in enumerate(SEEDS)])),
+                "protocol": pooled_race(t, tests7, thr7, c["test"], thr_c, reps=REPS, seed=SEED),
+                "equal_volume": pooled_race(t, tests7, thr_eq, c["test"], thr_c, reps=REPS, seed=SEED)}
+            r = races[str(b)][n]
+            log(f"[race] {b:.0%} vs {n:<14} protocol first {r['protocol']['share_when_differ']:.1%} "
+                f"[{r['protocol']['ci'][0]:.1%}, {r['protocol']['ci'][1]:.1%}] lead "
+                f"{r['protocol']['median_lead_h']:+.1f} h | equal volume "
+                f"{r['equal_volume']['share_when_differ']:.1%} "
+                f"[{r['equal_volume']['ci'][0]:.1%}, {r['equal_volume']['ci'][1]:.1%}]")
+
     auprc_ok = {o: ranking["auprc"]["vs"][o]["pooled"]["ci_above_zero"] for o in COMPARATORS}
     catch_ok = {o: all(r["summary"]["all7_mean_beats"][o] for r in sweep) for o in COMPARATORS}
     passed = all(auprc_ok.values()) and all(catch_ok.values())
@@ -390,7 +419,7 @@ def stage_eval(workers):
         "test": "T32", "seeds": list(SEEDS), "reps": REPS, "resamples_used": n_used,
         "gate": gate, "notiming_meta": gmeta,
         "n_test_stays": n_stays, "n_event_stays": n_event,
-        "ranking": ranking, "sweep": sweep,
+        "ranking": ranking, "sweep": sweep, "races": races,
         "pass_parts": {"auprc_ci_above_zero": auprc_ok, "catch_more_every_budget": catch_ok},
         "pass": passed,
         "pass_rule": "vs each of eCART-style, YAIB, Sadanandan and the no-cadence GBM: "

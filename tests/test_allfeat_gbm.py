@@ -288,3 +288,37 @@ def test_measurement_timing_columns():
     assert timing == [c for c in cols if c in set(timing)]
     assert "lab_ph_hrs_since" in timing and "lab_ph" not in timing
     assert not set(timing) & set(CADENCE_FEATURES)
+
+
+# --- paper_stats.pooled_race ------------------------------------------------------
+
+def _race_frame():
+    rows = [{"stay_id": s, "patient_id": 10 + s, "hour": h, "event_h": ev}
+            for s, ev in ((1, 9.0), (2, 8.0), (3, 7.0), (4, None)) for h in range(10)]
+    return pd.DataFrame(rows)
+
+
+def _alarms(frame, pairs):
+    keys = set(pairs)
+    return np.array([1.0 if (s, h) in keys else 0.0
+                     for s, h in zip(frame["stay_id"], frame["hour"])])
+
+
+def test_pooled_race_counts_jointly_caught_stays_over_seeds():
+    from paper_stats import event_first_alarms, pooled_race
+    t = _race_frame()
+    opp = _alarms(t, [(1, 5), (2, 2), (4, 1)])          # stay 3 never; 4 is quiet
+    seed_a = _alarms(t, [(1, 3), (2, 2), (3, 4)])        # first, tie, (opp misses)
+    seed_b = _alarms(t, [(1, 7), (2, 9)])                # second; stay 2 after event
+    tab = event_first_alarms(t, opp, 0.5)
+    assert tab["stay_id"].tolist() == [1, 2, 3]
+    assert tab["first_alarm"].tolist()[:2] == [5.0, 2.0] and np.isnan(tab["first_alarm"][2])
+    out = pooled_race(t, [seed_a, seed_b], [0.5, 0.5], opp, 0.5, reps=200)
+    assert (out["n_pair"], out["model_first"], out["opponent_first"], out["ties"]) == (3, 1, 1, 1)
+    assert out["share_when_differ"] == pytest.approx(0.5)
+    assert out["median_lead_h"] == pytest.approx(0.0)
+    assert [p["n_pair"] for p in out["per_seed"]] == [2, 1]
+    assert 0.0 <= out["ci"][0] <= 0.5 <= out["ci"][1] <= 1.0
+    # A per-seed opponent gives the same answer when the arrays are the same.
+    same = pooled_race(t, [seed_a, seed_b], [0.5, 0.5], [opp, opp], [0.5, 0.5], reps=200)
+    assert same["share_when_differ"] == out["share_when_differ"] and same["ci"] == out["ci"]

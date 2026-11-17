@@ -3007,6 +3007,15 @@ GBM, both must hold:
 After T30, the no-cadence GBM is expected to fail part 1. The rule is kept as
 the spec states it.
 
+**Amendment, 2026-11-18, before any T32 scoring.** The brief asks for races
+too. They are reported with no verdict attached:
+* ALL-7 against each comparator and NEWS2, at 1/2/5%.
+* At protocol V_freeze thresholds, and with ALL-7 at the opponent's realized
+  test volume (a labelled diagnostic).
+* First-alarm differences on jointly caught stays, pooled over the ten seeds.
+* Reported as the ALL-7-first share when the alarms differ, with a
+  patient-clustered CI (`paper_stats.pooled_race`), plus the median lead.
+
 ## T33 — Early catches over ten seeds (L1, pre-registered)
 
 *Pre-registered 2026-11-17, before scoring. Results are added below whichever
@@ -3214,6 +3223,21 @@ stops.
   * CI above 50%: *latent earlier*.
   * CI below 50%: *text earlier*.
   * Otherwise: *no difference*.
+
+**Amendment, 2026-11-18, before any text-arm scoring.** The brief asks for
+timing at 1%, 2% and 5%, and for the lead over NEWS2. Two changes follow.
+* **The timing rule now uses all three budgets.** The equal-volume
+  LATENT-vs-TEXT race is run at 1/2/5%, pooled over seeds.
+  * *Latent earlier*: the LATENT-first CI is above 50% at two or more budgets
+    and below 50% at none.
+  * *Text earlier*: the reverse.
+  * Otherwise: *no difference*.
+* **The lead over NEWS2 is reported for each arm at 1/2/5%.** This includes
+  RISK-ONLY on T27's seeds. It uses the T27/T28 protocol: NEWS2 sits at its
+  V_freeze budget quantile, and the arm is matched to NEWS2's achieved
+  V_freeze volume. Results are pooled over seeds and reported as the
+  arm-first share with a patient-clustered CI, plus the median lead. No
+  verdict is attached.
 
 **Also reported, with no verdict attached.**
 * AUROC.

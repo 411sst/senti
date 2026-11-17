@@ -102,3 +102,75 @@ def pooled_delta(points_a, point_b, draws_a, draws_b):
     lo, hi = ci(pooled)
     return {"delta": point, "ci": [lo, hi], "ci_above_zero": bool(lo > 0),
             "draws_mean": float(pooled.mean())}
+
+
+# --- First-alarm races, pooled over seeds (T32, T34) ----------------------------
+
+def event_first_alarms(test_ordered, scores, thr):
+    """One row per EVENT stay, sorted by stay: patient, event hour, and the
+    first alarm at or before the event (NaN when the stay is not caught).
+    ``test_ordered`` holds stay_id, patient_id, hour and event_h, aligned
+    with ``scores``."""
+    import pandas as pd
+    hour = test_ordered["hour"].to_numpy(dtype=float)
+    crossed = np.asarray(scores, dtype=float) >= thr
+    frame = pd.DataFrame({"stay_id": test_ordered["stay_id"].to_numpy(),
+                          "patient_id": test_ordered["patient_id"].to_numpy(),
+                          "event_h": test_ordered["event_h"].to_numpy(dtype=float),
+                          "fa": np.where(crossed, hour, np.nan)})
+    g = frame.groupby("stay_id", sort=True).agg(
+        patient_id=("patient_id", "first"), event_h=("event_h", "first"),
+        fa=("fa", "min")).reset_index()
+    g = g[g["event_h"].notna()].reset_index(drop=True)
+    g["first_alarm"] = g["fa"].where(g["fa"] <= g["event_h"])
+    return g.drop(columns="fa")
+
+
+def pooled_race(test_ordered, model_scores, model_thr, opp_scores, opp_thr,
+                reps=1000, seed=SEED):
+    """First-alarm race of a model (one score array per seed) against an
+    opponent, on stays both catch at or before the event, pooled over seeds.
+
+    ``opp_scores``/``opp_thr`` may be one array/threshold shared by every seed
+    or one per seed. ``diff = opponent's first alarm - model's``, so diff > 0
+    means the model alarmed first. The CI on the model-first share among
+    discordant stays resamples patients (all event-stay patients, with
+    replacement); a drawn patient brings every pooled row it owns.
+    """
+    n = len(model_scores)
+    if not isinstance(opp_thr, (list, tuple)):
+        opp_scores, opp_thr = [opp_scores] * n, [opp_thr] * n
+    diffs, pats, per_seed, cache = [], [], [], {}
+    for m, mt, o, ot in zip(model_scores, model_thr, opp_scores, opp_thr):
+        key = (id(o), float(ot))
+        if key not in cache:
+            cache[key] = event_first_alarms(test_ordered, o, ot)
+        to = cache[key]
+        tm = event_first_alarms(test_ordered, m, mt)
+        both = (tm["first_alarm"].notna() & to["first_alarm"].notna()).to_numpy()
+        d = (to["first_alarm"] - tm["first_alarm"]).to_numpy(dtype=float)[both]
+        diffs.append(d)
+        pats.append(tm["patient_id"].to_numpy()[both])
+        w, lo = int((d > 0).sum()), int((d < 0).sum())
+        per_seed.append({"n_pair": int(len(d)), "model_first": w, "opponent_first": lo,
+                         "share_when_differ": float(w / (w + lo)) if w + lo else float("nan")})
+    d, p = np.concatenate(diffs), np.concatenate(pats)
+    wins, losses = int((d > 0).sum()), int((d < 0).sum())
+    patients = np.unique(cache[next(iter(cache))]["patient_id"].to_numpy())
+    pi = np.searchsorted(patients, p)
+    rng = np.random.default_rng(seed)
+    rates = []
+    for _ in range(reps):
+        counts = np.bincount(rng.integers(0, len(patients), len(patients)),
+                             minlength=len(patients)).astype(float)
+        wt = counts[pi]
+        a, b = wt[d > 0].sum(), wt[d < 0].sum()
+        if a + b:
+            rates.append(a / (a + b))
+    return {"n_pair": int(len(d)), "model_first": wins, "opponent_first": losses,
+            "ties": int(len(d) - wins - losses),
+            "share_when_differ": float(wins / (wins + losses)) if wins + losses else float("nan"),
+            "ci": ([float(np.percentile(rates, 2.5)), float(np.percentile(rates, 97.5))]
+                   if rates else [float("nan"), float("nan")]),
+            "median_lead_h": float(np.median(d)) if len(d) else float("nan"),
+            "per_seed": per_seed}
