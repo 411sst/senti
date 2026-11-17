@@ -3885,6 +3885,74 @@ If not, the max |Δ| is reported, per agent and for the composite.
 So the CPU rebuild is a fresh draw for everything downstream. Per-agent
 differences will show where it diverges.
 
+### Results (run 2026-11-18)
+
+**Verdict: not exact.** The rebuilt seed-42 flagship has test AUPRC
+**0.3156** against the shipped **0.3141**, and AUROC 0.8257 against 0.8266.
+The largest per-hour score difference is **0.436** on test and 0.533 on val;
+the score correlation is 0.983. The AUPRC gap, +0.0015, is well inside the
+flagship's ten-seed spread (SD 0.0049).
+
+The run used the same laptop as the shipped model ("machine A"), not a second
+machine. It ran in a fresh environment with the CPU-only torch wheel, CUDA
+hidden, one thread, and nothing else running.
+
+| | |
+| --- | --- |
+| CPU | Intel Core Ultra 9 275HX, 24 logical CPUs (one thread used) |
+| RAM | 30.7 GB |
+| OS | Pop!_OS 24.04 LTS, kernel 7.2 |
+| software | Python 3.12.3, torch 2.11.0+cpu |
+
+**Time and memory per stage** (`/usr/bin/time`):
+
+| stage | wall time | peak RSS |
+| --- | --- | --- |
+| ecg_features | 5 s | 0.3 GB |
+| core3_agents (vitals-TCN, NEWS2, labs, plus results_table's own GBM and fusion) | 2.7 min | 8.1 GB |
+| ecg_meas_agent | 50 s | 3.3 GB |
+| fair_gbm (FAIR+TRAJ tuning on CPU, 10 bootstrap reps) | 19.3 min | 8.4 GB |
+| gbm_agent | 2.0 min | 7.9 GB |
+| tab_agents (cadence, fluid, resp) | 2.6 min | 6.5 GB |
+| heads (T and D, seed 42) | 3.1 min | 6.9 GB |
+| **total** | **30.5 min** | **8.4 GB** |
+
+**Disk:**
+
+| | size |
+| --- | --- |
+| input extracts | 0.13 GB |
+| `data/cache` after the rebuild | 1.41 GB |
+| Python environment | 1.69 GB |
+
+**Where the rebuild diverges.** Test risks, rebuilt against shipped:
+
+| agent | identical | max \|Δ risk\| | risk correlation | shipped fit |
+| --- | --- | --- | --- | --- |
+| NEWS2 | yes | 0 | 1 | CPU |
+| labs | yes | 0 | 1 | CPU |
+| ecg_meas | yes | 0 | 1 | CPU |
+| vitals_tcn | no | 0.242 | 0.992 | GPU (found non-deterministic in October) |
+| gbm | no | 0.362 | 0.972 | GPU XGBoost |
+| cadence | no | 0.633 | 0.972 | GPU (`tabular_agent` uses CUDA when present) |
+| fluid | no | 0.447 | 0.974 | GPU |
+| resp | no | 0.445 | 0.991 | GPU |
+
+Train and val splits agree in the same way.
+
+### What T36 means
+
+1. **The flagship trains from scratch on one laptop CPU core in about half an
+   hour, within 8.4 GB of memory.** Two thirds of that time is the FAIR+TRAJ
+   GBM tuning. The neural agents and both heads take under 10 minutes.
+2. **It reproduces in quality, not bit for bit.**
+   * The three agents whose shipped fits never touched a GPU reproduce
+     exactly.
+   * Every GPU-trained agent gives a fresh draw on CPU, and the composite
+     follows. Its AUPRC lands 0.0015 above the shipped seed-42 value.
+   * A bit-exact rebuild would need the GPU fits redone on the CPU and
+     re-shipped, or a deterministic GPU path. Neither is done here.
+
 ## T37 — Serving latency and explanation cards on this laptop (H2, pre-registered)
 
 *Pre-registered 2026-11-18. No pass rule. This is a measurement that adds

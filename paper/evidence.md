@@ -119,6 +119,7 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | I2 | Latency, 1 thread, 29 h context | Core Ultra 9 0.727 ms (CPU-only build); i5-13500HX 1.66 ms; i9-13900H (integrated graphics only) 1.99 ms; Apple M1 1.12 ms. Serving RSS 537 / 335 / 319 / 373 MB | `docs/blog.md` l.27–40; `docs/cpu_benchmark_matrix.md` §2 | — | VERIFIED (i9 and M1 run by teammates) |
 | I3 | Load | Threads do not help at batch 1; 20-bed unit ≤ 40 ms CPU per hour; with cards ≈ 0.16% of one core | `docs/blog.md` l.42–48; matrix §6 | — | VERIFIED |
 | I4 | Requirements | Minimum 2 cores / 8 GB / 2 GB disk (M1 rebuild peak 2.4 GB); recommended 8 cores / 16 GB; 24 GB with the 12B card model | `docs/blog.md` l.50–60 | — | VERIFIED |
+| I5 | **Rebuild from scratch on a laptop CPU (pre-registered H1: not exact)** | Same laptop (Core Ultra 9 275HX, 30.7 GB, Pop!_OS 24.04), fresh env with torch 2.11.0+cpu, CUDA hidden, 1 thread. All eight agents + both heads at seed 42 from the hourly extracts: 30.5 min wall, peak RSS 8.4 GB (FAIR+TRAJ tuning 19.3 min of it); disk 0.13 GB inputs, 1.41 GB cache after, 1.69 GB env. Test AUPRC 0.3156 vs shipped 0.3141 (AUROC 0.8257 vs 0.8266); max |Δscore| 0.436 test, 0.533 val, corr 0.983. NEWS2, labs, ECG agents bit-identical; GPU-fit agents (vitals-TCN, GBM, cadence, fluid, resp) differ | T36 `results_fusion.md`; `scripts/h1_rebuild.sh`, `scripts/h1_rebuild.py` | s42 | BRANCH (`paper-tests`) |
 
 ## J. Explanations
 
