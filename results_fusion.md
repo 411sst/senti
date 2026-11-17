@@ -2900,6 +2900,54 @@ first more often:
 * The equal-volume rows set the flagship threshold from test-score quantiles.
   They are a diagnostic, not a protocol.
 
+## T31 — Do the baselines lose to the flagship at every seed? (pre-registered)
+
+*Pre-registered 2026-11-17, before the refits. Results are added below whichever
+way they come out.*
+
+**Question.** Until now the comparators have been single fits, so a seed-to-seed
+spread in a baseline was never paired against the flagship's. T31 refits each
+baseline under the flagship's seeds, then compares seed with seed.
+
+**Arms.** Every baseline has training randomness, so none is kept as a single
+fit:
+
+| baseline | fitter | randomness driven by the seed |
+| --- | --- | --- |
+| FAIR+TRAJ (145) | `baselines_fair.tune_gbm` | row and column subsampling 0.8 |
+| All-features GBM (262, T30) | the same tuner | the same |
+| eCART-style | `lit_gbm.fit_xgb` | the 50%-prevalence negative down-sample, then subsampling 0.8 |
+| YAIB LightGBM | `lit_gbm.fit_lgbm` | bagging and column sampling 0.66 |
+| Sadanandan XGBoost | `lit_gbm.fit_xgb` | subsampling 0.8 |
+
+Each is fit at seeds 42 and 1–9, with every recipe unchanged; the seed drives
+every random step of a fit. The processes and devices copy the original runs:
+* XGBoost on the GPU;
+* YAIB's LightGBM on 14 CPU threads;
+* the tabular process with one OpenMP thread, as in T30.
+
+The flagship is the two-head ALL-8 at the same ten seeds (`two_head.npz`).
+
+**Gate.** Each seed-42 refit must reproduce its cached single fit's test AUPRC
+within 0.0005, or the run stops. The cached fits are:
+* `fair_gbm_scores.npz` for FAIR+TRAJ;
+* `allfeat_gbm_scores.npz` for the all-features GBM;
+* `lit_gbm_scores.npz` for the three published recipes.
+
+Exact equality and the maximum absolute score difference are reported.
+
+**Metrics.** Test AUPRC (the pass metric) and AUROC, on raw scores (both are
+rank metrics). All 60 scores share 1,000 patient-clustered resamples. The
+pairs are flagship seed s against baseline seed s, and the pooled difference
+is the mean over the ten pairs within each resample. Each baseline's seed mean,
+SD and range are reported too.
+
+**Pass rule, per baseline.** The paired ΔAUPRC (flagship seed s − baseline seed
+s) has its 95% CI above zero in all 10 pairs.
+
+After T30, the all-features GBM is expected to fail this. It is run anyway, so
+that its own seed spread is measured.
+
 ## Reproduce
 
 ```bash
@@ -3112,4 +3160,14 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/paper_operating_points.py
 # evaluate on the CPU (one thread per process; the bootstrap runs in workers).
 .venv/bin/python scripts/t30_allfeat_gbm.py --stage fit
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t30_allfeat_gbm.py --stage eval
+
+# T31: every baseline refit at seeds 42 and 1-9, paired seed by seed. The three
+# fit processes run side by side, as the original single fits did.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t31_baseline_seeds.py --stage fit \
+    --models fair_traj,allfeat --device cuda --out data/cache/t31_seeds_tab.npz
+OMP_NUM_THREADS=8 .venv/bin/python scripts/t31_baseline_seeds.py --stage fit \
+    --models sadanandan,ecart --device cuda --out data/cache/t31_seeds_lit_gpu.npz
+OMP_NUM_THREADS=14 .venv/bin/python scripts/t31_baseline_seeds.py --stage fit \
+    --models yaib --out data/cache/t31_seeds_lit_cpu.npz
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t31_baseline_seeds.py --stage eval
 ```
