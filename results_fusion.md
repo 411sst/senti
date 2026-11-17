@@ -3048,6 +3048,106 @@ hold:
 The same rule is reported a second time with the all-features GBM added to the
 comparators. That is a second, labelled verdict.
 
+### Results (run 2026-11-17)
+
+**Gates passed.** The T28 head-to-head (0.6545 / 0.5357 / 0.5182) and the
+seed-42 sweep end points (0.3468 / 0.8682) reproduce. The run took 17 s.
+
+**Verdict: FAIL.** The flagship catches more stays at least 6 h ahead at
+equal volume from 1% to 10%, but not at 0.5%. At 1% the CI against the best
+published comparator (Sadanandan) includes zero. The verdict with the
+all-features GBM added fails on the same 0.5% budget, though its CIs at
+1/2/5% are clear.
+
+#### ≥6 h catches at equal realized volume (all alarms)
+
+* The flagship is the ten-seed mean, re-thresholded to each comparator's
+  realized test volume.
+* The comparator rate is its own catch at its own V_freeze threshold, with
+  its realized test alarm rate in brackets.
+* "Seeds" counts how many of the ten seeds the flagship is ahead in.
+* Δ is the pooled paired difference with its 95% CI.
+
+| budget | eCART-style | YAIB | Sadanandan | all-features GBM |
+| --- | --- | --- | --- | --- |
+| 0.5% | 9.4% (0.56%) vs 8.7%, 1/10, Δ −0.7 [−1.9, +0.6] | 7.5% vs 8.3%, 10/10, +0.7 [−0.3, +1.8] | 8.4% vs 7.6%, 0/10, −0.9 [−2.2, +0.3] | 8.1% vs 8.5%, 8/10, +0.5 [−0.6, +1.6] |
+| 1% | 15.0% vs 17.1%, 10/10, +2.1 [+0.8, +3.5] | 13.3% vs 16.5%, 10/10, +3.2 [+1.8, +4.5] | 15.5% vs 16.3%, 8/10, **+0.8 [−0.7, +2.4]** | 16.0% vs 17.9%, 10/10, +1.9 [+0.6, +3.3] |
+| 2% | 24.0% vs 27.8%, 10/10, +3.9 [+2.4, +5.5] | 23.5% vs 26.6%, 10/10, +3.1 [+1.5, +4.7] | 24.7% vs 28.8%, 10/10, +4.0 [+2.3, +5.9] | 25.6% vs 28.5%, 10/10, +2.9 [+1.6, +4.3] |
+| 3% | 29.9% vs 34.5%, +4.6 [+3.0, +6.2] | 29.1% vs 34.1%, +5.0 [+3.4, +6.7] | 30.7% vs 35.3%, +4.6 [+2.6, +6.5] | 30.7% vs 35.2%, +4.5 [+3.2, +6.0] |
+| 5% | 37.7% vs 41.7%, +4.1 [+2.5, +5.7] | 37.3% vs 42.1%, +4.8 [+3.0, +6.5] | 38.6% vs 42.9%, **+4.3 [+2.4, +6.1]** | 38.2% vs 42.4%, +4.2 [+2.8, +5.6] |
+| 7.5% | 44.8% vs 48.9%, +4.1 [+2.7, +5.7] | 43.4% vs 49.8%, +6.3 [+4.7, +7.9] | 44.4% vs 50.4%, +6.0 [+4.3, +7.8] | 45.8% vs 49.5%, +3.7 [+2.2, +5.2] |
+| 10% | 50.7% vs 54.9%, +4.2 [+2.7, +5.7] | 48.1% vs 54.9%, +6.8 [+5.2, +8.3] | 47.9% vs 55.3%, +7.4 [+5.7, +9.0] | 51.7% vs 54.5%, +2.8 [+1.6, +4.2] |
+
+From 3% upward, every comparator is behind in 9 or 10 of the 10 seeds.
+
+At protocol thresholds the flagship's own ≥6 h catch, ten-seed mean [min, max]
+with its realized alarm rate, is:
+
+| budget | ≥6 h catch | realized alarm rate |
+| --- | --- | --- |
+| 0.5% | 10.3% [9.2, 11.9] | 0.63% |
+| 1% | 18.6% | 1.13% |
+| 2% | 29.4% | 2.14% |
+| 3% | 35.8% | 3.13% |
+| 5% | 43.1% | 5.16% |
+| 7.5% | 50.3% | 7.68% |
+| 10% | 55.1% | 10.20% |
+
+The flagship fires above every comparator's volume at each budget, which is
+why the equal-volume rows exist.
+
+#### With first-hour alarms ignored
+
+Counting only alarms after the stay's first scored hour shrinks the lead a lot.
+Δ is flagship − comparator at equal volume, with its CI.
+
+| budget | eCART-style | YAIB | Sadanandan | all-features GBM |
+| --- | --- | --- | --- | --- |
+| 0.5% | −1.4 [−2.5, −0.2] | −0.1 [−1.1, +0.9] | −1.7 [−3.0, −0.6] | −0.3 [−1.2, +0.6] |
+| 1% | +0.3 [−1.1, +1.6] | +1.3 [−0.1, +2.6] | −1.2 [−2.7, +0.3] | +0.2 [−1.1, +1.5] |
+| 2% | +2.2 [+0.9, +3.8] | +1.3 [−0.3, +2.8] | +1.5 [−0.3, +3.3] | +1.3 [−0.1, +2.6] |
+| 5% | +1.7 [+0.1, +3.3] | +2.2 [+0.5, +3.8] | +1.0 [−0.8, +2.9] | +2.3 [+0.9, +3.5] |
+| 10% | +3.0 [+1.6, +4.4] | +4.6 [+3.0, +6.1] | +4.2 [+2.6, +5.9] | +1.9 [+0.7, +3.3] |
+
+At 0.5% the flagship is significantly behind eCART-style and Sadanandan on
+mid-stay ≥6 h catches. A good part of its low-budget early lead is first-hour
+flags.
+
+#### Warning time among caught stays
+
+The median and IQR, in hours, barely differ between models at equal volume:
+
+| budget | flagship at Sadanandan's volume | Sadanandan |
+| --- | --- | --- |
+| 2% | 5.9 | 5.7 [1.7, 34.1] |
+| 5% | 9.5 | 10.3 [2.3, 58.4] |
+| 10% | 13.9 | 14.1 [2.7, 70.9] |
+
+With first-hour alarms ignored, the comparators' medians are 0.5–2 h longer
+than the flagship's at most budgets. The flagship's early lead is more stays
+caught ≥6 h ahead, not longer warnings for the stays both catch.
+
+### What T33 means
+
+1. **At 1% and above, at equal volume, the flagship catches more stays at
+   least 6 h ahead.**
+   * Against every comparator, the CIs are clear at 2% and above.
+   * At 1% the CIs are clear against three of the four; Sadanandan is the
+     exception.
+   * At 0.5% it does not lead.
+2. **The early lead leans on first-hour alarms.** With those ignored, it holds
+   only from about 2–3% upward. At 0.5% the flagship trails eCART-style and
+   Sadanandan.
+3. **Warnings are not longer.** Among caught stays the warning times match the
+   comparators'. Any claim must be about the share of stays caught early, not
+   about earlier alarms on the same stays.
+
+### Caveats
+
+* The comparators are single fits. T31 measures their seed spread.
+* Equal volume is set from test-score quantiles. It is a diagnostic, used here
+  because the spec states the pass rule at equal realized volume.
+
 ## Reproduce
 
 ```bash

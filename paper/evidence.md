@@ -84,6 +84,7 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | F1 | Lead over NEWS2 | Median lead @2% +0.95 h [+0.52, +1.38], positive 8/10; earlier in 68.5% [64.7, 72.4] of stays where alarms differ; ~70% of ≥12 h leads are first-hour flags | T18 `results_fusion.md` l.49–58, 1572 | 10 | VERIFIED |
 | F2 | Death stays | On 68 death stays with no documented care-limitation decision: +0.5 h, 50% win | T16 `results_fusion.md` l.1413–1414 | — | VERIFIED |
 | F3 | Treatment-only supervision | Death-first stays lead +3 / +3 / +4 h | T7 Part ii | 3 | VERIFIED |
+| F4 | ≥6 h catches at equal realized volume (pre-registered L1, FAILED at 0.5% and at 1% vs Sadanandan) | Flagship re-thresholded to each comparator's test volume, ≥6 h catch of 1,540 event stays: at 2% 27.8 / 26.6 / 28.8% vs eCART-style 24.0, YAIB 23.5, Sadanandan 24.7% (Δ +3.9 / +3.1 / +4.0 pts, CIs clear); at 5% Δ +4.1 / +4.8 / +4.3; at 1% vs Sadanandan +0.8 [−0.7, +2.4]; at 0.5% behind eCART-style (−0.7) and Sadanandan (−0.9). Ignoring first-hour alarms the lead holds only from ~2–3%. Warning times among caught stays match the comparators' | T33 `results_fusion.md`; `scripts/paper_operating_points.py --early`; `data/cache/paper_early_catches.json` | flagship 10; comparators single fits | BRANCH (`paper-tests`) |
 
 ## G. External validation and adaptation (eICU-CRD v2.0)
 
