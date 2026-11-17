@@ -2839,10 +2839,25 @@ test alarm rates are in brackets. The flagship is the 10-seed mean.
 | 7.5% | 82.0% (7.68%) | 76.8% (7.33%) | 76.4% | 81.2% | 50.3 / 45.8% |
 | 10% | 86.5% (10.20%) | 82.6% (9.75%) | 80.6% | 86.0% | 55.1 / 51.7% |
 
-The flagship catches more stays in all ten seeds at every budget, both at
-protocol thresholds and at the GBM's realized volume. The same holds for ≥6 h
-catches in 10/10 seeds at every budget. Catches by an alarm after the first
-scored hour are ahead in 7 to 10 seeds, depending on the budget.
+At protocol thresholds:
+* the flagship catches more stays in all ten seeds at every budget;
+* it catches more ≥6 h ahead in 10/10 seeds at every budget;
+* catches by an alarm after the first scored hour are ahead in 7 to 10 seeds,
+  depending on the budget.
+
+At the GBM's realized volume (diagnostic), the ten-seed mean is still ahead at
+every budget, but not in every seed. Seeds ahead at 0.5/1/2/3/5/7.5/10%:
+
+| measure | seeds ahead |
+| --- | --- |
+| catch | 10 / 8 / 10 / 9 / 9 / 10 / 9 |
+| ≥6 h catch | 8 / 10 / 10 / 10 / 10 / 10 / 9 |
+| after-first-hour catch | 1 / 3 / 10 / 9 / 9 / 10 / 9 |
+
+Below 2%, the after-first-hour lead does not survive equal volume.
+
+*Corrected 2026-11-18. This paragraph first said the 10/10 held at the GBM's
+realized volume too. The cached `t30_allfeat_gbm.json` shows the counts above.*
 
 The catch lead is not free. The flagship spreads its alarms over more stays,
 including more stays that never deteriorate. The next table is exploratory and
@@ -2884,8 +2899,9 @@ first more often:
 2. **The fusion's measurable gains are elsewhere.**
    * It is better on death: +0.026 for the composite score, and 0.340 for the
      D head against 0.154.
-   * It catches more deteriorating stays at every budget, ≥6 h ahead included,
-     even at equal realized volume.
+   * It catches more deteriorating stays at every budget, ≥6 h ahead included.
+     This holds in 10/10 seeds at protocol thresholds. At equal realized volume
+     it holds for the ten-seed mean, in 8–10 of 10 seeds.
    * The catch lead costs stay-level precision (63 against 70% at 2%), so it
      is a different point on the stay-level trade-off, not a dominance result.
 3. **Without cadence the GBM still beats the flagship on AUPRC** (−0.013, CI
