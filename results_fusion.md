@@ -2670,6 +2670,76 @@ comparator's realized test volume:
 * The sign test ignores patient clustering; per-seed patient-clustered CIs for
   the race medians and win rates are in `data/cache/paper_operating_points.json`.
 
+## T30 — Does one GBM given every agent's inputs match the flagship? (pre-registered)
+
+*Pre-registered 2026-11-17, before any test-split scoring. This section was
+committed before the fit; the results below it are added after the run,
+whichever way they come out. T29 is the attention-vs-Shapley section on the
+`paper` branch, so the paper tests here start at T30.*
+
+**Question.** The flagship fuses eight agents. Is the fusion doing anything a
+single well-tuned tree model could not, if that model saw every agent's inputs?
+
+**Arms.**
+
+* **Flagship.** The two-head ALL-8 from `two_head.npz`, seeds 42 and 1–9.
+* **All-features GBM (`allfeat`).** One XGBoost on the union of the eight
+  agents' inputs at hour t, built with each agent's own feature code
+  (`src/allfeat_gbm.py`): 262 columns.
+  * FAIR+TRAJ: 145 (vitals, labs, trajectories).
+  * Cadence: 32.
+  * Fluid: 13.
+  * Resp: 12 (ladder level 5, as shipped).
+  * ECG machine-read: the 51 values the shipped agent reads, within 72 h, plus
+    has-ECG and ECG age. Hours without an ECG get the agent's zero fill.
+  * NEWS2 sub-scores: 7.
+* **All-features GBM without cadence (`allfeat_nocad`).** The same model minus
+  the 32 cadence columns: 230 columns. It is a reference row here; its own test
+  is S1.
+* **FAIR+TRAJ.** The cached row from `fair_gbm_scores.npz`, as a reference.
+
+**Recipe.** `baselines_fair.tune_gbm`, unchanged from FAIR+TRAJ:
+* depth {4, 6, 8} × class weight {none, rebalanced};
+* lr 0.05, at most 3,000 trees, early stop after 50 rounds on val AUPRC;
+* seed 42, GPU `hist`.
+
+Early stopping and the grid choice use the full validation split, as the
+flagship heads' early stopping does. Isotonic calibration is fit on V_fit, then
+the flagship's 1e-9 rank tiebreak (`_strictify`) is applied. Thresholds come
+from V_freeze. The GBM is fit once here; A2 (T31) repeats it at seeds 1–9.
+
+**Metrics.** All computed on the MIMIC test split.
+* AUPRC, AUROC and death-only AUPRC (`label_24h_death`). The flagship D head's
+  death AUPRC is a reference row.
+* CIs come from 1,000 patient-clustered resamples shared by every score; paired
+  differences are taken on the same resamples.
+* Pooled ten-seed difference: the mean over seeds of (flagship seed − GBM),
+  taken in each resample.
+* Catch sweep at 0.5/1/2/3/5/7.5/10%. Each model is thresholded at its own
+  (1 − b) V_freeze quantile, and realized test alarm rates are reported. Also
+  reported:
+  * catches by an alarm after the first scored hour;
+  * the flagship re-thresholded to the GBM's realized test volume, labelled as
+    a diagnostic.
+* First-alarm races against `allfeat` at 1/2/5%: at protocol thresholds, and at
+  equal realized test volume (diagnostic).
+
+**Pass rule.** The pooled paired ΔAUPRC (flagship − `allfeat`) has its 95% CI
+above zero. Also reported: how many of the ten seeds are individually clear.
+Every other number is descriptive.
+
+**Gates.** The run stops unless all of these hold:
+* The flagship seed-42 AUPRC is 0.3141.
+* The T28 seed-42 sweep end points reproduce (0.3468 at 0.5%, 0.8682 at 10%).
+* The GBM score cache's fingerprint matches its inputs. It covers the columns,
+  recipe, seed, device, XGBoost version, source files, builder code and row
+  keys.
+
+**Leakage test.** `tests/test_allfeat_gbm.py`:
+* Rewriting every source event at hour ≥ t0, and every cohort row after t0,
+  leaves every feature row at hour ≤ t0 unchanged.
+* For each block, an event at t0 − 1 does reach row t0.
+
 ## Reproduce
 
 ```bash
@@ -2877,4 +2947,9 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/channel_flagship.py
 # T28: operating points for the paper (sweep at ten seeds; equal-volume races).
 # Reads two_head.npz + lit_gbm_scores.npz only; ~20 s on a laptop CPU.
 OMP_NUM_THREADS=1 .venv/bin/python scripts/paper_operating_points.py
+
+# T30: the all-features GBM vs the flagship. Fit on the GPU (both arms), then
+# evaluate on the CPU (one thread per process; the bootstrap runs in workers).
+.venv/bin/python scripts/t30_allfeat_gbm.py --stage fit
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t30_allfeat_gbm.py --stage eval
 ```
