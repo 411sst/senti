@@ -118,7 +118,7 @@ def _rewrite_from(sources, cohort, t):
     e["values"][m] = 77.0
     new = pd.DataFrame([{"stay_id": 2, "ecg_hour": float(t), "study_id": 999}])
     e["index"] = pd.concat([e["index"], new], ignore_index=True)
-    e["values"] = np.vstack([e["values"], np.full((1, len(ECG_NAMES)), 55.0,
+    e["values"] = np.vstack([e["values"], np.full((1, e["values"].shape[1]), 55.0,
                                                   np.float32)])
     e["study_ids"] = e["index"]["study_id"].to_numpy()
 

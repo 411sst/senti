@@ -3148,6 +3148,85 @@ caught ≥6 h ahead, not longer warnings for the stays both catch.
 * Equal volume is set from test-score quantiles. It is a diagnostic, used here
   because the spec states the pass rule at equal realized volume.
 
+## T34 — Text against latents on the flagship (D4, pre-registered)
+
+*Pre-registered 2026-11-17, before any text-arm scoring. The templates, their
+tests and this section are committed first. Results are added below whichever
+way they come out.*
+
+**Question.** T27 found that bare risks tie latents on ranking but lose on
+timing. The paper's channel claim is about latents against text. Does the
+fusion do better when each agent hands it a latent vector than when the agent
+writes its state as a sentence?
+
+**Arms.** Each agent's message is the only thing that changes between arms.
+Everything else is the same two-head pipeline: `two_head.fit_head` per head,
+8 epochs, isotonic on V_fit, `_strictify`, then noisy-OR.
+
+| arm | what each of the eight agents hands the fusion | seeds |
+| --- | --- | --- |
+| LATENT | its latent vector (the shipped flagship, `two_head.npz`) | 42, 1–9 |
+| TEXT-128 | its templated sentence. The sentence goes through frozen Bio_ClinicalBERT, run locally with the mask-aware mean pool, then a per-agent PCA to at most 128 dims, fit on train-appearing sentences only (capped at 200,000, seed 42) | 42, 1–9 |
+| RISK-ONLY | its own 1-d calibrated risk (T27's arm, as a reference) | 42, 1, 2 |
+
+Both trained arms also get the eight calibrated risks through the shared risk
+pathway, as in T27.
+
+**Sentences.** Every input is a feature the agent itself reads at hour t, so
+the text carries the agent's own evidence. Each sentence ends with the agent's
+risk word, binned like the August text arm.
+
+| agent | template |
+| --- | --- |
+| vitals_tcn, labs, news2 | the August templates (`text_arm/summaries.py`) at verbal precision (`channel_arms.split_summaries`) |
+| ecg_meas | ECG age band; rate, QRS width and QTc; up to 3 named findings in priority order (VT, AF, RVR, …), or "read as normal"; "none in the last 72 h" when absent |
+| cadence | lab draws, medication orders and chart entries in 6 h, cultures in 24 h (count bands); activity steady, rising, falling or quiet |
+| fluid | urine rate band over 6 h, oliguria flag, 24 h net balance to 0.5 L; "no urine recorded yet" and "none charted in 6 h" as separate states |
+| resp | device level, artificial airway, O₂ flow to 2 L/min, FiO₂ to 10%, escalation in 6 h |
+| gbm | its risk word only. The GBM's state is its one-number prediction, and its inputs are already in the vitals and labs sentences |
+
+The templates are in `src/text_arm/agent_templates.py`. They are frozen with
+this commit, at `agent-templates-v1`. Unit tests are in
+`tests/test_agent_templates.py`:
+* the risk bins match `summaries.risk_word`;
+* output is deterministic and does not depend on row order;
+* rewriting every event at or after t0 leaves every sentence at or before t0
+  unchanged. This is built end to end through the agents' own feature builders.
+
+Sentences are deduplicated before encoding. The codes and embeddings are new
+fingerprinted caches (`t34_text_codes.npz`, `t34_text_embeddings.npz`).
+
+**Gate.** LATENT seed 42, refit by this script's worker, must equal
+`two_head.npz` `val_s42` and `test_s42` element for element. If not, the run
+stops.
+
+**Verdict rules.**
+* **Ranking.** Use the pooled ten-seed ΔAUPRC (LATENT − TEXT-128), with its CI
+  from 1,000 patient-clustered resamples shared by all 23 scores.
+  * CI above zero: *latent better*.
+  * CI below zero: *text better*.
+  * Otherwise: *tie*.
+* **Timing.** Use the direct race at 2%, at equal realized volume: each arm at
+  the same quantile of its own test scores, as in T27. This is a diagnostic,
+  labelled so. Per-stay first-alarm differences on jointly caught stays are
+  pooled over the ten seeds. The statistic is the share of discordant stays
+  where LATENT fires first, with a patient-clustered CI.
+  * CI above 50%: *latent earlier*.
+  * CI below 50%: *text earlier*.
+  * Otherwise: *no difference*.
+
+**Also reported, with no verdict attached.**
+* AUROC.
+* Per-seed differences.
+* The races at 1% and 5%, and at protocol V_freeze thresholds.
+* Stays caught by only one arm.
+* Realized test alarm rates.
+* TEXT − RISK-ONLY and LATENT − RISK-ONLY over T27's seeds.
+* Distinct sentences and PCA variance kept per agent.
+
+The August core-3 text arm (`src/channel_arms.py`) has no committed write-up,
+so none of its numbers are used.
+
 ## Reproduce
 
 ```bash
@@ -3380,4 +3459,11 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t32_no_cadence.py --stage eval
 # T33 (L1): >= 6 h catches and warning times at ten seeds. Runs the T28 gates
 # first, then writes data/cache/paper_early_catches.json.
 OMP_NUM_THREADS=1 .venv/bin/python scripts/paper_operating_points.py --early
+
+# T34 (D4): text against latents. Sentences and embeddings are cached with a
+# fingerprint; the first head job is LATENT seed 42, which must equal two_head.npz.
+.venv/bin/python scripts/t34_text_vs_latent.py --stage sentences
+.venv/bin/python scripts/t34_text_vs_latent.py --stage encode --device cuda
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage heads --parallel 2
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage eval
 ```
