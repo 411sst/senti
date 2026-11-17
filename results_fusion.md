@@ -2948,6 +2948,46 @@ s) has its 95% CI above zero in all 10 pairs.
 After T30, the all-features GBM is expected to fail this. It is run anyway, so
 that its own seed spread is measured.
 
+### Results (run 2026-11-18)
+
+**Gates passed.** Each seed-42 refit reproduces its cached single fit exactly,
+with max |Δ| 0 for all five models, so the refits are the published models.
+Wall time was 62 min for the tabular pair (peak 15 GB), 11 min for
+Sadanandan + eCART on the GPU and 29 min for YAIB on 14 threads. The bootstrap
+took 18 min.
+
+**Verdict: FAIL, 4 of 5.** The flagship clears four baselines in all 10 seed
+pairs and loses to the all-features GBM in all 10.
+
+| baseline | AUPRC over 10 seeds: mean (SD, range) | pooled ΔAUPRC, flagship − baseline [95% CI] | pairs with CI > 0 / < 0 | per-pair Δ range | pooled ΔAUROC [CI], pairs > 0 | verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| FAIR+TRAJ (145) | 0.2864 (0.0014, 0.2835–0.2877) | **+0.0224 [+0.0121, +0.0333]** | 10 / 0 | +0.0146 to +0.0320 | +0.0160 [+0.0103, +0.0218], 10 | PASS |
+| All-features GBM (262) | 0.3282 (0.0023, 0.3258–0.3318) | **−0.0195 [−0.0298, −0.0102]** | 0 / 10 | −0.0128 to −0.0291 | −0.0149 [−0.0198, −0.0100], 0 (10 below) | FAIL |
+| Sadanandan XGBoost | 0.2363 (0.0026, 0.2300–0.2395) | **+0.0725 [+0.0570, +0.0885]** | 10 / 0 | +0.0640 to +0.0821 | +0.0570 [+0.0473, +0.0659], 10 | PASS |
+| eCART-style | 0.2785 (0.0023, 0.2740–0.2811) | **+0.0302 [+0.0192, +0.0422]** | 10 / 0 | +0.0218 to +0.0375 | +0.0091 [+0.0030, +0.0151], 7 | PASS |
+| YAIB LightGBM | 0.2757 (0.0029, 0.2723–0.2811) | **+0.0330 [+0.0194, +0.0466]** | 10 / 0 | +0.0262 to +0.0432 | +0.0162 [+0.0089, +0.0232], 10 | PASS |
+
+The flagship's own ten-seed AUPRC is 0.3087 (SD 0.0049).
+
+### What T31 means
+
+1. **The published-recipe wins are not seed luck.** Paired seed by seed,
+   the flagship beats eCART-style, YAIB, Sadanandan and FAIR+TRAJ in every
+   pair.
+   * Their seed spreads (SD 0.0014–0.0029) are about half the flagship's
+     (0.0049).
+   * The single fits used so far were typical draws. Seed 42 sat at or near
+     the top of each recipe's range, so the earlier single-fit comparisons were,
+     if anything, conservative.
+2. **The all-features GBM result is also stable, the other way.**
+   * It beats the flagship in every pair, by 0.013–0.029.
+   * Its seed-42 fit (0.3268) is slightly below its ten-seed mean (0.3282).
+   * T30's conclusion stands at ten seeds on both sides: the ranking ceiling
+     on these inputs is a single tree model.
+3. **On AUROC the eCART-style margin is thinner.** The pooled difference is
+   clear, but 3 of 10 pairs cross zero. The paper's ranking claims rest on
+   AUPRC, as pre-registered.
+
 ## T32 — The flagship without its clinician-behaviour agent (S1, pre-registered)
 
 *Pre-registered 2026-11-17, before the head fits. Results are added below
