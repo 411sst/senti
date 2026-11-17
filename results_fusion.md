@@ -3901,6 +3901,73 @@ CPU-only torch wheel and `CUDA_VISIBLE_DEVICES=`, alone on the machine:
   Reported as seconds per card and tokens per second, at ollama's default
   thread choice.
 
+## T38 — What the MIMIC catch lead costs in quiet stays (exploratory, not pre-registered)
+
+*Added 2026-11-18 after T35. T35 showed that a catch lead at an hour budget
+can come from spreading alarms over more stays. This checks the MIMIC catch
+claims (T28, T30, T32, T33) for the same effect. No pass rule.*
+
+`scripts/stay_cost_mimic.py` uses the T35 helpers (unit-tested in
+`tests/test_t35_eicu.py`) on the MIMIC test set: 1,540 event stays, 6,835
+quiet stays. The models are:
+* the flagship, ten seeds;
+* the three published recipes;
+* T30's all-features GBM and its no-cadence arm, seed 42.
+
+Protocol thresholds are V_freeze quantiles. "Matched quiet share" is the best
+catch the flagship reaches while alarming on no more quiet stays than the
+comparator does at its protocol threshold, read off per-stay maximum scores
+(a test-score diagnostic).
+
+| budget | flagship: catch / quiet alarmed | eCART-style | YAIB | Sadanandan | all-features GBM |
+| --- | --- | --- | --- | --- | --- |
+| 0.5% | 34.4% / 1.8% | 26.8% / 1.0% | 26.8% / 0.9% | 28.8% / 1.4% | 31.1% / 0.9% |
+| 1% | 46.0% / 4.2% | 35.8% / 2.5% | 35.5% / 2.0% | 38.1% / 3.6% | 43.6% / 2.6% |
+| 2% | 58.6% / 8.0% | 47.7% / 5.1% | 46.7% / 4.6% | 50.3% / 8.2% | 53.9% / 5.3% |
+| 5% | 74.6% / 18.2% | 65.1% / 12.5% | 64.5% / 12.8% | 66.5% / 18.5% | 69.8% / 13.1% |
+| 10% | 86.5% / 32.5% | 79.7% / 26.1% | 77.2% / 24.3% | 77.3% / 31.5% | 82.6% / 25.0% |
+
+The flagship's catch at each comparator's quiet-stay share, with the
+comparator's own catch at that share (seeds ahead of 10):
+
+| budget | eCART-style | YAIB | Sadanandan | all-features GBM | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- |
+| 0.5% | 29.0 vs 27.0 (10) | 27.9 vs 27.0 (10) | 31.6 vs 28.8 (10) | 27.6 vs 31.3 (0) | 26.0 vs 29.6 (0) |
+| 1% | 38.8 vs 36.2 (10) | 35.7 vs 35.6 (6) | 43.4 vs 38.1 (10) | 39.0 vs 43.6 (0) | 38.0 vs 41.2 (0) |
+| 2% | 49.9 vs 47.7 (9) | 48.1 vs 46.8 (8) | 59.3 vs 50.3 (10) | 50.7 vs 54.0 (0) | 48.0 vs 52.3 (0) |
+| 3% | 58.0 vs 55.8 (10) | 57.4 vs 54.5 (10) | 65.3 vs 56.9 (10) | 58.6 vs 60.9 (0) | 57.2 vs 60.2 (0) |
+| 5% | 66.5 vs 65.1 (10) | 66.9 vs 64.5 (10) | 75.0 vs 66.5 (10) | 67.5 vs 69.9 (0) | 66.5 vs 69.9 (0) |
+| 7.5% | 76.0 vs 73.6 (10) | 75.2 vs 71.6 (10) | 82.3 vs 73.2 (10) | 75.7 vs 76.8 (1) | 74.6 vs 76.4 (0) |
+| 10% | 82.7 vs 79.7 (10) | 81.1 vs 77.2 (10) | 86.2 vs 77.3 (10) | 81.7 vs 82.7 (0) | 80.2 vs 80.6 (2) |
+
+Stay-level AUROC (event-stay maximum against quiet-stay maximum):
+
+| | flagship (10 seeds) | eCART-style | YAIB | Sadanandan | all-features GBM | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- | --- |
+| stay AUROC | 0.866 (0.863–0.869) | 0.851 | 0.848 | 0.814 | **0.874** | 0.873 |
+
+### What T38 means
+
+1. **Against the published recipes the MIMIC catch lead is real but smaller
+   than the hour-budget numbers suggest.**
+   * At an equal share of quiet stays alarmed, the flagship still catches
+     more than eCART-style and YAIB at every budget: by 0.1 to 3.9 points,
+     in 6–10 of 10 seeds.
+   * Against Sadanandan the margin is 2.8 to 9.1 points.
+   * At hour budgets the gaps were 5.6 to 9.4 points over the best recipe
+     (C4). Most of that comes from the flagship alarming on more stays.
+2. **Against the all-features GBM the catch lead reverses at equal cost.**
+   * At hour budgets the flagship catches more (T30, 10/10 seeds).
+   * At the GBM's quiet-stay share it catches 1 to 5 points fewer, in 0–1 of
+     10 seeds.
+   * The GBM also has the higher stay-level AUROC.
+   * This matches T30's ranking result: the flagship and the GBM sit at
+     different points of the same stay-level trade-off, and the GBM's curve
+     is higher.
+3. **On MIMIC, unlike all eICU hours, the flagship is not worse than the
+   recipes at equal cost.** The T35 all-hours reversal is specific to the
+   external data.
+
 ## Reproduce
 
 ```bash
@@ -4146,6 +4213,7 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t34_text_vs_latent.py --stage eval
 .venv/bin/python scripts/t35_eicu_operating_points.py --stage gbm --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t35_eicu_operating_points.py --stage eval
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t35_eicu_operating_points.py --stage cost   # exploratory stay-level cost
+OMP_NUM_THREADS=1 .venv/bin/python scripts/stay_cost_mimic.py   # T38, exploratory
 
 # T36 (H1): CPU-only rebuild in an ISOLATED clone (copied inputs, empty
 # embeddings/, torch +cpu venv). Never in a working repository.
