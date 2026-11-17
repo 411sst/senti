@@ -35,20 +35,43 @@ collapse" finding did not survive B's counter-measurement and is retracted**
 
 Both machines have now run `scripts/bench_single_node.py`.
 
-| Measurement | A · Ultra 9 275HX | B · i5-13500HX | C · i7 |
-|---|---|---|---|
-| Learned parameters, whole path | 96,605 | **96,605** *(exact match)* | — |
-| Fusion checkpoint on disk | 121 KB | architecture-only in that clone | — |
-| **End-to-end** 1 patient-hour, 29 h ctx, 1 thread | **0.832 ms** | **1.660 ms** (p95 2.11) | — |
-| …2 / 4 / 8 threads | 0.850 / 0.888 / 0.907 ms | 1.725 / 1.930 / 2.203 ms | — |
-| …14 threads | — | 2.284 ms | — |
-| …degradation at max threads | 0.92× | 0.73× | — |
-| **Vitals-TCN alone**, 1 × 29 h, 1 thread | 0.207 ms | 0.418 ms (0.45 in rev D) | — |
-| Batched throughput (256 × 29 h), 1 thread | 253,194 patient-hours/s | 184,000 patient-hours/s | — |
-| **Serving peak RSS** (no agent bank) | 691 MB `+cu128` / **537 MB `+cpu`** | **335 MB** `+cpu` | — |
-| Python + torch floor | 638 MB `+cu128` / 455 MB `+cpu` | — | — |
-| Model contribution to RSS | 3.5–11 MB (sampling noise) | 0.7 MB | — |
-| 20-bed unit, prediction only | 17 ms/hour `+cu128` / 15 ms `+cpu` | 33 ms/hour (0.0009% of a core) | — |
+| Measurement | A · Ultra 9 275HX | **A · Nov 2026** (`2.11.0+cpu`, T37) | B · i5-13500HX | C · i7 |
+|---|---|---|---|---|
+| Learned parameters, whole path | 96,605 | 96,605 | **96,605** *(exact match)* | — |
+| Fusion checkpoint on disk | 121 KB | architecture-only in that clone | architecture-only in that clone | — |
+| **End-to-end** 1 patient-hour, 29 h ctx, 1 thread | **0.832 ms** | **0.803 ms** (p95 0.811) | **1.660 ms** (p95 2.11) | — |
+| …2 / 4 / 8 threads | 0.850 / 0.888 / 0.907 ms | 0.824 / 0.866 / 0.864 ms | 1.725 / 1.930 / 2.203 ms | — |
+| …14 threads | — | — | 2.284 ms | — |
+| …degradation at max threads | 0.92× | 0.93× (at 8) | 0.73× | — |
+| **Vitals-TCN alone**, 1 × 29 h, 1 thread | 0.207 ms | not in this run | 0.418 ms (0.45 in rev D) | — |
+| Batched throughput (256 × 29 h), 1 thread | 253,194 patient-hours/s | 241,667 patient-hours/s | 184,000 patient-hours/s | — |
+| **Serving peak RSS** (no agent bank) | 691 MB `+cu128` / **537 MB `+cpu`** | **397 MB** | **335 MB** `+cpu` | — |
+| Python + torch floor | 638 MB `+cu128` / 455 MB `+cpu` | 346 MB | — | — |
+| Model contribution to RSS | 3.5–11 MB (sampling noise) | 3.1 MB | 0.7 MB | — |
+| 20-bed unit, prediction only | 17 ms/hour `+cu128` / 15 ms `+cpu` | 16 ms/hour | 33 ms/hour (0.0009% of a core) | — |
+
+**Column "A · Nov 2026" (T37, 2026-11-18).** This is the same laptop as A,
+re-measured for the paper in the H1 rebuild clone, alone on the machine:
+* fresh `torch 2.11.0+cpu` environment, `CUDA_VISIBLE_DEVICES=`;
+* fusion heads instantiated from the deployed architecture (same FLOPs);
+* medians of 100 reps.
+
+Results:
+* Latency, 0.803 ms on 1 thread, sits between the `+cu128` (0.832) and
+  `torch 2.14.0+cpu` (0.727) figures above.
+* Serving RSS is lower, 397 MB.
+* More threads still make batch-1 latency worse.
+
+Explanation cards on ollama 0.30.10, `num_gpu: 0`, default threads, medians
+of 4:
+
+| model | s/card | tok/s |
+| --- | --- | --- |
+| `medgemma:4b` | 3.0 | 12.1 |
+| `gemma4:12b` | 11.0 | 4.1 |
+
+These match §4's default-thread column. The first card after a cold start
+includes loading the model and pulls the means to 6.9 s and 21.2 s.
 
 ### The CPU-only wheel is faster, not just smaller
 

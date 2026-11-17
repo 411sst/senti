@@ -3969,6 +3969,52 @@ CPU-only torch wheel and `CUDA_VISIBLE_DEVICES=`, alone on the machine:
   Reported as seconds per card and tokens per second, at ollama's default
   thread choice.
 
+### Results (run 2026-11-18)
+
+Same machine and environment as T36: Core Ultra 9 275HX, torch 2.11.0+cpu,
+CUDA hidden, nothing else running. The fusion heads are the deployed
+architecture with untrained weights, because the clone has no checkpoint;
+latency depends only on shape. There are 96,605 learned parameters,
+matching the shipped count.
+
+| one patient-hour, 29 h context | median | p95 |
+| --- | --- | --- |
+| 1 thread | **0.803 ms** | **0.811 ms** |
+| 2 threads | 0.824 ms | 0.836 ms |
+| 4 threads | 0.866 ms | 0.875 ms |
+| 8 threads | 0.864 ms | 0.871 ms |
+
+Other measurements:
+
+| measurement | value |
+| --- | --- |
+| rescoring a 34 h stay, 1 thread | 0.836 ms |
+| batched throughput, 1 thread | 241,667 patient-hours/s |
+| serving peak RSS | 397 MB (Python + torch 346 MB; models add 3.1 MB) |
+| a 100-bed unit scored hourly | 80 ms of compute per hour |
+
+**Explanation cards**, ollama 0.30.10 with `num_gpu: 0` and default threads,
+real card prompt filled with a synthetic context, medians of 4:
+
+| model | s/card | tok/s |
+| --- | --- | --- |
+| `medgemma:4b` | 3.0 | 12.1 |
+| `gemma4:12b` | 11.0 | 4.1 |
+
+The first card after a cold start includes loading the model, which raises
+the means to 6.9 s and 21.2 s. Cards are generated only when an alarm fires.
+
+### What T37 means
+
+* Scoring one patient-hour takes under a millisecond on one laptop core, at
+  p50 and at p95.
+* Adding threads only slows a single score.
+* A card from the deployment model (`medgemma:4b`) takes about 3 s on the
+  CPU.
+* The numbers sit inside the range already in
+  `docs/cpu_benchmark_matrix.md`, which now carries them as a dated column
+  for this laptop.
+
 ## T38 — What the MIMIC catch lead costs in quiet stays (exploratory, not pre-registered)
 
 *Added 2026-11-18 after T35. T35 showed that a catch lead at an hour budget
