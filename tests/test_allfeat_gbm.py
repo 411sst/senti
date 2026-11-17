@@ -276,3 +276,15 @@ def test_paired_and_pooled_deltas():
     assert p["draws_mean"] == pytest.approx(0.25)
     assert p["ci"] == pytest.approx([0.2025, 0.2975])
     assert p["ci_above_zero"]
+
+
+def test_measurement_timing_columns():
+    from measurement_timing import MEASUREMENT_TIMING_EXTRA, measurement_timing_columns
+    from mimic_cohort import VITALS
+    cols = column_sets([f"m{i}" for i in range(51)])["allfeat_nocad"]
+    timing = measurement_timing_columns(cols)
+    assert len(timing) == len(VITALS) + len(LAB_COLUMNS) + len(MEASUREMENT_TIMING_EXTRA) == 36
+    assert set(MEASUREMENT_TIMING_EXTRA) <= set(cols)
+    assert timing == [c for c in cols if c in set(timing)]
+    assert "lab_ph_hrs_since" in timing and "lab_ph" not in timing
+    assert not set(timing) & set(CADENCE_FEATURES)

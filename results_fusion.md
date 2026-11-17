@@ -2948,6 +2948,65 @@ s) has its 95% CI above zero in all 10 pairs.
 After T30, the all-features GBM is expected to fail this. It is run anyway, so
 that its own seed spread is measured.
 
+## T32 — The flagship without its clinician-behaviour agent (S1, pre-registered)
+
+*Pre-registered 2026-11-17, before the head fits. Results are added below
+whichever way they come out.*
+
+**Question.** The cadence agent counts orders, chart rows and culture draws, so
+it reads clinician behaviour (K2). Does the flagship still beat the published
+recipes, and the matching no-cadence GBM, without it?
+
+**Arms.**
+
+* **ALL-7 two-head.** The flagship with the cadence agent removed: vitals_tcn,
+  news2, labs, ecg_meas, gbm, fluid and resp, from the same MIMIC agent caches
+  as ALL-8. It uses `two_head.py`'s construction unchanged:
+  * `fit_head` for each head, 8 epochs;
+  * isotonic calibration on V_fit, then `_strictify`;
+  * noisy-OR of the two heads.
+
+  It is fit at seeds 42 and 1–9, on the CPU with one thread per worker.
+
+  T22 measured a seven-agent two-head only through the eICU pipeline, whose
+  agents were refit. This is the first ALL-8 against ALL-7 comparison on the
+  same agents, with seeds matched.
+* **Comparators.** These are the cached single fits used in T28 and T30. Their
+  seed spread is T31's subject.
+  * eCART-style, YAIB LightGBM and Sadanandan XGBoost (`lit_gbm_scores.npz`);
+  * the no-cadence all-features GBM (230 columns, T30).
+* **References** (descriptive only):
+  * ALL-8 at the same seeds, which prices cadence;
+  * the no-cadence GBM without its 36 measurement-timing columns (194 columns,
+    seed 42). These are hours since each vital and lab, ECG presence and age,
+    and urine and resp record counts and timing (`src/measurement_timing.py`).
+    They are clinician behaviour too, but dropping cadence keeps them, so this
+    row shows how much the GBM leans on them.
+
+**Gate.** ALL-8 at seed 42, fit by the same worker, must equal `two_head.npz`
+(`val_s42` and `test_s42`) element for element, or the run stops. Every head
+file and the GBM cache carry a fingerprint that must match.
+
+**Metrics.**
+* AUPRC, AUROC and death-only AUPRC, with 1,000 shared patient-clustered
+  resamples. Pooled differences are the ten-seed mean within each resample.
+* Catch sweep at 0.5–10%, each model at its own (1 − b) V_freeze quantile,
+  with realized test alarm rates. Also reported:
+  * catches 6 h or more ahead;
+  * catches by an alarm after the first scored hour;
+  * quiet stays alarmed and stay-level precision;
+  * ALL-7 re-thresholded to each comparator's realized test volume, as a
+    labelled diagnostic.
+
+**Pass rule.** Against each of eCART-style, YAIB, Sadanandan and the no-cadence
+GBM, both must hold:
+1. the pooled ΔAUPRC (ALL-7 − comparator) has its 95% CI above zero;
+2. ALL-7's ten-seed mean catch is above the comparator's at all seven budgets,
+   at protocol thresholds.
+
+After T30, the no-cadence GBM is expected to fail part 1. The rule is kept as
+the spec states it.
+
 ## Reproduce
 
 ```bash
@@ -3170,4 +3229,10 @@ OMP_NUM_THREADS=8 .venv/bin/python scripts/t31_baseline_seeds.py --stage fit \
 OMP_NUM_THREADS=14 .venv/bin/python scripts/t31_baseline_seeds.py --stage fit \
     --models yaib --out data/cache/t31_seeds_lit_cpu.npz
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t31_baseline_seeds.py --stage eval
+
+# T32 (S1): the flagship without cadence. Heads ~5 min a seed per worker; the
+# first job is ALL-8 seed 42, which must equal two_head.npz.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t32_no_cadence.py --stage heads --parallel 2
+.venv/bin/python scripts/t32_no_cadence.py --stage gbm --device cuda
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t32_no_cadence.py --stage eval
 ```
