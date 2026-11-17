@@ -3072,6 +3072,130 @@ too. They are reported with no verdict attached:
 * Reported as the ALL-7-first share when the alarms differ, with a
   patient-clustered CI (`paper_stats.pooled_race`), plus the median lead.
 
+### Results (run 2026-11-18)
+
+**Gate passed.** ALL-8 at seed 42, refit by the T32 worker, equals
+`two_head.npz` exactly (max |Δ| 0). The no-timing GBM reference (194
+columns) tuned to depth 4 with 366 trees, val AUPRC 0.2805. It took 6 min
+on the GPU, with a 13.6 GB peak.
+
+**Verdict: FAIL.** Without cadence, ALL-7 beats all three published recipes
+on AUPRC and catches more than all four comparators at every budget. It does
+not beat the no-cadence all-features GBM on AUPRC.
+
+#### Ranking (MIMIC test; pooled over ten seeds, 1,000 shared patient-clustered resamples)
+
+| | AUPRC | AUROC | death-only AUPRC |
+| --- | --- | --- | --- |
+| ALL-7 two-head (10 seeds) | 0.3061 (SD 0.0049, 0.2982–0.3121) | 0.8204 | 0.1906 |
+| ALL-8 two-head (same seeds) | 0.3087 | 0.8225 | 0.1803 |
+| eCART-style | 0.2800 | 0.8142 | 0.1816 |
+| YAIB | 0.2811 | 0.8077 | 0.1642 |
+| Sadanandan | 0.2395 | 0.7659 | 0.1379 |
+| no-cadence all-features GBM | **0.3218** | **0.8333** | 0.1711 |
+| — without its 36 timing columns (reference) | 0.2878 | 0.8228 | **0.2028** |
+
+| ALL-7 − comparator | ΔAUPRC [95% CI] | seed pairs clear | ΔAUROC [95% CI] |
+| --- | --- | --- | --- |
+| eCART-style | **+0.0261 [+0.0139, +0.0380]** | 10/10 | +0.0062 [+0.0002, +0.0125] |
+| YAIB | **+0.0249 [+0.0109, +0.0382]** | 10/10 | +0.0127 [+0.0051, +0.0195] |
+| Sadanandan | **+0.0666 [+0.0519, +0.0824]** | 10/10 | +0.0544 [+0.0450, +0.0633] |
+| no-cadence GBM | **−0.0157 [−0.0267, −0.0058]** | 0/10 (9/10 below) | −0.0130 [−0.0175, −0.0084] |
+| no-timing GBM (reference) | +0.0183 [+0.0060, +0.0297] | 8/10 | −0.0024 [−0.0069, +0.0024] |
+
+**Price of cadence:**
+* ALL-8 − ALL-7 is +0.0027 [−0.0015, +0.0072] on AUPRC and +0.0021
+  [−0.0007, +0.0052] on AUROC, both spanning zero.
+* On death-only AUPRC it is −0.0103 [−0.0184, −0.0012]: ALL-7 is *better*
+  on death.
+* So in the two-head flagship, cadence adds no measurable ranking. This is
+  smaller than G6's single-head cost of about 0.015.
+
+Death-only AUPRC, ALL-7 − comparator:
+
+| comparator | ΔAUPRC |
+| --- | --- |
+| eCART-style | +0.009 [−0.018, +0.036] |
+| YAIB | +0.026 [+0.001, +0.051] |
+| Sadanandan | +0.053 [+0.023, +0.083] |
+| no-cadence GBM | +0.019 [−0.005, +0.042] |
+
+#### Catch sweep (protocol V_freeze thresholds; realized test rates in brackets)
+
+| budget | ALL-7 (10-seed mean) | ALL-8 | eCART-style | YAIB | Sadanandan | no-cadence GBM | no-timing GBM |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.5% | **33.6%** (0.63%) | 34.4% | 26.8% (0.56%) | 26.8% (0.52%) | 28.8% (0.49%) | 29.6% (0.54%) | 23.0% (0.51%) |
+| 1% | **45.8%** (1.10%) | 46.0% | 35.8% (1.03%) | 35.5% (0.99%) | 38.1% (0.98%) | 40.8% (1.04%) | 33.5% (1.00%) |
+| 2% | **58.9%** (2.11%) | 58.6% | 47.7% (1.96%) | 46.7% (1.84%) | 50.3% (2.06%) | 52.3% (1.85%) | 43.1% (1.86%) |
+| 3% | **65.8%** (3.09%) | 66.3% | 55.8% (2.90%) | 54.5% (2.84%) | 56.9% (3.02%) | 60.1% (2.92%) | 52.2% (2.81%) |
+| 5% | **74.0%** (5.19%) | 74.6% | 65.1% (4.71%) | 64.5% (4.85%) | 66.5% (5.08%) | 69.9% (5.00%) | 62.9% (4.93%) |
+| 7.5% | **81.0%** (7.79%) | 82.0% | 73.6% (7.16%) | 71.6% (7.40%) | 73.2% (7.69%) | 76.4% (7.43%) | 69.9% (7.40%) |
+| 10% | **86.0%** (10.31%) | 86.5% | 79.7% (10.00%) | 77.2% (10.06%) | 77.3% (10.28%) | 80.6% (9.74%) | 75.6% (9.80%) |
+
+* ALL-7 is ahead of every comparator in 10/10 seeds at every budget.
+* At each comparator's realized test volume (diagnostic) its ten-seed mean
+  is still ahead. The one exception is Sadanandan at 0.5% (−0.1 pt).
+* At 2%, the equal-volume margins are:
+
+  | eCART-style | YAIB | Sadanandan | no-cadence GBM |
+  | --- | --- | --- | --- |
+  | +9.7 | +9.7 | +8.3 | +4.2 pts |
+* ≥6 h catches are ahead in 10/10 seeds at every budget, except against
+  eCART-style at 0.5% (7/10). At 2%:
+
+  | ALL-7 | eCART-style | YAIB | Sadanandan | no-cadence GBM |
+  | --- | --- | --- | --- | --- |
+  | 29.3% | 24.0% | 23.5% | 24.7% | 24.0% |
+
+As in T30, the lead costs quiet stays. At 2%:
+
+| | ALL-7 | eCART-style | YAIB | Sadanandan | no-cadence GBM |
+| --- | --- | --- | --- | --- | --- |
+| quiet stays alarmed | 8.1% | 5.1% | 4.6% | 8.2% | 4.6% |
+| stay precision | 62.4% | 67.7% | 69.4% | 57.9% | 71.8% |
+
+#### Races (descriptive, per the amendment)
+
+ALL-7-first share among jointly caught stays whose first alarms differ, pooled
+over ten seeds:
+
+| budget | eCART-style | YAIB | Sadanandan | no-cadence GBM | NEWS2 |
+| --- | --- | --- | --- | --- | --- |
+| 1% | 63.5% [57.5, 69.4] | 62.6% [56.0, 68.7] | 66.0% [60.8, 71.0] | 62.9% [57.3, 68.5] | 54.3% [48.1, 60.4] |
+| 2% | 67.9% [62.9, 72.5] | 61.7% [56.6, 67.2] | 62.9% [58.1, 67.4] | 68.9% [64.1, 73.6] | 58.8% [53.9, 63.6] |
+| 5% | 69.5% [65.1, 74.0] | 65.9% [61.5, 70.7] | 73.1% [69.5, 76.7] | 72.4% [68.3, 76.6] | 71.7% [67.6, 75.4] |
+
+At the opponent's test volume (diagnostic) every share stays above 50% with
+its CI clear, except NEWS2 at 1% (52.8% [46.4, 58.8]). The median lead is
+0 h in every cell, except +1 h against NEWS2 at 5%.
+
+### What T32 means
+
+1. **The advantage over the published recipes does not depend on the cadence
+   agent.**
+   * Without it the flagship still beats eCART-style, YAIB and Sadanandan on
+     AUPRC by 0.025 to 0.067, CI clear in 10/10 seeds.
+   * It catches more at every budget, and is first more often when alarms
+     differ.
+   * In the two-head flagship, cadence's own ranking contribution is not
+     measurable (+0.003, CI spans zero).
+2. **The verdict fails only on the no-cadence GBM, whose lead is itself
+   clinician behaviour.**
+   * That GBM is still 0.016 ahead on AUPRC.
+   * Removing its 36 measurement-timing columns (hours since each vital and
+     lab, record counts, ECG presence) drops it from 0.3218 to 0.2878. ALL-7
+     then leads by 0.018 (8/10 seeds clear) and ties it on AUROC.
+   * So the all-features GBM's ranking edge rests on *when* things were
+     measured, which is clinician behaviour. The flagship's agents carry some
+     of that too: the labs and vitals agents see their own sampling.
+3. **Reading for S1.**
+   * The pre-registered rule fails, because one comparator wins on AUPRC.
+   * The narrower claim does pass, for the published recipes and for
+     catches: removing the order and culture counts does not remove the
+     advantage.
+   * The ranking gap to the all-features GBM traces to measurement-timing
+     features that removing cadence leaves in.
+
 ## T33 — Early catches over ten seeds (L1, pre-registered)
 
 *Pre-registered 2026-11-17, before scoring. Results are added below whichever
