@@ -2740,6 +2740,166 @@ Every other number is descriptive.
   leaves every feature row at hour ≤ t0 unchanged.
 * For each block, an event at t0 − 1 does reach row t0.
 
+### Results (run 2026-11-17)
+
+**Gates passed.** The flagship seed-42 AUPRC is 0.3141, the T28 sweep end
+points are 0.3468 and 0.8682, and the score cache's fingerprint matches its
+inputs.
+
+**The fit.** Both arms chose depth 6 with no class weighting.
+
+| arm | trees | val AUPRC |
+| --- | --- | --- |
+| `allfeat` | 187 | 0.3075 |
+| `allfeat_nocad` | 199 | 0.3039 |
+
+The fit took 8 min on the GPU with a 16 GB peak RAM, and the evaluation took
+6.5 min. The NEWS2 sub-scores sum to the cohort's NEWS2 on 100% of rows.
+
+**Verdict: FAIL.** One GBM given every agent's inputs ranks hours better than
+the flagship.
+
+#### Ranking (MIMIC test)
+
+| score | AUPRC | AUROC | death-only AUPRC |
+| --- | --- | --- | --- |
+| Flagship, 10-seed mean [min, max] | 0.3087 [0.3017, 0.3155] | 0.8225 [0.8171, 0.8266] | 0.1803 [0.1703, 0.1877] |
+| All-features GBM (262) | **0.3268** | **0.8363** | 0.1544 |
+| All-features GBM, no cadence (230) | 0.3218 | 0.8333 | 0.1711 |
+| FAIR+TRAJ (145, reference) | 0.2872 | 0.8068 | 0.1889 |
+| Flagship D head (reference) | — | — | 0.3404 [0.3260, 0.3512] |
+
+Below, each difference is flagship minus comparator, pooled over the ten seeds
+on 1,000 shared patient-clustered resamples. "Seeds" counts single-seed 95%
+CIs: how many are above zero / below zero.
+
+| comparator | ΔAUPRC | seeds | ΔAUROC | seeds | Δ death AUPRC | seeds |
+| --- | --- | --- | --- | --- | --- | --- |
+| All-features GBM | **−0.0181 [−0.0282, −0.0082]** | 0 / 10 | −0.0138 [−0.0182, −0.0090] | 0 / 10 | +0.0259 [+0.0039, +0.0473] | 6 / 0 |
+| No-cadence GBM | −0.0131 [−0.0233, −0.0031] | 0 / 6 | −0.0108 [−0.0155, −0.0058] | 0 / 10 | +0.0092 [−0.0128, +0.0311] | 0 / 0 |
+| FAIR+TRAJ | +0.0216 [+0.0109, +0.0326] | 10 / 0 | +0.0157 [+0.0100, +0.0215] | 10 / 0 | −0.0086 [−0.0321, +0.0146] | 0 / 0 |
+
+The flagship trails the all-features GBM on AUPRC in every seed, by 0.011 to
+0.025. The FAIR+TRAJ row reproduces B2. AUPRC on raw GBM scores equals AUPRC
+on the calibrated ones (0.3268 and 0.3218), so the rank tiebreak did not move
+the ranking.
+
+#### Where the gap comes from (exploratory, not pre-registered)
+
+Hour-level AUPRC against each event part's own label:
+
+| label | prevalence | flagship, 10-seed mean | all-features GBM | no cadence |
+| --- | --- | --- | --- | --- |
+| ventilation | 3.29% | 0.1788 | **0.2046** | 0.1931 |
+| vasopressor | 2.09% | 0.1190 | **0.1408** | 0.1288 |
+| death | 0.76% | **0.1803** | 0.1544 | 0.1711 |
+| treatment only | 4.12% | 0.2033 | **0.2288** | 0.2195 |
+
+So the GBM's lead is on the treatment events, and the flagship is better on
+death.
+
+The GBM's total gain splits by input block as follows:
+
+| block | share of gain |
+| --- | --- |
+| FAIR+TRAJ | 61% |
+| resp | 17% |
+| cadence | 10% |
+| fluid | 5.5% |
+| ECG | 4.4% |
+| NEWS2 sub-scores | 1.9% |
+
+The top features are:
+
+| feature | share of gain |
+| --- | --- |
+| `resp_fio2` | 7.8% |
+| `lab_ph_hrs_since` | 5.7% |
+| `resp_o2_flow` | 3.9% |
+| `lab_lactate_hrs_since` | 2.9% |
+| `resp_airway` | 2.6% |
+
+Two of the top four are hours since the last blood gas and the last lactate.
+That is clinician behaviour: when a test was ordered, not what it showed. It
+sits in the labs block, not the cadence block, so removing cadence (S1) does
+not remove it.
+
+#### Catch sweep: more stays caught, at a cost in quiet stays
+
+Each model is thresholded at its own (1 − b) quantile on V_freeze; realized
+test alarm rates are in brackets. The flagship is the 10-seed mean.
+
+| budget | flagship catch | all-features GBM | no cadence | flagship at GBM's test volume (diagnostic) | ≥6 h: flagship / GBM |
+| --- | --- | --- | --- | --- | --- |
+| 0.5% | 34.4% (0.63%) | 31.1% (0.54%) | 29.6% | 32.0% | 10.3 / 8.1% |
+| 1% | 46.0% (1.13%) | 43.6% (1.08%) | 40.8% | 45.0% | 18.6 / 16.0% |
+| 2% | 58.6% (2.14%) | 53.9% (2.04%) | 52.3% | 57.6% | 29.4 / 25.6% |
+| 3% | 66.3% (3.13%) | 60.9% (3.01%) | 60.1% | 65.5% | 35.8 / 30.7% |
+| 5% | 74.6% (5.16%) | 69.8% (4.93%) | 69.9% | 73.9% | 43.1 / 38.2% |
+| 7.5% | 82.0% (7.68%) | 76.8% (7.33%) | 76.4% | 81.2% | 50.3 / 45.8% |
+| 10% | 86.5% (10.20%) | 82.6% (9.75%) | 80.6% | 86.0% | 55.1 / 51.7% |
+
+The flagship catches more stays in all ten seeds at every budget, both at
+protocol thresholds and at the GBM's realized volume. The same holds for ≥6 h
+catches in 10/10 seeds at every budget. Catches by an alarm after the first
+scored hour are ahead in 7 to 10 seeds, depending on the budget.
+
+The catch lead is not free. The flagship spreads its alarms over more stays,
+including more stays that never deteriorate. The next table is exploratory and
+uses the flagship at the GBM's test volume.
+
+| budget | quiet stays alarmed: flagship / GBM | stay-level precision: flagship / GBM |
+| --- | --- | --- |
+| 0.5% | 1.4 / 0.9% | 83.9 / 88.7% |
+| 1% | 3.9 / 2.6% | 72.1 / 79.3% |
+| 2% | 7.5 / 5.3% | 63.3 / 69.5% |
+| 3% | 11.9 / 7.9% | 55.5 / 63.4% |
+| 5% | 17.6 / 13.1% | 48.8 / 54.6% |
+| 10% | 31.4 / 25.0% | 38.2 / 42.7% |
+
+At 2% and equal volume, the flagship catches about 57 more of the 1,540 event
+stays and alarms on about 150 more of the 6,835 quiet stays. That is about 2.6
+extra quiet stays per extra catch. Each alarmed stay also gets fewer alarm-hours
+from the flagship: 5.3 against 6.2 at 2%.
+
+#### Races against the all-features GBM
+
+Most jointly caught stays are first flagged in the same hour, and the median
+lead is 0 h at every budget. When the first alarms differ, the flagship is
+first more often:
+
+| budget | flagship first when they differ: protocol → equal volume (10-seed mean) | flagship first with sign p < 0.05, at equal volume |
+| --- | --- | --- |
+| 1% | 56 → 53% | 3/10 seeds |
+| 2% | 58 → 56% | 6/10 seeds |
+| 5% | 73 → 70% | 9/10 seeds |
+
+### What T30 means
+
+1. **The pre-registered claim fails.** The flagship does not beat a GBM that
+   sees the same inputs: AUPRC −0.018 and AUROC −0.014, in every seed. The
+   flagship's ranking lead over FAIR+TRAJ (B2, +0.022 here) comes from the
+   inputs FAIR+TRAJ never saw, not from the fusion. Calling FAIR+TRAJ the
+   "equal-information" GBM is only true for the 145 columns it has.
+2. **The fusion's measurable gains are elsewhere.**
+   * It is better on death: +0.026 for the composite score, and 0.340 for the
+     D head against 0.154.
+   * It catches more deteriorating stays at every budget, ≥6 h ahead included,
+     even at equal realized volume.
+   * The catch lead costs stay-level precision (63 against 70% at 2%), so it
+     is a different point on the stay-level trade-off, not a dominance result.
+3. **Without cadence the GBM still beats the flagship on AUPRC** (−0.013, CI
+   below zero). That is a preview of S1, which also needs the
+   clinician-behaviour caveat above: lab "hours since" channels stay in.
+
+### Caveats
+
+* The GBM is a single fit at seed 42; T31 (A2) refits it at seeds 1–9.
+* The stay-cost and event-part analyses were added after the pre-registered
+  run and are exploratory.
+* The equal-volume rows set the flagship threshold from test-score quantiles.
+  They are a diagnostic, not a protocol.
+
 ## Reproduce
 
 ```bash

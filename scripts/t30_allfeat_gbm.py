@@ -359,12 +359,53 @@ def stage_eval(workers):
                   f"{np.mean([x['median'] for x in r]):+.2f} h | flagship-first p<0.05 "
                   f"{first}/10")
 
+    # Exploratory, added after the pre-registered run and NOT part of the pass
+    # rule: where the ranking gap comes from (AUPRC per event part), and what
+    # the stay-level catch lead costs (quiet stays alarmed, stay precision).
+    from decompose import treatment_only_label
+    t = ctx.test_ordered
+    parts = {"vent": t["label_24h_vent"].to_numpy(dtype=float),
+             "vaso": t["label_24h_vaso"].to_numpy(dtype=float),
+             "death": y_death,
+             "treatment_only": np.asarray(treatment_only_label(t), dtype=float)}
+    part_auprc = {p: {"prevalence": float(yy.mean()),
+                      **{n: float(auprc(yy, s)) for n, s in scores.items()}}
+                  for p, yy in parts.items()}
+    n_stays = int(t["stay_id"].nunique())
+    n_event = int(t.groupby("stay_id")["event_h"].first().notna().sum())
+    n_alertable = int(ctx.alertable_test.sum())
+
+    def stay_cost(x):
+        caught, quiet = x["catch"] * n_event, x["quiet_fp"] * (n_stays - n_event)
+        alarmed = caught + quiet
+        return {"stay_precision": float(caught / alarmed) if alarmed else float("nan"),
+                "stays_alarmed": float(alarmed),
+                "alarm_hours_per_alarmed_stay":
+                    float(x["test_alarm_rate"] * n_alertable / alarmed) if alarmed else float("nan")}
+
+    stay_costs = []
+    for r in sweep:
+        row = {"budget": r["budget"],
+               **{a: stay_cost(r["arms"][a]) for a in ARMS}}
+        for key, src in (("flagship", "flagship_by_seed"),
+                         ("flagship_at_allfeat_test_volume", "flagship_at_allfeat_test_volume")):
+            per = [stay_cost(x) for x in r[src].values()]
+            row[key] = {k: float(np.mean([p[k] for p in per])) for k in per[0]}
+        stay_costs.append(row)
+        print(f"[cost] {r['budget']:>5.1%}: stay precision flagship "
+              f"{row['flagship']['stay_precision']:.1%} | at GBM volume "
+              f"{row['flagship_at_allfeat_test_volume']['stay_precision']:.1%} | allfeat "
+              f"{row['allfeat']['stay_precision']:.1%}")
+    exploratory = {"note": "added after the pre-registered run; not part of the pass rule",
+                   "n_test_stays": n_stays, "n_event_stays": n_event,
+                   "auprc_by_event_part": part_auprc, "stay_costs": stay_costs}
+
     verdict = ranking["auprc"]["vs"]["allfeat"]
     payload = {
         "test": "T30", "seeds": seeds, "reps": REPS, "resamples_used": n_used,
         "gbm_seed": SEED_GBM, "fingerprint": fp_cached[:16], "gates": gates,
         "gbm_meta": meta, "raw_auprc_check": raw_auprc, "ranking": ranking,
-        "sweep": sweep, "races": races,
+        "sweep": sweep, "races": races, "exploratory": exploratory,
         "pass_rule": "pooled paired dAUPRC (flagship - allfeat) 95% CI above zero",
         "pass": verdict["pooled"]["ci_above_zero"],
         "note": "aggregate-only; equal-volume rows set the flagship threshold "

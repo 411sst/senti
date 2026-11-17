@@ -34,11 +34,12 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | ID | Claim | Numbers | Source | Seeds | Status |
 |---|---|---|---|---|---|
 | B1 | Flagship two-head ALL-8 | AUPRC 0.309 (0.3087, SD 0.005), AUROC 0.823; CI [0.291, 0.337] / [0.813, 0.840] | T9, T18; `results_fusion.md` l.39, 157, 1574 | 10 | VERIFIED |
-| B2 | Beats the equal-information GBM | FAIR+TRAJ (145 features) 0.287 [0.264, 0.311], AUROC 0.807; paired CI clear of zero | `results_fusion.md` l.39–41, 134 | 10/10 | VERIFIED |
+| B2 | Beats the equal-information GBM | FAIR+TRAJ (145 features) 0.287 [0.264, 0.311], AUROC 0.807; paired CI clear of zero | `results_fusion.md` l.39–41, 134 | 10/10 | VERIFIED; "equal-information" holds only for its 145 columns, see B7 |
 | B3 | Published-spec rebuilds on our cohort | eCART-style 0.280 [0.257, 0.304] / 0.814; YAIB LightGBM 0.281 [0.258, 0.306] / 0.808; Sadanandan XGBoost 0.239 [0.220, 0.261] / 0.766; NEWS2 0.114 [0.102, 0.128] / 0.683. Feature counts 95 / 218 / ~26+age, sex | T10 `results_fusion.md` l.736–766; deviations in `src/lit_gbm.py` | comparators seed-fixed | VERIFIED |
 | B4 | vs eCART-style | ΔAUPRC +0.0287 [+0.0252, +0.0323] | T19 `results_fusion.md` l.1676 | 10/10 | VERIFIED |
 | B5 | Mortality head, scored on death | AUPRC 0.340 [0.288, 0.415], AUROC 0.946 [0.928, 0.960]; GBM 0.189 on death | T9, T18 `results_fusion.md` l.43, 158 | 10 | VERIFIED |
 | B6 | Standalone agents (AUPRC / AUROC) | gbm 0.279/0.806; vitals 0.189/0.754; labs 0.166/0.727; cadence 0.156/0.703; resp 0.134/0.712; fluid 0.093/0.654; ECG 0.055/0.539 | `results_fusion.md` l.160–163 | — | VERIFIED |
+| B7 | **Does not beat an all-features GBM on ranking (pre-registered, failed)** | One XGBoost on all eight agents' inputs (262 columns): AUPRC 0.3268, AUROC 0.8363 vs flagship 0.3087 / 0.8225. Pooled ΔAUPRC (flagship − GBM) −0.0181 [−0.0282, −0.0082], CI below zero in 10/10 seeds; ΔAUROC −0.0138 [−0.0182, −0.0090]. Without cadence (230): GBM 0.3218, Δ −0.0131 [−0.0233, −0.0031]. GBM lead is on vent/vaso; on death the flagship is ahead (+0.0259 [+0.0039, +0.0473]; D head 0.340 vs GBM 0.154) | T30 `results_fusion.md`; `scripts/t30_allfeat_gbm.py`; `data/cache/t30_allfeat_gbm.json` | flagship 10; GBM s42 | BRANCH (`paper-tests`) |
 
 ## C. Patients caught at a fixed alarm budget
 
@@ -52,6 +53,7 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | C7 | Catches are not just first-hour flags | Caught by an alarm AFTER the first scored hour (first-hour alarms ignored), 2% budget: Sentinel 53.3% vs Sadanandan 48.1%, eCART-style 43.8%, YAIB 42.7%; Sentinel ahead at every budget. (The earlier 'mid-stay' count, first alarm > first hour, penalised models that flag at hour 6 and is not a fair comparison) | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py` | 10 | VERIFIED |
 | C8 | Lead over NEWS2 at equal realized volume | NEWS2 alarms 1.03 / 2.28 / 4.71% of test hours at 1 / 2 / 5% budgets; Sentinel at protocol thresholds 1.36 / 2.76 / 5.21%. Re-thresholded to NEWS2's exact volume: 2% first-when-differ 69 → 62%, median lead +0.95 → +0.5 h, sign test 10/10 → 9/10 seeds; 5% 73 → 71%, 10/10; 1% 55 → 51%, 0/10. The lead shrinks but survives at 2% and 5% | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py`; diagnostic (test-score quantiles), not protocol | 10 | VERIFIED; **report alongside F1** |
 | C6 | Race vs comparators at the 2% NEWS2-matched volume | First alarm when the two differ (mean over 10 seeds), protocol → equal realized volume: eCART-style 70 → 67%, YAIB 66 → 59%, Sadanandan 69 → 68%. Sign test significant at equal volume in 9 / 8 / 10 of 10 seeds. Median lead 0 h (most jointly caught stays tie) | T28 `results_fusion.md` l.2570+; `scripts/paper_operating_points.py` | 10 | VERIFIED |
+| C9 | Catches vs the all-features GBM, and the cost | Flagship catches more event stays at every budget, 10/10 seeds, also at the GBM's realized volume: 2% 58.6% (57.6% at equal volume) vs 53.9%; ≥6 h 29.4 vs 25.6%. But more quiet stays alarmed: 7.5 vs 5.3% at 2% equal volume; stay-level precision 63.3 vs 69.5% (exploratory). Races: median lead 0 h; first-when-differ at equal volume 53 / 56 / 70% at 1 / 2 / 5% | T30 `results_fusion.md`; `data/cache/t30_allfeat_gbm.json` | flagship 10; GBM s42 | BRANCH (`paper-tests`) |
 
 ## D. How agents communicate (the thesis claim)
 
@@ -130,6 +132,7 @@ Main sources: `results_fusion.md` (T1–T23), `results_ecg.md`, `results.md`,
 | K5 | Hour-level AUPRC; patient-level results only at fixed budgets | — |
 | K6 | Code default is still core-3 (`DEFAULT_CONFIG`); paper results use two-head ALL-8. Fix before releasing code | `src/orchestrator/fusion.py` |
 | K7 | Untested design choices (E8) | — |
+| K8 | A single GBM given all the agents' inputs ranks hours better than the fusion (B7). The fusion's measured gains are death ranking and stay-level catch, the latter at lower stay-level precision (C9) | T30 |
 
 ## Citations
 
