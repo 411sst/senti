@@ -3186,8 +3186,12 @@ its CI clear, except NEWS2 at 1% (52.8% [46.4, 58.8]). The median lead is
      lab, record counts, ECG presence) drops it from 0.3218 to 0.2878. ALL-7
      then leads by 0.018 (8/10 seeds clear) and ties it on AUROC.
    * So the all-features GBM's ranking edge rests on *when* things were
-     measured, which is clinician behaviour. The flagship's agents carry some
-     of that too: the labs and vitals agents see their own sampling.
+     measured, which is clinician behaviour. The flagship's agents carry it
+     too: the vitals, labs, ECG, fluid, resp and GBM agents all read how long
+     ago their inputs were measured. The no-timing GBM was compared against
+     an ALL-7 that kept those ages, so that comparison removes timing from
+     one side only. *(Corrected 2026-11-18: this bullet named only the labs
+     and vitals agents.)*
 3. **Reading for S1.**
    * The pre-registered rule fails, because one comparator wins on AUPRC.
    * The narrower claim does pass, for the published recipes and for
@@ -3532,11 +3536,15 @@ Realized test alarm rates: LATENT 2.76% and TEXT 2.77% at 2%, against NEWS2's
      49%, 4 of 10 seeds.
    * The pre-registered rule calls this *latent earlier*. The size is small,
      and most jointly caught stays alarm in the same hour.
-3. **Text keeps the lead over NEWS2 that bare risks lose.** TEXT is first in
-   70% of discordant stays at 2%, with a median lead of +1 h. That is the
-   same as LATENT and well above RISK-ONLY (60%, +0 h). So the timing signal
-   lies in the agents' state, which both a latent and a sentence carry, and
-   not in the latent format as such.
+3. **Text keeps the lead over NEWS2, and at 1% and 2% both channels lead by
+   more than bare risks.** TEXT is first in 70% of discordant stays at 2%,
+   with a median lead of +1 h. That is the same as LATENT and above RISK-ONLY
+   (60%, +0 h), which keeps a smaller lead rather than losing it. At 5%
+   RISK-ONLY is level with both (76%). RISK-ONLY has T27's 3 seeds and is not
+   paired with the 10-seed arms. So the timing signal lies in the agents'
+   state, which both a latent and a sentence carry, and not in the latent
+   format as such. *(Wording corrected 2026-11-18: the heading said bare
+   risks "lose" the lead.)*
 
 ### Caveats
 
@@ -3810,9 +3818,9 @@ At matched quiet share, across all seven budgets:
 2. **All hours: PASS by the rule, but not a real gain.**
    * The flagship catches 9 to 26 points more at every budget, 10/10 seeds,
      with ≥6 h catches and races ahead too.
-   * But it alarms on 2 to 6 times as many stays that never deteriorate
-     (21.8% of quiet stays at 2%). At an equal quiet-stay share it catches
-     fewer than every comparator in every seed.
+   * But it alarms on more stays that never deteriorate: 21.8% of quiet
+     stays at 2%, against 3.9% to 12.7%. At 2%, at each comparator's
+     quiet-stay share, it catches fewer than every comparator in every seed.
    * Its stay-level AUROC (0.710) and hour AUPRC (0.124) are the lowest of
      the learned models.
    * So the extra catches come from spreading alarms over more stays, not
@@ -4019,7 +4027,9 @@ the means to 6.9 s and 21.2 s. Cards are generated only when an alarm fires.
 
 *Added 2026-11-18 after T35. T35 showed that a catch lead at an hour budget
 can come from spreading alarms over more stays. This checks the MIMIC catch
-claims (T28, T30, T32, T33) for the same effect. No pass rule.*
+claims (T28, T30, T32, T33) for the same effect. Not pre-registered, no pass
+rule, and no confidence intervals: each figure is a point estimate per seed,
+and the matched-quiet catch is read off test scores.*
 
 `scripts/stay_cost_mimic.py` uses the T35 helpers (unit-tested in
 `tests/test_t35_eicu.py`) on the MIMIC test set: 1,540 event stays, 6,835
@@ -4065,15 +4075,16 @@ Stay-level AUROC (event-stay maximum against quiet-stay maximum):
 1. **Against the published recipes the MIMIC catch lead is real but smaller
    than the hour-budget numbers suggest.**
    * At an equal share of quiet stays alarmed, the flagship still catches
-     more than eCART-style and YAIB at every budget: by 0.1 to 3.9 points,
-     in 6–10 of 10 seeds.
-   * Against Sadanandan the margin is 2.8 to 9.1 points.
+     more than eCART-style at every budget, by 1.3 to 3.0 points (9–10 of
+     10 seeds), and more than YAIB by 0.2 to 3.9 points (6 of 10 seeds at
+     1%, 8–10 at the other budgets).
+   * Against Sadanandan the margin is 2.8 to 9.1 points (10 of 10).
    * At hour budgets the gaps were 5.6 to 9.4 points over the best recipe
      (C4). Most of that comes from the flagship alarming on more stays.
 2. **Against the all-features GBM the catch lead reverses at equal cost.**
    * At hour budgets the flagship catches more (T30, 10/10 seeds).
-   * At the GBM's quiet-stay share it catches 1 to 5 points fewer, in 0–1 of
-     10 seeds.
+   * At the GBM's quiet-stay share it catches 0.9 to 4.6 points fewer; it is
+     ahead in 0–1 of 10 seeds.
    * The GBM also has the higher stay-level AUROC.
    * This matches T30's ranking result: the flagship and the GBM sit at
      different points of the same stay-level trade-off, and the GBM's curve
