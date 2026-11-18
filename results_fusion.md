@@ -4360,6 +4360,177 @@ error message.
 on torch 2.14.0+cpu. T41 uses 2.11.0+cpu to match T36 and T37, so a
 difference from I2 may be the torch build.
 
+## T42 — When a data feed fails, does Sentinel hold up better than one GBM? (pre-registered)
+
+*Pre-registered 2026-11-18, before any test-split scoring. Results are added
+below whichever way they come out.*
+
+**Question.** A hospital loses one data feed: the lab interface goes down, or
+the ECG carts stop uploading. Does Sentinel lose less than the all-features
+GBM (T30), which reads the same inputs through one model?
+
+**The six feeds.** One per hourly extract. The mapping was agreed before any
+code was written.
+
+| feed | raw records deleted | Sentinel agents that read it | GBM columns (of them, measurement timing) |
+| --- | --- | --- | --- |
+| vital signs | cohort extract: HR, RR, SpO2, SBP, temperature; GCS total, components and "unable" flag | vitals_tcn, NEWS2, GBM agent | 78 (5) |
+| laboratory | labs extract, all 24 analytes | labs, GBM agent | 72 (24) |
+| ECG machine reads | ECG index rows (study → stay and hour) | ecg_meas | 53 (2) |
+| order entry (cadence) | cadence extract: orders, lab-draw and test counts, chart-row counts, cultures | cadence | 32 (0) |
+| fluid in and out | fluid extract: urine, other output, intake | fluid | 13 (3) |
+| respiratory support | resp extract (device, O2 flow, FiO2), and the cohort extract's O2 device, O2 flow and FiO2 | resp; through `on_oxygen` also vitals_tcn, NEWS2 and the GBM agent | 14 (2) |
+
+The columns add up to 262, and the timing columns to T32's 36. Three choices
+are part of the mapping:
+* Oxygen delivery belongs to the respiratory feed. The cohort extract's O2
+  device, O2 flow and FiO2 only feed `on_oxygen`, and they are the same charted
+  items as the resp extract.
+* Each extract is one feed. Cadence counts lab draws and chart rows, which in
+  a hospital arrive through the lab and charting systems. A lab outage here
+  leaves those counts in place.
+* GCS belongs to vital signs.
+
+**Outages** (`src/feed_outage.py`). Test split only. An outage deletes the
+feed's raw records for the affected stays before any feature is built. Hourly
+tables lose rows, and the cohort extract's channels are blanked. Each system
+then builds its inputs with its own unchanged code, so carry-forward limits,
+staleness bounds and missingness flags behave as in a real outage.
+* **Scenario A (primary).** The feed is absent for the whole stay, look-back
+  hours included, for every test stay. Evaluated on all 361,229 test hours.
+* **Scenario B (secondary).** Each test stay gets one 24 h outage. Its start
+  s is drawn uniformly from the stay's scored hours (one generator, seed 42,
+  stays in id order), and records stamped in [s, s + 24) are deleted. Every
+  builder reads records strictly before t, so the hours whose inputs fall in
+  the outage are s + 1 to s + 24. Only those hours are evaluated, cut at the
+  stay's end. Every feed uses the same windows.
+
+**What each system sees.** Each system's own missing-data path, unchanged:
+* vitals_tcn and labs: training-mean values with their missingness flags on.
+* NEWS2: a missing vital scores 0 points and unknown consciousness scores as
+  alert.
+* ecg_meas: its learned "no ECG" vector and a constant risk.
+* cadence, fluid and resp: zero counts, capped hours-since, room air. An
+  outage looks like a quiet patient.
+* Both GBMs: NaN for vitals and labs, so XGBoost's learned missing branch;
+  the same zeros and caps as the agents elsewhere.
+
+**Systems.**
+* **Sentinel**, the two-head ALL-8 at seeds 42 and 1–9. Training saved only
+  the agents' and heads' outputs, never their weights. So they are refit
+  once, before any outage, and then frozen:
+  * NEWS2, labs and ecg_meas were CPU fits, and the GBM agent's FAIR+TRAJ
+    booster is GPU XGBoost. These reproduce the published outputs exactly
+    (gate 2).
+  * vitals_tcn, cadence, fluid and resp were GPU fits that do not reproduce
+    (T36). They are refit on the CPU with their training scripts' settings,
+    which is deterministic.
+  * Both heads are refit on that bank at each seed with `two_head.py`'s
+    `fit_head` (CPU, one thread).
+
+  Sentinel's own intact scores are the reference for its drop.
+* **All-features GBM**, T31's fits at seeds 42 and 1–9. Each is refit from its
+  recorded grid cell on the GPU and must equal `t31_seeds_tab.npz` (gate 3).
+
+**Arms.** Every arm is scored on the same test rows.
+* **No retraining (primary).** Both systems run unchanged. An agent whose
+  feed is down gives whatever its missing-data path gives, and the GBM reads
+  its rebuilt features. Both keep their intact V_freeze thresholds, since
+  nobody re-thresholds during an outage.
+* **Planned ahead (secondary).** Seeds 42, 1 and 2.
+  * Sentinel: both heads are refit on the training split without every agent
+    that reads the feed.
+  * GBM: refit with the T30 recipe (`tune_gbm` grid, GPU) without the feed's
+    columns.
+  * Each fallback is re-thresholded on V_freeze. Neither fallback reads the
+    feed, so its outage scores equal its intact scores, which is checked.
+
+  | feed down | Sentinel agents kept | GBM columns kept |
+  | --- | --- | --- |
+  | vital signs | labs, ecg_meas, cadence, fluid, resp | 184 |
+  | laboratory | vitals_tcn, NEWS2, ecg_meas, cadence, fluid, resp | 190 |
+  | ECG | the other 7 | 209 |
+  | order entry | the other 7 | 230 |
+  | fluid | the other 7 | 249 |
+  | respiratory | labs, ecg_meas, cadence, fluid | 248 |
+
+**Scores and thresholds.** As in T30–T32.
+* Sentinel: each head is calibrated with isotonic regression on V_fit against
+  its own label, given the rank tiebreak, and the two are combined by noisy-OR.
+* GBM: isotonic regression on V_fit, then the tiebreak.
+* Outage scores go through the intact calibrators.
+* Alarm thresholds are the (1 − 0.02) quantile on V_freeze.
+
+**Measures.** Per feed, per scenario and per arm.
+* AUPRC and AUROC of every arm, and each system's drop from its own intact
+  score on the same rows, as the mean over seeds.
+* **Robustness.** Δ = GBM drop − Sentinel drop, with seed s paired with seed
+  s and pooled over seeds within each resample. There are 1,000
+  patient-clustered resamples, shared by every score in the scenario.
+  * CI above zero: "Sentinel more robust".
+  * CI below zero: "GBM more robust".
+  * Otherwise: a tie.
+
+  AUPRC decides; AUROC is reported alongside.
+* **Better when the feed is down.** Sentinel − GBM AUPRC under the outage,
+  paired the same way. CI above zero: "Sentinel better during this outage".
+  CI below zero: "GBM better".
+* **Alarm safety.** The realized test alarm rate at the 2% budget on the
+  evaluated rows, under the outage and intact, for each system (ten-seed mean
+  and range). Both directions are reported. A rate at least 2× intact is
+  labelled "flood" and one at most 0.5× "silence"; the labels are descriptive.
+* **Catch at 2%.**
+  * Scenario A: the share of event stays alarmed at or before the event, as
+    in T30.
+  * Scenario B: among event stays with at least one positive hour inside the
+    window, the share alarmed on a window hour.
+
+  Reported intact and under the outage, for each system.
+
+**Headline pass rule.** Scenario A, no retraining: Sentinel is more robust for
+at least 3 of the 6 feeds, and the GBM is more robust for none. The per-feed
+verdicts are reported either way. Scenario B and the planned-ahead arm get the
+same verdicts, without a headline rule.
+
+**Gates.** The run stops if any of these fails:
+1. Rebuilding the test rows from the raw cohort extract reproduces the cached
+   cohort exactly. This was checked while writing the code: all 361,229 rows,
+   every column and dtype. No score was involved.
+2. The NEWS2, labs and ecg_meas refits equal the published train, val and test
+   outputs. The FAIR+TRAJ booster equals the published raw scores, and the GBM
+   agent's emissions equal the published ones.
+3. Every all-features GBM refit equals its T31 val and test scores, and every
+   saved booster predicts identically after reloading.
+4. The head code, run on the published bank at seed 42, equals `two_head.npz`
+   for val and test.
+5. The rebuilt Sentinel's ten-seed mean test AUPRC is within ±0.010 of the
+   published 0.3087.
+6. The scoring path is checked:
+   * With no outage, every agent output, head score and GBM score equals its
+     reference exactly.
+   * Under each outage, keys and labels are unchanged.
+   * Every agent that does not read the feed is byte-identical.
+   * The GBM's columns from other feeds are byte-identical.
+   * The fallbacks' scores are unchanged.
+   * In scenario B, every agent output, head score and GBM score at hours up
+     to s equals its intact value.
+
+**What each branch means.** Claims row 11, "Sentinel degrades more gracefully
+than a single GBM when a data feed fails", is added either way.
+* Pass: state the feeds where it holds, and any feed where Sentinel is better
+  in absolute terms during the outage.
+* Fail or mixed: report the per-feed verdicts, and drop the robustness
+  argument wherever it does not hold.
+
+**Caveats, fixed before the run.**
+* The Sentinel under test is a rebuild. Four of its eight agents are
+  bit-identical to the published ones; the other four are CPU refits of the
+  same recipes.
+* Scenario A takes a feed away from every stay at once and for whole stays.
+  It is a stress test, not a typical outage.
+* Under the one-extract-one-feed choice, a lab outage leaves the cadence
+  agent's lab-draw counts in place, for both systems alike.
+
 ## Reproduce
 
 ```bash
@@ -4629,4 +4800,13 @@ python scripts/bench_single_node.py --threads 1,2,4,8 --reps 100 --llm-cards 4 \
 python scripts/t40_rebuild.py bundle      # only t40/result.json leaves the laptop
 # reference digests, on the T36 machine:
 python scripts/t40_rebuild.py reference --clone ~/code/sentinel-h1
+
+# T42: feed outages. Agents and heads on the CPU (one thread), GBMs on the GPU.
+# Working files go to data/cache/t42/ and models/t42/; aggregates to
+# data/cache/t42_feed_outage.json.
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage fit-agents
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage fit-gbm
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage fit-heads --workers 3
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage score --workers 3
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage eval --workers 8
 ```
