@@ -140,9 +140,25 @@ def test_window_outage_deletes_exactly_the_window_records():
     assert not ((kept["stay_id"] == 101) & kept["hour"].between(10, 33)).any()
     pd.testing.assert_frame_equal(kept, labs.loc[~gone])
     ecg = fo.apply_outage(sources, "ecg", [101], starts)["ecg_index"]
-    assert ecg["study_id"].tolist() == [1, 2, 4, 5]          # 20.0 h is in [10, 34)
+    assert ecg["study_id"][ecg["stay_id"] != fo.DETACHED_STAY].tolist() == [1, 2, 4, 5]
     ecg = fo.apply_outage(sources, "ecg", [101], pd.Series({101: 9}))["ecg_index"]
-    assert ecg["study_id"].tolist() == [1, 4, 5]             # 9.25 and 20.0 deleted
+    assert ecg["study_id"][ecg["stay_id"] != fo.DETACHED_STAY].tolist() == [1, 4, 5]
+
+
+def test_ecg_records_are_detached_with_the_hour_order_kept():
+    sources, ecg = _world()
+    idx = sources["ecg_index"]
+    out = fo.apply_outage(sources, "ecg", [101], pd.Series({101: 9}))["ecg_index"]
+    assert len(out) == len(idx) and out["ecg_hour"].equals(idx["ecg_hour"])
+    assert out["study_id"].equals(idx["study_id"])
+    assert (out["stay_id"] == fo.DETACHED_STAY).sum() == 2
+    assert idx["stay_id"].tolist() == [101, 101, 101, 102, 102]       # input untouched
+    # every cohort row sees exactly what deleting the records would give
+    dropped = dict(sources, ecg_index=idx[out["stay_id"] != fo.DETACHED_STAY])
+    X0, _ = _design(dropped, ecg)
+    X1, _ = _design(fo.apply_outage(sources, "ecg", [101], pd.Series({101: 9})), ecg)
+    for c in fo.feed_columns("ecg", ECG_NAMES):
+        assert _same(X0[c], X1[c]), c
 
 
 def test_cohort_channels_are_blanked_not_deleted():

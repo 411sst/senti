@@ -424,7 +424,7 @@ def _fit_head_job(job):
     return job, "fitted", round(time.time() - t0, 1)
 
 
-def stage_fit_heads(workers):
+def stage_fit_heads(workers, reverse=False):
     if os.environ.get("CUDA_VISIBLE_DEVICES") != "":
         raise SystemExit("run fit-heads with CUDA_VISIBLE_DEVICES= (CPU only)")
     meta = json.loads(AGENT_GATE.read_text())
@@ -433,6 +433,8 @@ def stage_fit_heads(workers):
     HEADS.mkdir(parents=True, exist_ok=True)
     (MODELS / "heads").mkdir(parents=True, exist_ok=True)
     jobs = _head_jobs()
+    if reverse:           # a second process can work the list from the other end
+        jobs = jobs[::-1]
     t0 = time.time()
     with mp.get_context("spawn").Pool(workers) as pool:
         for job, status, secs in pool.imap_unordered(_fit_head_job, jobs):
@@ -511,8 +513,11 @@ def _score_init():
     def mine(df):
         return df[np.isin(df["stay_id"].to_numpy(dtype="int64"), stays)].reset_index(drop=True)
     raw = pd.read_parquet(RAW_PATH)
+    # The hourly tables are cut to test stays (checked: no feature changes).
+    # The ECG index stays whole: its builder breaks same-hour ties with an
+    # unstable sort over the whole index, so cutting it re-rolls ties.
     src = {"cohort_raw": mine(raw), "labs": mine(load_labs()),
-           "ecg_index": mine(pd.read_parquet(ECG_INDEX)), "cadence": mine(load_cadence()),
+           "ecg_index": pd.read_parquet(ECG_INDEX), "cadence": mine(load_cadence()),
            "fluid": mine(load_fluids()), "resp": mine(load_resp())}
     del raw
     from agents.ecg_meas_agent import MEAS_CACHE
@@ -933,13 +938,15 @@ def main():
                     choices=("fit-agents", "fit-gbm", "fit-heads", "score", "eval"))
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--reverse", action="store_true",
+                    help="fit-heads: take the jobs in reverse order")
     args = ap.parse_args()
     if args.stage == "fit-agents":
         stage_fit_agents()
     elif args.stage == "fit-gbm":
         stage_fit_gbm(args.device)
     elif args.stage == "fit-heads":
-        stage_fit_heads(args.workers)
+        stage_fit_heads(args.workers, args.reverse)
     elif args.stage == "score":
         stage_score(args.workers)
     else:

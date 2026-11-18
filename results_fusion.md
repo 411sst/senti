@@ -4531,6 +4531,34 @@ than a single GBM when a data feed fails", is added either way.
 * Under the one-extract-one-feed choice, a lab outage leaves the cadence
   agent's lab-draw counts in place, for both systems alike.
 
+**Change after pre-registration, made before any outage was scored
+(2026-11-18).** Gate 6 stopped the first scoring run at its first step, the
+intact path, which runs before any outage.
+* **What failed.** The ECG agent's outputs, and the GBM's 19 ECG columns,
+  differed from the references on 70 test rows. Every other agent and column
+  matched exactly.
+* **Cause.** The ECG builder sorts the whole ECG index by hour with an
+  unstable sort. That order breaks ties when one stay has two ECGs stamped
+  at the same hour, which happens for 44 index rows in test stays. The runner
+  had cut the index to test stays, and that re-rolled some ties. The
+  published features were built from the whole index.
+* **Fix.** The runner now reads the whole ECG index.
+* **The outage method for ECG changes too.** Dropping records from the index
+  changes it in the same way. In scenario B it would flip one tie at an hour
+  before the window starts, so a pre-window row would change for a reason
+  that has nothing to do with the outage. So an ECG record is now *detached*
+  rather than dropped: its stay id is set to −1, which no cohort stay has.
+  * The builder joins by stay, so no cohort row can reach a detached record;
+    for every row this is deletion.
+  * The hour column, and with it the sort, is left exactly as it was.
+  * Checked on the test split before any scoring:
+    * Scenario A: detaching leaves no test row with an ECG, as dropping does.
+    * Scenario B: detaching changes no pre-window row; dropping changed 1.
+    * The two methods disagree on 3 rows in all, every one a tie flip.
+* **Unchanged.** The other tables still lose rows: their keys are unique, so
+  they have no ties. Nothing else changes: the rules, measures and gates are
+  as above.
+
 ## Reproduce
 
 ```bash

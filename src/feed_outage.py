@@ -45,6 +45,8 @@ from mimic_cohort import (
     compute_news2,
 )
 
+# Stay id given to detached ECG records; no cohort stay has it.
+DETACHED_STAY = -1
 FEEDS = ("vitals", "labs", "ecg", "cadence", "fluid", "resp")
 WINDOW_HOURS = 24
 
@@ -141,6 +143,15 @@ def apply_outage(sources, feed, stays, starts=None, length=WINDOW_HOURS):
     """A copy of ``sources`` with ``feed``'s records deleted for ``stays``.
 
     Tables of every other feed are returned as the same objects, untouched.
+
+    ECG index rows are detached (stay id set to ``DETACHED_STAY``, which no
+    cohort stay has) rather than dropped. For every cohort row that is the
+    same as deleting them: the builder joins by stay, so no row can reach a
+    detached ECG. Dropping would also change the builder's sort: it orders
+    the whole index by ``ecg_hour`` with an unstable sort, and that order
+    breaks ties between two ECGs of one stay stamped at the same hour. So
+    dropping a record can change which tied ECG another hour uses. Detaching
+    leaves the ``ecg_hour`` array, and with it the order, exactly as it was.
     """
     if feed not in FEEDS:
         raise ValueError(f"unknown feed {feed!r}")
@@ -150,7 +161,12 @@ def apply_outage(sources, feed, stays, starts=None, length=WINDOW_HOURS):
         table = sources[name]
         tcol = TIME_COLUMN.get(name, "hour")
         drop = outage_mask(table["stay_id"], table[tcol], stays, starts, length)
-        out[name] = table.loc[~drop]
+        if name == "ecg_index":
+            table = table.copy()
+            table["stay_id"] = table["stay_id"].where(~drop, DETACHED_STAY)
+            out[name] = table
+        else:
+            out[name] = table.loc[~drop]
     if feed in COHORT_CHANNELS:
         raw = sources["cohort_raw"].copy()
         blank = outage_mask(raw["stay_id"], raw["hour"], stays, starts, length)
