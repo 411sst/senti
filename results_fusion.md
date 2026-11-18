@@ -4093,6 +4093,73 @@ Stay-level AUROC (event-stay maximum against quiet-stay maximum):
    recipes at equal cost.** The T35 all-hours reversal is specific to the
    external data.
 
+## T39 — Does the D head predict death better than a death-trained GBM? (pre-registered)
+
+*Pre-registered 2026-11-18, before the fits. Results are added below whichever
+way they come out.*
+
+**Question.** The flagship's D head ranks death within 24 h at AUPRC 0.340
+(ten seeds, B5). The comparisons so far put it against GBMs at 0.15–0.19, but
+those GBMs were trained on the composite label, while the D head is trained
+and early-stopped on `label_24h_death`. T39 gives the all-features GBM the D
+head's own label and rows.
+
+**Arms.**
+
+| arm | trained on | seeds | source |
+| --- | --- | --- | --- |
+| D head | `label_24h_death` (fusion layer on the ALL-8 bank) | 42, 1–9 | `two_head.npz` `dhead_test_s*`, cached, not refit |
+| **death-only all-features GBM** (new) | `label_24h_death` | 42, 1–9 | `scripts/t39_death_gbm.py` |
+| composite all-features GBM (reference) | composite label | 42, 1–9 | `t31_seeds_tab.npz` (T31) |
+| flagship composite score (reference) | two heads combined | 42, 1–9 | `two_head.npz` `test_s*` |
+
+**The death-only GBM.**
+* Design: T30's 262 columns, built by `allfeat_gbm.build_allfeat_design`.
+* Recipe: `baselines_fair.tune_gbm` unchanged. That is depth {4, 6, 8} ×
+  class weight {1, rebalanced}, learning rate 0.05, up to 3,000 trees, and
+  early stopping after 50 rounds on validation AUPRC; the best of the six
+  fits on validation AUPRC is kept. The rebalanced weight is recomputed from
+  the death label (about 0.85% of train hours).
+* Rows, as in `scripts/two_head.py`: every train row is fit, every val row
+  is used for early stopping and the grid choice, isotonic calibration is
+  fit on V_fit, and every test row is scored. The script stops unless the
+  val and test rows line up with `FusionContext` and the death label equals
+  the cohort's `label_24h_death`. The design's composite label is discarded.
+* Seeds 42 and 1–9. The seed drives row and column subsampling (0.8).
+* XGBoost on the GPU in a process with one OpenMP thread, as in T30 and T31.
+* Scores go to a new file, `data/cache/t39_death_gbm.npz`, fingerprinted;
+  aggregates go to `data/cache/t39_death_gbm.json`.
+
+**Gate.** The cached D-head test scores must give the death AUPRC that T30
+recorded for each seed (|Δ| ≤ 1e-9), and the T31 cache must match its
+fingerprint, or the run stops.
+
+**Metrics.** Death within 24 h on all 361,229 test hours (prevalence
+0.76%). AUPRC is the pass metric; AUROC is reported too. All 40 scores share
+1,000 patient-clustered resamples.
+* Primary pairs: D head seed s against death-only GBM seed s. The pooled
+  difference is the mean of the ten paired differences within each resample.
+* Per seed: the paired difference and its CI, and the number of seeds with
+  the CI above zero, below zero, and the point estimate above zero.
+* Reference differences, paired the same way: D head − composite GBM,
+  death-only GBM − composite GBM, flagship composite − death-only GBM.
+* Each arm's mean, SD and range over seeds.
+
+**Pass rule.** The pooled paired ΔAUPRC on death (D head − death-only GBM)
+has its 95% CI above zero.
+
+**What each branch means.**
+* Pass: claims row 10 ("Sentinel predicts death better than a single GBM
+  given the same inputs") keeps 0.340 and states the comparison against the
+  death-only GBM.
+* Fail: the death claim is dropped everywhere: claims row 10, B5's
+  "1.8× the GBM", and the death-ranking lines in this file's headline.
+
+**Caveat, fixed before the run.** Only the D head's fusion layer is trained
+on death; its eight agents were trained on the composite label. The
+death-only GBM learns death from the raw inputs end to end. If the design
+favours either side, it favours the GBM.
+
 ## Reproduce
 
 ```bash
@@ -4348,4 +4415,8 @@ bash scripts/h1_rebuild.sh
 # T37 (H2): serving latency and cards, in the same clone, alone on the machine
 CUDA_VISIBLE_DEVICES= .venv/bin/python scripts/bench_single_node.py \
   --threads 1,2,4,8 --reps 100 --llm-cards 4 --llm-models medgemma:4b,gemma4:12b
+
+# T39: death-only all-features GBM at ten seeds, then the paired death comparison
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t39_death_gbm.py --stage fit --device cuda
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t39_death_gbm.py --stage eval
 ```
