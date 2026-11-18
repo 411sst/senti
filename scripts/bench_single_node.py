@@ -34,7 +34,6 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 import argparse  # noqa: E402
 import json  # noqa: E402
 import platform  # noqa: E402
-import resource  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
 import time  # noqa: E402
@@ -66,13 +65,39 @@ STAY_HOURS = 34               # a representative stay length
 
 
 IS_MACOS = sys.platform == "darwin"
+IS_WINDOWS = sys.platform == "win32"
+
+try:                       # POSIX only; Windows reads the peak working set
+    import resource  # noqa: E402
+except ImportError:
+    resource = None
 
 # getrusage reports peak RSS in KILOBYTES on Linux but in BYTES on macOS.
 # Dividing by the wrong constant silently reports memory off by ~1000x.
 RSS_TO_MB = (1024 * 1024) if IS_MACOS else 1024
 
 
+def peak_rss_mb():
+    """Peak resident memory of this process so far, in MB.
+
+    getrusage on Linux and macOS; on Windows (no ``resource`` module) the
+    peak working set from psutil, which is the same quantity.
+    """
+    if resource is not None:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
+    import psutil
+    return psutil.Process().memory_info().peak_wset / (1024 * 1024)
+
+
 def cpu_model():
+    if IS_WINDOWS:
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                 r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            return str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip()
+        except Exception:
+            return platform.processor() or "unknown"
     if IS_MACOS:
         try:
             return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
@@ -232,7 +257,7 @@ def llm_cards(models, n_cards, timeout=600):
     prompt = build_prompt(context)
     out = {}
     for model in models:
-        laps, toks = [], []
+        laps, toks, errors = [], [], []
         for _ in range(n_cards):
             body = json.dumps({
                 "model": model, "prompt": prompt, "system": SYSTEM_PROMPT,
@@ -253,6 +278,11 @@ def llm_cards(models, n_cards, timeout=600):
                 resp = json.loads(r.stdout)
             except json.JSONDecodeError:
                 continue
+            if resp.get("error") or not resp.get("response"):
+                # e.g. "model requires more system memory": not a card, so
+                # its round trip must not be timed as one.
+                errors.append(str(resp.get("error") or "empty response")[:200])
+                continue
             laps.append(dt)
             if resp.get("eval_count") and resp.get("eval_duration"):
                 toks.append(resp["eval_count"] / (resp["eval_duration"] / 1e9))
@@ -261,6 +291,8 @@ def llm_cards(models, n_cards, timeout=600):
                           "mean_s": float(np.mean(laps)),
                           "tokens_per_s": float(np.median(toks)) if toks else None,
                           "prompt_chars": len(prompt)}
+        elif errors:
+            out[model] = {"n": 0, "skipped": errors[0]}
     return out
 
 
@@ -286,10 +318,10 @@ def main():
               "an OpenMP runtime here, so keep OMP_NUM_THREADS=1 for any run that "
               "loads both (see scripts/results_table.py).")
 
-    rss_base = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
+    rss_base = peak_rss_mb()
     nets = build_agents()
     fusion, names, latent_dims, source = load_fusion()
-    rss_loaded = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
+    rss_loaded = peak_rss_mb()
 
     agent_params = {n: sum(p.numel() for p in m.parameters()) for n, m in nets.items()}
     fusion_params = sum(p.numel() for p in fusion.parameters())
@@ -329,7 +361,7 @@ def main():
         print(f"  {batch:>4d} patients x 29 h, 1 thread : "
               f"{tput[batch]:>12,.0f} patient-hours/s")
 
-    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / RSS_TO_MB
+    rss_mb = peak_rss_mb()
     print(f"\n-- serving memory ----------------------------------------------")
     print(f"  python + torch baseline                : {rss_base:,.0f} MB")
     print(f"  after loading every model              : {rss_loaded:,.0f} MB "
@@ -353,6 +385,9 @@ def main():
         print("  (generated only when an alarm fires; no prediction depends on them)")
         llm = llm_cards(models, args.llm_cards)
         for model, r in llm.items():
+            if not r["n"]:
+                print(f"  {model:16s} skipped: {r['skipped']}")
+                continue
             tps = f"{r['tokens_per_s']:.1f} tok/s" if r["tokens_per_s"] else "n/a"
             print(f"  {model:16s} {r['median_s']:>7.1f} s/card (median of "
                   f"{r['n']})   {tps}")

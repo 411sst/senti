@@ -27,6 +27,8 @@ env/
 
 # Run logs (training/fetch output; regenerable, occasionally large)
 logs/
+# T40 runner output (machine facts, timings, digests); sent as t40/result.json only
+t40/
 
 # Testing / tooling caches
 .pytest_cache/

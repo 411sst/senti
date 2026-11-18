@@ -4230,6 +4230,136 @@ Per seed, D head − death-only GBM ranges from −0.032 (seed 9) to +0.026
 5. The death-only GBM's seed spread (SD 0.014) is about twice the D head's
    (0.006). That is a stability difference, not a ranking one.
 
+## T40 — Rebuilding the flagship on two ordinary laptops (H1 follow-up, pre-registered)
+
+*Pre-registered 2026-11-18, before either laptop runs it. Results are added
+below whichever way they come out.*
+
+**Question.** T36 rebuilt the flagship on the Core Ultra 9 that trained the
+published model, so it could not show that the system rebuilds and reproduces
+on an ordinary machine. T40 repeats the rebuild on the team's two most
+ordinary laptops.
+
+**Machines.** Both run Windows and are run by teammates from
+`docs/t40_t41_runbook.md`, because this session cannot reach them.
+
+| laptop | threads | RAM | graphics |
+| --- | --- | --- | --- |
+| Core i5-13500HX | 20 | 32 GB | RTX 4050, unused (CPU-only torch) |
+| Core i9-13900H | 20 | 16 GB | integrated only |
+
+**Setup, the same as T36 except the machine and the operating system.**
+* A fresh clone of `paper-tests` with no remote. The runner records its git
+  commit and whether tracked files are unmodified.
+* A virtual environment from `requirements-t40.txt`: T36's exact package set
+  (torch 2.11.0+cpu, numpy 2.5.2, pandas 2.3.3, scikit-learn 1.9.0,
+  xgboost 3.4.1, lightgbm 4.7.0, scipy 1.18.0, pyarrow 25.0.1) on
+  Python 3.12, plus psutil for measurement.
+* The seven hourly inputs, each checked against T36's sha256 before anything
+  runs.
+* One OpenMP thread, the GPU hidden, other heavy programs closed.
+* `scripts/t40_rebuild.py` runs T36's seven stages in T36's order at seed 42.
+  It is a cross-platform version of `scripts/h1_rebuild.sh` that calls the
+  same stage commands.
+
+**The tuning question, answered from the code before the run.**
+* The GBM agent does not tune. It reads the FAIR+TRAJ winner's settings and
+  scores from the FAIR+TRAJ stage, and only that stage runs the six-cell grid
+  (19.3 of T36's 30.5 min).
+* The tuned setting is committed: depth 4 with class weight 1.0 (l.189). On
+  the CPU, though, T36's grid chose depth 6, by validation AUPRC 0.26857
+  against 0.2685.
+* **Grid mode** reruns the grid, exactly as T36. It is the only mode that can
+  match T36.
+* **Reuse mode** then fits only the committed cell (`scripts/t40_fair_reuse.py`,
+  which swaps `tune_gbm` for that one cell in-process; the cell's XGBoost
+  parameters equal the grid's, unit-tested). It reruns the GBM agent and the
+  heads. Its rebuild time is the four stages it shares with grid mode plus its
+  own three, and is labelled that way. It cannot match T36 bit for bit, so it
+  is compared with the published ten-seed range only.
+
+**Recorded per stage and per mode.**
+* Wall time.
+* Peak memory. On Windows this is the peak working set, sampled every 0.5 s;
+  on Linux and macOS it is `wait4`'s maximum RSS, as GNU time reported for T36.
+* The lowest free RAM seen, and swap activity: bytes swapped out on Linux,
+  pagefile growth on Windows.
+* Disk use for inputs, outputs and the environment.
+* CPU model, cores, RAM, OS and library versions. No user or host names.
+
+**Pass rule.** In grid mode, all 51 flagship score arrays are bit-identical
+to T36's, by sha256 against `docs/t40_reference.json`. The 51 arrays are the
+risk and latent of each of the eight agents on train, val and test, the
+two-head val and test scores, and the D head's test score. The two FAIR+TRAJ
+intermediate arrays are reported but are not part of the rule.
+
+**If it is not exact.**
+* Report which arrays differ, by agent.
+* Report test AUPRC and AUROC on each laptop against T36's 0.3156 and 0.8257,
+  and against the published ten-seed AUPRC range, 0.3017–0.3155 (mean 0.3087).
+* The maximum absolute score difference needs T36's score file on the laptop.
+  That copy waits for a separate OK, so the hashes are the primary comparison.
+
+**Fits in RAM without swapping.** During every stage the free RAM never fell
+below 5% of the total, and on Windows the pagefile grew by at most 256 MB.
+
+**Expectation, stated before the run.** An exact match across operating
+systems is unlikely. The Windows builds of torch and XGBoost are compiled
+differently. In T36 the agents trained on the CPU both times (labs, ECG)
+reproduced bit for bit, and those first trained on the GPU did not. Across
+operating systems even the CPU-trained ones may differ. The NEWS2 agent has
+no training, so it should match.
+
+**Runner validated before the laptops run it (2026-11-18).** The whole
+runbook was run once on the T36 laptop: a fresh clone, a fresh environment
+from `requirements-t40.txt`, and the inputs copied and checked.
+* Grid mode reproduced **all 53 of T36's arrays bit for bit** (the 51
+  flagship arrays and the 2 FAIR+TRAJ arrays), with test AUPRC 0.3156.
+  It took 30.5 min, peaked at 7.87 GiB (`wait4`) and did not swap. So the
+  runner, the hashes and the pass rule work: a same-machine rebuild passes.
+* Reuse mode's FAIR+TRAJ stage took 5.3 min against the grid's 19.4. The
+  rebuild total with the shared stages was 16.5 min. Exactly the 11 expected
+  arrays differed (the GBM agent's 6, the 3 head arrays and the 2 FAIR+TRAJ
+  arrays). Test AUPRC was 0.3149, inside the published range.
+* The benchmark recorded a model ollama could not load as skipped, with
+  ollama's reason, and did not time it.
+* These are checks of the runner, not T40 results. T36's "8.4 GB" peak is
+  8,420,856 KiB (8.0 GiB). The runner reports GiB.
+
+## T41 — Serving latency on the same two laptops (H2 follow-up, pre-registered)
+
+*Pre-registered 2026-11-18, before either laptop runs it.*
+
+**Setup.** The same laptops, clone and environment as T40, run after T40
+with nothing else open. The command is
+
+    bench_single_node.py --threads 1,2,4,8 --reps 100 --llm-cards 4 --llm-models medgemma:4b,gemma4:12b
+
+as in T37. The fusion heads are instantiated from the deployed architecture,
+because the clone has no checkpoint; that gives the same FLOPs, as in T37.
+
+**Reported, no pass rule (a measurement, as T37).**
+* One patient-hour with 29 h of context on one thread: p50 and p95. Also 2,
+  4 and 8 threads.
+* Serving peak memory.
+* Explanation cards with `num_gpu 0`: seconds per card and tokens per second,
+  medians of 4, with the ollama version recorded.
+* gemma4:12b is attempted on both laptops. If ollama refuses it for lack of
+  memory, it is reported as skipped with ollama's reason.
+* Each laptop becomes a dated column in `docs/cpu_benchmark_matrix.md`, and
+  claims rows 8 and 9 are updated with the ordinary-laptop numbers.
+
+**Benchmark fixes made for this run.** On Windows the benchmark now reads
+peak memory from the peak working set, because Python's `resource` module is
+POSIX-only. It also reads the CPU name from the registry. On every platform,
+an ollama error reply is no longer timed as a card. Before this fix, a model
+that failed to load would have been reported with the round-trip time of its
+error message.
+
+**Note.** These laptops were measured once before (I2: 1.66 ms and 1.99 ms),
+on torch 2.14.0+cpu. T41 uses 2.11.0+cpu to match T36 and T37, so a
+difference from I2 may be the torch build.
+
 ## Reproduce
 
 ```bash
@@ -4489,4 +4619,14 @@ CUDA_VISIBLE_DEVICES= .venv/bin/python scripts/bench_single_node.py \
 # T39: death-only all-features GBM at ten seeds, then the paired death comparison
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t39_death_gbm.py --stage fit --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t39_death_gbm.py --stage eval
+
+# T40/T41: on each laptop, in a fresh isolated clone (docs/t40_t41_runbook.md)
+python scripts/t40_rebuild.py check
+python scripts/t40_rebuild.py grid
+python scripts/t40_rebuild.py reuse
+python scripts/bench_single_node.py --threads 1,2,4,8 --reps 100 --llm-cards 4 \
+  --llm-models medgemma:4b,gemma4:12b
+python scripts/t40_rebuild.py bundle      # only t40/result.json leaves the laptop
+# reference digests, on the T36 machine:
+python scripts/t40_rebuild.py reference --clone ~/code/sentinel-h1
 ```

@@ -1,0 +1,119 @@
+{
+ "source": "T36 CPU rebuild (isolated clone on the Core Ultra 9 275HX)",
+ "inputs_sha256": {
+  "ecg_index.parquet": "f867934de4b501014ae53cfaf4899c67eb59b59c8ff42cda55a8cd459d0e0c6a",
+  "ecg_machine_measurements.parquet": "f2ec65ba01722e4a8aed6686eef96447c69efb42d3a6fca2afe36f285dff56cd",
+  "mimic_cadence_hourly.parquet": "03f113b41d25f985700fa1bc10e16529d01f28d67a2f8f48f8d69bb00e0a7c25",
+  "mimic_cohort_hourly.parquet": "fc483baab86a08cfae2df769e2289f4ba96ba04ab41c6a966dcca0ab08573a1e",
+  "mimic_fluids_hourly.parquet": "156dfff077b4f4d923021293b7826c098bdc66f738fb4cbf54475ed4090ff409",
+  "mimic_labs_hourly.parquet": "4fedf548633856de3bc67a184b58865548813b479d14dd68e7b7d743968b145f",
+  "mimic_resp_hourly.parquet": "2b7c4138b348148b8e2047f7ca34c587dd5d6c375df1fa972b594110d41a4a87"
+ },
+ "t36_digests": {
+  "agent.vitals_tcn.train.risk": "22b2e82ab116b0b7bf017a31ba6851605dfc09d017a248420f1848db81a9417e",
+  "agent.vitals_tcn.train.latent": "c25386ac5539b46e5722e7b3a51bb5a252d48f8e29d55948642fac7e2382b3f0",
+  "agent.vitals_tcn.val.risk": "c1b561c283848605dd91562f7a5cb092fffec7d5e83130db4a007616033d5bbd",
+  "agent.vitals_tcn.val.latent": "cca3267ee5d92f5d54a9953853ff797b632b1c37946ce7d5eac22eab4d488e9c",
+  "agent.vitals_tcn.test.risk": "caa6455d9d0e0ca5468550772051da4f1a04741bdedd36fb690b5123af777a41",
+  "agent.vitals_tcn.test.latent": "7d9d13c4186587b946bca652224085dbcdc5a7fe104bfd8afd7b73c583a49c7f",
+  "agent.news2.train.risk": "09da9fc0fa7a0bfa3eabb328e04402494f5571ba518c78f81fc8c96edba2069c",
+  "agent.news2.train.latent": "31ad22efa6aad40c86eb359d287f09c352d88e63d65eae1136406ae4ca7d774e",
+  "agent.news2.val.risk": "a15097f73882b27464ca0a146b7a40c47466eeeae56f23f29a668248985b6a69",
+  "agent.news2.val.latent": "26416719eaa97c979ec230750ac96375939bb27b1aa6e54eacee222a211460df",
+  "agent.news2.test.risk": "78842da535fcaf4fa4a7f42975d576c469beddef4d03b1a68a4ad72697d2d66c",
+  "agent.news2.test.latent": "3cba030076f0fcf36ca8809a6ff417151387da89613db88c019c20b06c9266fd",
+  "agent.labs.train.risk": "1b99153f2edcf4d06743402422fa121813fc6e96923938a629ca83f77c4c9f9f",
+  "agent.labs.train.latent": "133aca94645c8ffb80d62a2daf6187aa7a565f1f5c7bce83a3945a3578a88e6c",
+  "agent.labs.val.risk": "3dd0d1453ae4c951247a2a1273c2d25c81175b4b145b9cb2c11fe1f5fdc62a2c",
+  "agent.labs.val.latent": "d0eb0e654543f6dde5c807c095880978ad430e90c9b71a24a53ad2b73422bf23",
+  "agent.labs.test.risk": "c60c5206c5ce4e73570694259a8f1fbe965ecbb701a530efa93bb94a92d52cba",
+  "agent.labs.test.latent": "a303b3c3ac47fd1c58a53ba1d4d94c5ff43b4986548e7400c6183776d6632a1a",
+  "agent.ecg_meas.train.risk": "60bd4a1938fed51b808da64fbf28c1d46d343c5ccf5573b2922584a410ccf455",
+  "agent.ecg_meas.train.latent": "aa54bb797722ebb37fbaa047e970afae5f60281d6ff2195b284ec984d76d08fe",
+  "agent.ecg_meas.val.risk": "0a5d210cfd3c3e567e50cf532f6c5c66d820a1dbf3d87b4d20f68724270215d7",
+  "agent.ecg_meas.val.latent": "e5d43f1ced445fffff216688bccda257c231817cf975e27cfc3b2b1e85992a10",
+  "agent.ecg_meas.test.risk": "5b97ee4d90a0fc32179681e9f1a16c837cab8ce62bfa3aac050f0e124c73dd5e",
+  "agent.ecg_meas.test.latent": "fac3d9471402a3187ecc639c92ab501b6fb827410c386c756433aa38857cc80f",
+  "agent.gbm.train.risk": "5c63d3bcee99060973018674f98ede5905cc7e74709cb7c38ee1f8ad6c26819b",
+  "agent.gbm.train.latent": "2bcd025b7a6bbc0b5bcdaec5872ad7ec304ccc1e71c957bd3ea0fac2330df622",
+  "agent.gbm.val.risk": "7b54b87f5607342d8e5db4663b29797701a22f3f95bde6e00fef98319edc4a25",
+  "agent.gbm.val.latent": "04ba23b01071741cc8c06f3c8f88ab5f12d4a9e5b99a900174d840ac6e821d5e",
+  "agent.gbm.test.risk": "264c8da978e4f0dc16d443ee6b2dacdac2b22d7b1e8e08c715ddb1e212e7ff8d",
+  "agent.gbm.test.latent": "2b7d77e6b2025cef90d86355e5add2850d1e6c95929c9ac69c7aa7f01236b4ff",
+  "agent.cadence.train.risk": "dcd290c5129a3ab2d48591b336416160ce185d3adb270ea41b32d2e5a01695d1",
+  "agent.cadence.train.latent": "16e977d185838973c23eb258978baaf19e54e6fe5ef09702adfd531a88e4008f",
+  "agent.cadence.val.risk": "8f9afecdd63d8269c61394efca73f3d90283f5e10a43113f3e54c293d90fed46",
+  "agent.cadence.val.latent": "ec8da829ebb8c40f9bad527d300a9e59cc8cc754eeb567d20ce0488c8628dd2d",
+  "agent.cadence.test.risk": "6bbf5abb2f5d56c6f1a6c007185d361675d7f1b1e8a9558d12c6a26f5d0f3d54",
+  "agent.cadence.test.latent": "6e01d11826ca17965242b4545f0d4cb4742ba882efee33837da31f099e0ce426",
+  "agent.fluid.train.risk": "662919a8da30e8188fa00a2da67e65466f13e87e88ec77d6313f4ebf4f831513",
+  "agent.fluid.train.latent": "640d1840f76f4adcc500c13ed9bee0bfc1c84253fdcf1487f2458e8017012148",
+  "agent.fluid.val.risk": "bc94e895b67f4c0b391ad2a0455247ae3f1250aee00d2dc93b561d6bbc9e6a1b",
+  "agent.fluid.val.latent": "cafc4a1f276f73f05efc5d69096318dd1ded6aee32b0529ff2389108ab9895ca",
+  "agent.fluid.test.risk": "c54a1f8cf81b8e42275ffbe61ae9f4bc72b9f9b32d6ed92f4570909b8218dd4a",
+  "agent.fluid.test.latent": "56c11faa6067958cd0ab2cbb9cfcda6414e0990490435708ba68f2a8352bb1c2",
+  "agent.resp.train.risk": "1aeef35acad1d0d85631c6727287a0cb6aa25202bbe386fb550f73a3733702bf",
+  "agent.resp.train.latent": "b8c5b565bb76477769cafdbe0564208279ac4ed85164d04ec4dd9caa8f0838d0",
+  "agent.resp.val.risk": "86f4b176b2e2b772819b5c8e3a91a5adc9d0c94cbf2c332c96f1a24d16599a46",
+  "agent.resp.val.latent": "3ffa0b1d9e084ddadaf98d20b0bd5acbcce1aa6c221dad543ee35bd66f4dc3ff",
+  "agent.resp.test.risk": "05e6f9a69a1f68c9c2898700c59f24ddfb2d98714ed8e6ab3803d517d3324a8f",
+  "agent.resp.test.latent": "bafd29d23388777a753995ba8f0b529ef08f987ea23ecc6b5db6ee53380b3027",
+  "fair.rawval_FAIR+TRAJ": "7917ea81ee4fbff37ac00e5c05c61870de2575de5c1a3120bfd68e5fc2f8365d",
+  "fair.raw_FAIR+TRAJ": "0e7edc89b995a9d2432149747f107eaa2a0e365a4dd3de618186bf0906406205",
+  "heads.val_s42": "984fe0ef9dc9579032f83ca4bdbcc3d9a82c039d65ad8407796677961033d8e9",
+  "heads.test_s42": "ecb8539d5d79748ba1d0c88637c8aabe6e0cd3757dfc9314715a71b2e0fbccec",
+  "heads.dhead_test_s42": "7e3e236a1dc4aa3b3fbec094fb2eb17dcd0cc7985feb2d65138105db274bf86d"
+ },
+ "t36_metrics": {
+  "test_auprc": 0.3156306208334899,
+  "test_auroc": 0.8256884997559704,
+  "dhead_death_auprc": 0.3480667037322867
+ },
+ "t36_stages": {
+  "ecg_features": {
+   "wall_seconds": 4.62,
+   "peak_process_bytes": 353193984
+  },
+  "core3_agents": {
+   "wall_seconds": 162.17,
+   "peak_process_bytes": 8264515584
+  },
+  "ecg_meas_agent": {
+   "wall_seconds": 49.99,
+   "peak_process_bytes": 3397738496
+  },
+  "fair_gbm": {
+   "wall_seconds": 1159.16,
+   "peak_process_bytes": 8622956544
+  },
+  "gbm_agent": {
+   "wall_seconds": 116.95,
+   "peak_process_bytes": 8116363264
+  },
+  "tab_agents": {
+   "wall_seconds": 155.25,
+   "peak_process_bytes": 6668705792
+  },
+  "heads": {
+   "wall_seconds": 183.74,
+   "peak_process_bytes": 7021891584
+  }
+ },
+ "t36_machine": {
+  "cpu": "Intel(R) Core(TM) Ultra 9 275HX",
+  "logical_cpus": 24,
+  "ram_gb": 30.7,
+  "os": "Pop!_OS 24.04 LTS",
+  "python": "3.12.3",
+  "torch": "2.11.0+cpu",
+  "torch_cuda_build": null,
+  "cuda_visible": false,
+  "omp_num_threads": "1"
+ },
+ "published_ten_seed_auprc": {
+  "mean": 0.30871968938170813,
+  "min": 0.3016572537475185,
+  "max": 0.3154994306067479,
+  "n": 10
+ }
+}
