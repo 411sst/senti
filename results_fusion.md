@@ -4559,6 +4559,185 @@ intact path, which runs before any outage.
   they have no ties. Nothing else changes: the rules, measures and gates are
   as above.
 
+### T42 results (run 2026-11-18)
+
+**Headline: FAIL.** With a whole feed missing and no retraining (scenario A),
+Sentinel is more robust for 3 of the 6 feeds: laboratory, fluid and
+respiratory. The GBM is more robust for 2: vital signs and order entry. The
+rule needs the GBM to win none.
+
+Sentinel is never better than the GBM in absolute terms during an outage.
+* For the three feeds where it loses less, the outage only closes its
+  intact gap to the GBM. The difference becomes a tie.
+* For vital signs, ECG and order entry, the GBM stays ahead during the
+  outage.
+
+**Gates.** All six passed.
+1. The test rows rebuilt from the raw extract equal the cached cohort.
+2. NEWS2, labs and ecg_meas reproduce their published train, val and test
+   outputs exactly, and so do the FAIR+TRAJ booster and the GBM agent's
+   emissions.
+   * vitals_tcn, cadence, fluid and resp differ, as expected for CPU refits
+     of GPU fits (max |Δrisk| on test 0.24, 0.63, 0.45 and 0.45).
+3. All ten all-features GBMs equal T31's val and test scores exactly, each
+   from its recorded grid cell alone. Every saved booster predicts
+   identically after reloading.
+4. The head code on the published bank equals `two_head.npz` seed 42 exactly.
+5. The rebuilt Sentinel's ten-seed test AUPRC is **0.3101** (range
+   0.3015–0.3162; AUROC 0.8226), against the published 0.3087. The GBM's is
+   0.3282, as in T31.
+6. With no outage, every agent output, head score and GBM score equals its
+   reference exactly. In all 12 outages:
+   * keys and labels are unchanged;
+   * every agent that does not read the feed is byte-identical, and every one
+     that does changed;
+   * the GBM's columns from other feeds are byte-identical, and the fallbacks
+     are unchanged;
+   * in scenario B, every output at hours up to the window start equals its
+     intact value (max |Δ| 0).
+
+**Rows evaluated.**
+* Scenario A: all 361,229 test hours (8,375 stays, 17,140 positive hours).
+* Scenario B: the 107,556 hours inside the windows (7,785 stays, 6,871
+  positive hours). 865 event stays have a positive hour inside their window.
+
+Prevalence inside the windows is higher, so B's AUPRC runs higher than A's
+(intact 0.447 against 0.310).
+
+Drops are intact minus outage, so a larger number is a worse loss. Robustness
+Δ is GBM drop − Sentinel drop: above zero means Sentinel lost less. "Seeds" is
+the number of seed pairs whose own CI is above / below zero. Means are over
+seeds 42 and 1–9 (no retraining) or 42, 1 and 2 (planned ahead).
+
+#### Scenario A, no retraining (primary): AUPRC
+
+| feed down | Sentinel intact → outage | GBM intact → outage | Robustness Δ [95% CI] | seeds | verdict | Sentinel − GBM during outage |
+| --- | --- | --- | --- | --- | --- | --- |
+| vital signs | 0.3101 → 0.1343 | 0.3282 → 0.2116 | −0.0592 [−0.0738, −0.0460] | 0 / 10 | **GBM more robust** | −0.0774 [−0.0916, −0.0653], GBM better |
+| laboratory | 0.3101 → 0.2603 | 0.3282 → 0.2522 | +0.0262 [+0.0176, +0.0333] | 10 / 0 | **Sentinel more robust** | +0.0081 [−0.0017, +0.0173], tie |
+| ECG | 0.3101 → 0.3098 | 0.3282 → 0.3276 | +0.0004 [−0.0020, +0.0027] | 0 / 0 | tie | −0.0178 [−0.0277, −0.0081], GBM better |
+| order entry | 0.3101 → 0.2525 | 0.3282 → 0.2913 | −0.0207 [−0.0317, −0.0107] | 0 / 9 | **GBM more robust** | −0.0389 [−0.0529, −0.0257], GBM better |
+| fluid | 0.3101 → 0.3054 | 0.3282 → 0.3111 | +0.0124 [+0.0063, +0.0178] | 10 / 0 | **Sentinel more robust** | −0.0057 [−0.0164, +0.0050], tie |
+| respiratory | 0.3101 → 0.2839 | 0.3282 → 0.2883 | +0.0138 [+0.0069, +0.0213] | 10 / 0 | **Sentinel more robust** | −0.0044 [−0.0143, +0.0056], tie |
+
+AUROC broadly agrees, with one exception: for vital signs the AUROC
+robustness Δ is a tie. Robustness Δ per feed, in table order: vital signs
+−0.0048 [−0.0131, +0.0040], laboratory +0.0074 [+0.0030, +0.0115], ECG
+−0.0007, order entry −0.0062 [−0.0111, −0.0008], fluid +0.0081
+[+0.0049, +0.0112], respiratory +0.0094 [+0.0058, +0.0132]. During every
+outage the GBM's AUROC is higher or tied.
+
+#### Scenario A, no retraining: alarms and catches at the 2% budget
+
+The thresholds are the intact ones. Alarm rate is the share of test hours
+alarmed (ten-seed mean, with the range in brackets). Catch is the share of
+event stays alarmed at or before the event.
+
+| feed down | Sentinel alarm rate | GBM alarm rate | Sentinel catch | GBM catch |
+| --- | --- | --- | --- | --- |
+| none (intact) | 2.14% | 2.05% | 58.6% | 54.7% |
+| vital signs | 8.66% (6.81–10.20), **flood** | 21.04% (17.36–24.18), **flood** | 100.0% | 88.7% |
+| laboratory | 1.08% (0.96–1.22) | 1.36% (1.12–2.08) | 39.8% | 39.9% |
+| ECG | 2.11% | 2.03% | 58.3% | 54.7% |
+| order entry | 4.97% (0.53–13.19), **flood** | 1.02% (0.81–1.54), **silence** | 56.8% | 33.2% |
+| fluid | 2.45% | 1.86% | 60.0% | 50.0% |
+| respiratory | 1.56% | 1.17% | 50.6% | 42.3% |
+
+A vital-signs outage floods both systems. Missing vitals look like a sick
+patient to both, and the GBM floods 2.4× as much as Sentinel. Catches under a
+flood mean little: both alarm on most stays. An order-entry outage pushes
+the two systems in opposite directions:
+* Sentinel's cadence agent reads "no orders" in a way the heads have never
+  seen, and its alarm rate swings from 0.5% to 13.2% depending on the seed.
+* The GBM goes quiet and catches 33% of event stays instead of 55%.
+
+#### Scenario A, planned ahead (secondary; seeds 42, 1, 2): AUPRC
+
+| feed down | Sentinel fallback (agents kept) | GBM fallback (columns kept) | Robustness Δ [95% CI] | verdict | Sentinel − GBM |
+| --- | --- | --- | --- | --- | --- |
+| vital signs | 0.2630 (5) | 0.2864 (184) | −0.0052 [−0.0158, +0.0051] | tie | −0.0234 [−0.0353, −0.0115], GBM better |
+| laboratory | 0.2782 (6) | 0.3054 (190) | −0.0090 [−0.0170, −0.0009] | **GBM more robust** | −0.0272 [−0.0380, −0.0173], GBM better |
+| ECG | 0.3114 (7) | 0.3289 (209) | +0.0008 [−0.0035, +0.0048] | tie | −0.0175 [−0.0290, −0.0069], GBM better |
+| order entry | 0.3068 (7) | 0.3221 (230) | +0.0030 [−0.0024, +0.0084] | tie | −0.0153 [−0.0261, −0.0057], GBM better |
+| fluid | 0.3065 (7) | 0.3191 (249) | +0.0057 [+0.0003, +0.0107] | **Sentinel more robust** | −0.0126 [−0.0227, −0.0024], GBM better |
+| respiratory | 0.2199 (4) | 0.3074 (248) | −0.0693 [−0.0853, −0.0538] | **GBM more robust** | −0.0876 [−0.1045, −0.0705], GBM better |
+
+The intact references are 0.3103 for Sentinel and 0.3285 for the GBM (three-
+seed means). Every fallback keeps its alarm rate between 1.97% and 2.18%, as
+re-frozen thresholds should.
+
+Sentinel's fallback granularity is the agent.
+* The respiratory feed reaches vitals_tcn, NEWS2 and the GBM agent through
+  `on_oxygen`, so its fallback keeps only 4 of 8 agents. The GBM drops only
+  the feed's 14 columns. That one mapping costs Sentinel 0.069 AUPRC more
+  than the GBM loses.
+* Planning ahead helps Sentinel much more for vital signs (0.134 with no
+  retraining → 0.263 with its fallback) and order entry (0.253 → 0.307).
+  It hurts for respiratory (0.284 → 0.220): dropping four agents costs more
+  than reading the respiratory feed as room air.
+
+#### Scenario B (one 24 h window per stay), AUPRC on the window hours
+
+| feed down | Sentinel intact → outage | GBM intact → outage | Robustness Δ, no retraining | verdict | planned ahead |
+| --- | --- | --- | --- | --- | --- |
+| vital signs | 0.4467 → 0.3285 | 0.4505 → 0.3375 | −0.0051 [−0.0235, +0.0118] | tie | tie |
+| laboratory | 0.4467 → 0.4167 | 0.4505 → 0.4110 | +0.0095 [+0.0019, +0.0165] | **Sentinel more robust** | tie |
+| ECG | 0.4467 → 0.4464 | 0.4505 → 0.4490 | +0.0012 [−0.0001, +0.0025] | tie | tie |
+| order entry | 0.4467 → 0.3844 | 0.4505 → 0.4369 | −0.0487 [−0.0615, −0.0359] | **GBM more robust** | tie |
+| fluid | 0.4467 → 0.4394 | 0.4505 → 0.4475 | −0.0043 [−0.0099, +0.0009] | tie | tie |
+| respiratory | 0.4467 → 0.4223 | 0.4505 → 0.4242 | +0.0019 [−0.0035, +0.0073] | tie | **GBM more robust** (−0.0939 [−0.1199, −0.0678]) |
+
+During a 24 h window the two systems are tied in absolute AUPRC for every
+feed except order entry, where the GBM is better by 0.053
+[0.034, 0.072]. Alarm rates at 2% on the window hours:
+* A vital-signs window floods both: Sentinel 4.09% (2.23–7.29), the GBM
+  6.23% (4.78–7.35).
+* Every other feed stays within 2× of intact for both systems. Order entry
+  moves Sentinel to 2.47% (range 1.65–4.04) and the GBM to 1.51%.
+
+Among the 865 event stays with a positive hour in their window, the share
+alarmed on a window hour falls by similar amounts for both systems:
+* laboratory: Sentinel 46.6% → 38.5%, GBM 47.6% → 39.4%;
+* respiratory: Sentinel 43.9%, GBM 43.8%;
+* order entry: Sentinel 42.8%, GBM 39.4%.
+
+**What this means.**
+* **The robustness argument holds only feed by feed.** With no retraining,
+  Sentinel degrades less than the single GBM when it loses labs, fluid
+  balance or respiratory support for a whole stay. It degrades more when it
+  loses vital signs or order entry. These are the two feeds its fusion leans
+  on hardest: three agents read the vitals, and cadence is the strongest of
+  the new agents. A per-agent design does not, by itself, contain the damage.
+  The heads were trained only on intact inputs, so a silent agent is
+  something they never saw.
+* **Losing less is not the same as being better.** Sentinel starts 0.018
+  behind the GBM. Its smaller drops for labs, fluid and respiratory close
+  that gap to a tie but never reverse it. In no outage, in either scenario
+  or arm, does Sentinel rank above the GBM.
+* **Alarm safety splits by feed.** A vitals outage floods both systems; the
+  GBM floods more. An order-entry outage floods Sentinel unpredictably
+  across seeds and silences the GBM. Either way, a deployment needs a
+  feed-health check that suppresses or flags scores when a feed goes quiet.
+  Neither model fails safe by itself.
+* **Planned fallbacks do not favour Sentinel.** Swapping in a fallback with
+  re-frozen thresholds keeps alarm volume on budget for both systems. Even
+  so, the GBM retrained without a feed beats Sentinel's fallback for every
+  feed. Sentinel drops whole agents where the GBM drops columns, which
+  matters most for the respiratory feed.
+* **The paper.** Claim 11 cannot be stated as written. The supportable
+  statement is per feed (see `paper/claims.md` row 11).
+
+**Run facts.** Core Ultra 9 275HX, 30.7 GB RAM.
+* Agent refits: 2.9 min on one CPU thread.
+* GBM refits: 73 min on the GPU (10 at recorded cells, then 18 grids).
+* Heads: 29 fits of about 2.5–3 min each on one or two CPU workers.
+* Scoring: 7 min for all 13 passes, intact included.
+* Evaluation: 56 min, 1,000 resamples × 176 scores × 2 metrics per scenario,
+  on 16 workers.
+
+Aggregates are in `data/cache/t42_feed_outage.json`, which passes
+`assert_aggregate_only`.
+
 ## Reproduce
 
 ```bash
