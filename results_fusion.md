@@ -40,7 +40,10 @@ report only ranking metrics, distillation papers never report lead time.
    over ten seeds** (0.3081 over the first five) — above the equal-information
    GBM's 0.287 with the paired CI clear of zero on **10/10 seeds** — with the death component
    restored to parity (0.184 vs the GBM's 0.189) and a death-specific head
-   that ranks death at **0.340 over ten seeds, 1.8× the GBM**. It supersedes ALL-8 (T8),
+   that ranks death at **0.340 over ten seeds, 1.8× the GBM**. *(Withdrawn
+   2026-11-18 by T39: a GBM given the same inputs and trained on death reaches
+   0.345, a tie. The 1.8× compared against GBMs trained on the composite
+   label.)* It supersedes ALL-8 (T8),
    all-7 (T6), ORCH+GBM and CONSTR-1H (T1/T4). **The timing edge is
    seed-fragile where the ranking edge is not**: lead@2% is
    +1.0/+2.0/+1.5/+0.0/+0.0h (win 57/59/58/46/50%) across seeds
@@ -699,7 +702,9 @@ leads come from — is T18.
 1. **The death deficit is closed.** Component death AUPRC goes 0.096 → 0.184
    — parity with the fair GBM's 0.189. The D-head *alone* reaches 0.342 mean
    death AUPRC, **1.8× the GBM's 0.189**: the representation was never the
-   problem, the supervision was. This result is 5/5 seed-stable.
+   problem, the supervision was. This result is 5/5 seed-stable. *(2026-11-18,
+   T39: the same holds for the GBM. Trained on death, the all-features GBM
+   reaches 0.345, tying the D head, so the 1.8× is withdrawn.)*
 2. **Ranking improves against the bar.** Two-head beats FAIR+TRAJ with the
    paired CI clear of zero on **5/5 seeds** — ALL-8 managed 2/3. This is the
    flagship's sturdiest claim.
@@ -717,7 +722,8 @@ leads come from — is T18.
 **Two-head ALL-8 is the final flagship.** Deployment cost is one extra
 forward pass over the same cached bank; both heads share the agents, and the
 D-head's death score is independently useful (it is the best death-risk
-ranker in the program, by a wide margin).
+ranker in the program, by a wide margin). *(2026-11-18, T39: no longer true.
+A death-trained all-features GBM ties it, 0.345 against 0.340.)*
 
 ## T10 — The literature bar, and which ICU this actually is
 
@@ -4159,6 +4165,70 @@ has its 95% CI above zero.
 on death; its eight agents were trained on the composite label. The
 death-only GBM learns death from the raw inputs end to end. If the design
 favours either side, it favours the GBM.
+
+### Results (run 2026-11-18)
+
+**Gate passed.** The cached D-head scores reproduce T30's death AUPRC in 10/10
+seeds, and the T31 cache matches its fingerprint. The fits used every row of
+each split: 1,720,991 train, 378,763 val and 361,229 test hours, with death
+in 0.85%, 0.83% and 0.76% of them. The ten fits took 37.7 min on the GPU
+(3.5–3.7 min each, after 75 s to build the design), with a peak of 14.2 GB.
+The grid kept depth 4 in 7 seeds, depth 6 in 2 and depth 8 in 1. It kept
+class weight 1 in all ten, so the rebalanced weight never won. Validation
+death AUPRC was 0.350–0.366. The evaluation took 11.8 min.
+
+**Verdict: FAIL.** A GBM trained on death ties the D head.
+
+Death within 24 h, test split, ten seeds:
+
+| arm | trained on | death AUPRC, mean (SD; range) | death AUROC, mean (range) |
+| --- | --- | --- | --- |
+| D head | death | 0.3404 (0.0064; 0.326–0.351) | 0.9460 (0.944–0.948) |
+| **death-only GBM** | death | **0.3451** (0.0137; 0.313–0.359) | 0.9448 (0.943–0.946) |
+| composite all-features GBM | composite | 0.1510 (0.0069; 0.141–0.160) | 0.9183 (0.916–0.921) |
+| flagship composite score | both heads | 0.1803 (0.0057; 0.170–0.188) | 0.9230 (0.921–0.926) |
+
+Paired differences, seed s against seed s on 1,000 shared patient-clustered
+resamples:
+
+| difference | metric | pooled Δ [95% CI] | seeds CI > 0 / CI < 0 / point > 0 |
+| --- | --- | --- | --- |
+| **D head − death-only GBM** | **AUPRC** | **−0.0046 [−0.0460, +0.0257]** | 0 / 0 / 5 |
+| D head − death-only GBM | AUROC | +0.0012 [−0.0088, +0.0110] | 0 / 0 / 7 |
+| D head − composite GBM | AUPRC | +0.1895 [+0.1437, +0.2387] | 10 / 0 / 10 |
+| death-only GBM − composite GBM | AUPRC | +0.1941 [+0.1394, +0.2591] | 10 / 0 / 10 |
+| flagship composite − death-only GBM | AUPRC | −0.1648 [−0.2259, −0.1184] | 0 / 10 / 0 |
+| flagship composite − death-only GBM | AUROC | −0.0218 [−0.0332, −0.0103] | 0 / 10 / 0 |
+
+Per seed, D head − death-only GBM ranges from −0.032 (seed 9) to +0.026
+(seed 7), and no seed's CI excludes zero.
+
+### What T39 means
+
+1. **The D head's death advantage was a label effect, not an architecture
+   effect.** Given the same label and rows, one GBM on the same inputs ranks
+   death as well as the D head: AUPRC 0.345 against 0.340, AUROC 0.945
+   against 0.946, and neither difference is distinguishable from zero. The
+   earlier "1.8× the GBM" compared a death-trained head with GBMs trained on
+   the composite label. Training the GBM on death gains +0.194, about the
+   same as the D head's +0.190 over the composite GBM.
+2. **This confirms T7's diagnosis and removes the claim built on it.** T7
+   found that composite supervision hides death ranking. That holds for the
+   GBM too, so the D head's 0.340 shows what death supervision buys, not what
+   the fusion buys.
+3. **The flagship's composite score is well behind a death-trained GBM on
+   death** (−0.165). That is expected, since the composite score is not
+   trained for death alone, but it means the paper cannot cite the flagship
+   as a death predictor either.
+4. **By the pre-registered branch, the death claim is dropped everywhere.**
+   * Claims row 10 is FAIL.
+   * Evidence row B5's comparison is superseded by B10.
+   * The headline (item 5 at the top of this file) and T9's "1.8× the GBM"
+     and "best death-risk ranker" lines carry dated corrections.
+   * Two places in `paper/main.tex` make the claim. They are listed in
+     `paper/claims.md` for the authors and are not edited here.
+5. The death-only GBM's seed spread (SD 0.014) is about twice the D head's
+   (0.006). That is a stability difference, not a ranking one.
 
 ## Reproduce
 
