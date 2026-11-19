@@ -5601,8 +5601,14 @@ The lifts are 2.47, 5.23, 3.72 and 5.33.
 * **The label's therapy part differs from our label.** On hours with no
   therapy started, shipped Sentinel's AUROC is 0.82 against the death part
   but 0.68 against the therapy part.
-  * Their code counts dobutamine as a vasopressor and uses its own
-    ventilation definition.
+  * The two definitions read different tables. Theirs takes five
+    vasopressors plus dobutamine from raw infusion records, and ventilation
+    from two procedure items. Ours takes MIMIC-IV's derived vasoactive-agent
+    table (the same drugs plus milrinone) and its derived ventilation table
+    (invasive ventilation or tracheostomy).
+  * *Corrected 2026-11-19:* this bullet first said their code differs by
+    counting dobutamine. Ours counts it too, so dobutamine is not the
+    difference.
   * On the shared hours, our label has 14,245 positives and theirs 11,328,
     with 10,989 in common.
 
