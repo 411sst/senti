@@ -4788,6 +4788,20 @@ These hold for every test from T43 to T49 unless a section says otherwise.
   protocol threshold. This is a test-score diagnostic, reported without a
   pass rule.
 
+**Clarification after pre-registration, made before any T43–T49 scoring
+(2026-11-19).** The lead definition above put each model at its own (1 − b)
+V_freeze quantile. That was a drafting error.
+* **The protocol the spec refers to.** The "+1 h at 2%" rule is T1's
+  CONSTR-1H selection. That selection, T30, T33 and every published lead put
+  the model at NEWS2's achieved V_freeze alert volume at nominal budget b
+  (`frozen_thresholds`, about 2.3% at 2%).
+* **Races against the GBM** put both models at that same volume.
+* **What applies.** The authors chose the protocol before any scoring, and it
+  applies to T43 and T47 (and T48 if it runs), including arm B's selection
+  on V_freeze.
+* **Unchanged.** Everything else, including the share-first CI on the shared
+  resamples.
+
 ## T43 — The all-features GBM as Sentinel's GBM agent (pre-registered)
 
 *Pre-registered 2026-11-19, before any test-split scoring.*
@@ -5055,6 +5069,99 @@ quiet-stay share (secondary).
 the stacks are fit or chosen on validation halves. The write-up says so.
 
 **Claims row 16** is added either way.
+
+### T47 results (run 2026-11-19)
+
+Run with the NEWS2-matched lead protocol (clarification in the shared rules,
+made before scoring). Test split: 361,229 hours, 17,140 positive, 6,335
+patients.
+
+**Gate passed.** The cached Sentinel scores give the published ten-seed AUPRC
+(0.3087).
+
+**Selection, on validation only.**
+* **Arm A.** LOGIT3 weights the GBM's logit more heavily at every seed:
+  0.61–0.74, against 0.34–0.47 for Sentinel's.
+* **Arm B.** CONSTR-1H found a qualifying weight at every seed, w = 0.5–0.8.
+  Each chosen weight sits exactly on the floor, a V_freeze median lead of
+  +1.0 h. At seed 42, every w ≥ 0.5 gives +1.0 h and every w ≤ 0.4 gives 0 h.
+
+**Verdict: arm A PASS, arm B FAIL.**
+* LOGIT3 beats the all-features GBM on AUPRC with the pooled CI clear of
+  zero, at all ten seeds.
+* CONSTR-1H ties the GBM on AUPRC, but on test its median lead over NEWS2 at
+  2% is 0 h at every seed, so its timing rule fails.
+
+| arm | AUPRC [CI] | ΔAUPRC vs GBM [CI], seeds > 0 | AUROC | ΔAUROC vs GBM [CI], seeds > 0 | lead over NEWS2 at 2% | share-first at 2% [CI] |
+| --- | --- | --- | --- | --- | --- | --- |
+| **A: LOGIT3 stack** | 0.3333 [0.3101, 0.3581] | **+0.0051 [+0.0010, +0.0092], 10/10** | 0.8371 | −0.0003 [−0.0022, +0.0016], 2/10 | 0 h (every seed) | 0.561 [0.514, 0.606] |
+| **B: CONSTR-1H stack** | 0.3304 [0.3066, 0.3549] | +0.0022 [−0.0041, +0.0080], 9/10 | 0.8340 | −0.0035 [−0.0064, −0.0006], 0/10 | **0 h (every seed)** | 0.590 [0.542, 0.634] |
+| Sentinel (parent) | 0.3087 [0.2858, 0.3315] | −0.0195 [−0.0298, −0.0102], 0/10 | 0.8225 | −0.0149 [−0.0198, −0.0100], 0/10 | +0.95 h (8 of 10 seeds ≥ +1 h) | 0.685 [0.645, 0.726] |
+| all-features GBM (parent) | 0.3282 [0.3055, 0.3530] | — | 0.8374 | — | 0 h | 0.502 [0.456, 0.548] |
+
+Lead is the ten-seed mean of per-seed median leads. Share-first is the share
+of event stays, among those where the first alarms differ, in which the model
+alarms first. At 2% the protocol volume is 2.62% of V_freeze hours.
+
+**Other budgets and races.**
+* **Lead over NEWS2 at 1% / 5%.**
+  * A: 0 / 0 h; share-first 0.463 / 0.656.
+  * B: 0 / +0.30 h; 0.488 / 0.679.
+  * Sentinel: +0.10 / +0.80 h; 0.555 / 0.731.
+  * GBM: −0.15 / 0 h; 0.437 / 0.592.
+* **Race against the GBM at 2%.** The median is 0 h for every arm. Among
+  stays where the first alarms differ, each arm alarms first more often than
+  the GBM:
+  * A: 70.7% [66.5, 75.0];
+  * B: 70.1% [66.4, 74.1];
+  * Sentinel: 66.8% [63.2, 70.4].
+
+  At 1% and 5% the shares are 58–69%, all with CIs above 50%.
+* **Catch at 2%** (protocol thresholds; quiet stays alarmed in brackets):
+  * A: 55.4% (5.6%);
+  * B: 56.6% (6.2%);
+  * Sentinel: 58.6% (8.0%);
+  * GBM: 53.9% (5.1%).
+* **Catch at the GBM's quiet-stay share at 2%** (test-score diagnostic):
+  * A: 54.1% against the GBM's 53.9% (7 of 10 seeds ahead);
+  * B: 53.8% (5 of 10);
+  * Sentinel: 49.9% (0 of 10).
+
+  The pattern is the same from 0.5% to 10%: A is level with the GBM or
+  slightly ahead, and Sentinel alone is behind.
+
+**Reading.**
+* **The ranking gain is real but small.** LOGIT3 is the first model in these
+  tests to beat the all-features GBM on AUPRC with the CI clear of zero: +0.005
+  (1.6% relative), at all ten seeds. AUROC is a tie. At equal quiet-stay
+  share it catches about the same stays as the GBM, so the gain does not
+  become clinically more catches.
+* **Stacking keeps Sentinel's ranking signal but not its lead.**
+  * Sentinel alone leads NEWS2 by about +1 h at 2%.
+  * Both stacks tie NEWS2 at a median of 0 h, though they alarm first in
+    56–59% of the stays where alarms differ.
+  * Against the GBM, every arm, Sentinel included, ties at a median of 0 h
+    while alarming first in two-thirds of the stays where alarms differ.
+* **Why arm B failed.** Its V_freeze rule selected the boundary weight. The
+  median lead is a whole-hour statistic, every chosen weight landed exactly on
+  +1.0 h, and the lead did not carry over to test.
+* **Sentinel alone against the timing rule.** Under this pooled definition
+  Sentinel alone sits at +0.95 h, just under +1 h; 8 of 10 seeds reach +1 h.
+  This bears on T43's secondary timing rule, which uses the same measure.
+
+**Caveats.**
+* Both parents early-stop on validation data, and the stacks are fit (A, on
+  V_fit) or chosen (B, on V_freeze) on validation halves.
+* **Differences from T1.** T1's LOGIT3 used scikit-learn's default L2 penalty,
+  where T47's is unpenalised as pre-registered. T1's CONSTR-1H blended
+  probabilities, where T47 blends logits as the spec says. T1's parents were
+  FAIR+TRAJ and an earlier orchestrator, so T1's numbers are not directly
+  comparable.
+
+**Run facts.** CPU only. Selection took 17 s; evaluation took 12 min (the
+bootstrap, 40 scores × 1,000 resamples, ran on 16 workers). Aggregates are in
+`data/cache/t47_stack.json` (selection in `data/cache/t47/selection.json`),
+which passes `assert_aggregate_only`.
 
 ## T48 — Alarm-persistence rules (optional; pre-registered, runs only if asked after T47)
 
@@ -5436,4 +5543,9 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage fit-gbm
 CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage fit-heads --workers 3
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage score --workers 3
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage eval --workers 8
+
+# T47: stacking Sentinel with the all-features GBM, CPU only. Selection reads
+# validation only; eval scores test. Aggregates in data/cache/t47_stack.json.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t47_stack.py select --race-thresholds matched
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t47_stack.py eval --race-thresholds matched --workers 16
 ```
