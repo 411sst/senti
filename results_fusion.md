@@ -5356,6 +5356,106 @@ AND lift CI lower bound above 6.81. Recall at 97.7% specificity against their
 2. The retrained heads' composite label equals their label on every training
    and validation row.
 
+**Clarification after pre-registration, made before any T49 metric
+(2026-11-19).** Gate 1 as written failed on its first run.
+* **What failed.** It asked for exact equality. Five agents that emit in
+  4,096-row batches (labs, ECG, cadence, fluid, resp) differed from T42 on 428
+  of 212,178 shared test rows (0.20%). The largest differences were 2.9e-06 on
+  a latent and 1.2e-07 on a risk. vitals_tcn, NEWS2 and the GBM agent were
+  exact.
+* **The cause.** The frames' columns are identical on shared rows.
+  Re-emitting T42's own frame with only the batch size changed (4,000 instead
+  of 4,096) reproduces the same signature: 0.20% of rows, at most 1.2e-06 on a
+  latent. The differences are CPU float32 rounding that depends on which rows
+  share a batch, and no data differs. Exact equality cannot be reached while
+  T49's row set differs from ours.
+* **The authors' choice (2026-11-19).** Exact equality is replaced by a
+  rounding envelope, measured on our own cohort before the gate is rerun.
+* **How the envelope is measured** (`scripts/t49_score.py envelope`):
+  * For each split, T42's own frame is re-emitted through the five batched
+    agents at batch sizes 1,024, 2,048, 4,000 and 8,192, with the inputs
+    unchanged, and compared with the T42 bank.
+  * An agent's envelope is the largest value over those four runs of: the
+    share of rows that differ, the largest latent difference and the largest
+    risk difference.
+  * For the heads, the T42 heads (each seed, both heads) score the T42 bank
+    with the five agents' test outputs replaced by each re-emission. The
+    envelope is again the largest share of differing rows and the largest raw
+    difference.
+* **Pass rules.**
+  * **Agents:** on shared rows, every agent's three values are within its
+    envelope. vitals_tcn, NEWS2 and the GBM agent stay exact.
+  * **Heads:** on shared test rows, each seed-head's share of differing rows
+    and largest difference are within the largest head envelope.
+  * The run stops if either fails.
+* **Disclosure.** The first run's differences (above) were seen before the
+  envelope was set. The procedure has no free constant that could be tuned to
+  them.
+* **Second amendment, the same day, before any T49 metric.** The rerun
+  against this envelope failed on one number, and nothing else.
+  * The labs agent's largest risk difference was 1.19e-07, against its
+    envelope of 5.96e-08.
+  * In float32 ulps of the value, these are both 2 ulps. T49's difference
+    falls at a risk of 0.861, where one ulp is 5.96e-08. The envelope runs
+    reach 2 ulps only at smaller risks.
+  * The authors chose (2026-11-19) to compare each agent's risk differences
+    in ulps of the reference value: the largest ulp count, against the
+    largest over the four batch-size runs.
+  * The share of rows and the latent size stay absolute, and the head part is
+    unchanged.
+  * The first envelope stays in `data/cache/t49/envelope.json`; the
+    ulp-based one is `envelope_ulps.json`.
+* **An input fix found by the extra check, before any T49 metric.** The
+  same check run on the validation split found a real difference: 0.23% of
+  shared rows differed in the ECG agent, by up to 0.62 on a latent.
+  * **The cause.** The ECG builder breaks same-hour ties between two ECGs
+    with an unstable sort over the whole index. The all-stays index is
+    larger, so ties are re-rolled.
+  * **The fix.** Stays our cohort has now use our cohort's ECG index and
+    features, for both the ECG agent and the reference GBM's ECG columns.
+    Other stays use the all-stays files. This is the same principle as the
+    Phase 1 `reconcile`. With it, the val differences fall back to rounding
+    (2 ulps).
+  * The test outputs built before the fix were moved to
+    `data/cache/t49/superseded_ecg_ties/`.
+  * The validation and training checks were not pre-registered. They stop
+    only on differences beyond rounding: above the agent's largest envelope
+    over the three splits.
+  * **The training check and vitals_tcn.** vitals_tcn was exact on test and
+    validation. On training it differed on 0.35% of shared rows, with a
+    largest latent difference of 1.43e-06 and a largest risk difference of
+    2.59e-05 (one calibration step).
+    * Re-emitting T42's own training frame at batch 128 instead of 64, with
+      the inputs unchanged, gives exactly those two maxima. vitals_tcn
+      batches whole stays, so a different mix of stays changes the padded
+      batch shapes.
+    * For the extra checks, vitals_tcn gets an envelope measured the same
+      way, at batch sizes 16, 32, 128 and 256.
+    * The extra checks then stop on magnitude only (latent and risk ulps)
+      beyond the envelope. Shares are reported.
+    * The pre-registered test gate is unchanged, and vitals_tcn was exact
+      there.
+* **Third amendment, the same day, before any T49 metric: the head
+  envelope.** Every agent passed on all three splits. The head part of gate
+  1 then failed.
+  * **The failure.** On shared test rows, head scores differed on up to
+    0.90% of rows, by at most 1.79e-07 (about 3 float32 ulps). The envelope
+    allowed 0.76% and 1.27e-07.
+  * **The cause.** That envelope perturbed only the agent inputs, but the
+    heads also batch whole stays (64 per batch). Re-scoring T42's own test
+    bank with only the head batch size changed gives raw differences up to
+    exactly 1.79e-07, on up to 0.17% of rows. The two rounding sources
+    together match the observed share.
+  * **The authors' choice (2026-11-19).** The head envelope is measured with
+    both sources together (`scripts/t49_score.py envelope-heads`). T42's
+    heads score each of the four re-emitted agent banks at head batch sizes
+    16, 32, 64, 128 and 256.
+  * **The pass rule.** The largest share and the largest raw difference over
+    all runs bound each seed-head on shared test rows. The gate is rechecked
+    once, and T49 stops if it fails again.
+  * The first head envelope stays in `envelope_ulps.json` (`heads_max`); the
+    new one is `envelope_heads.json`.
+
 **Differences from their setup, fixed in advance.**
 * Their model's input includes the hour bin of the prediction time, up to
   1 h after t. Ours stops strictly before t.
@@ -5366,6 +5466,117 @@ AND lift CI lower bound above 6.81. Recall at 97.7% specificity against their
 **Claims row 18** is added either way: "Sentinel exceeds the published results
 of the only model for this exact outcome (Sadanandan 2026, preprint)". The
 word "preprint" stays in the claim.
+
+### T49 results (run 2026-11-19)
+
+**Scored rows.** 548,301 test hours from 4,614 patients, 18,259 positive
+(3.33%). Their test set has 823,641 hours at 2.8%.
+
+**Gates.**
+* **Gate 1** passed after the three dated amendments and the ECG input fix
+  above. All of them were made before any T49 metric.
+  * Agents: within the rounding envelope on every split.
+  * Heads: on shared test rows, at most 0.90% of rows and 1.79e-07 against
+    0.92% and 1.79e-07.
+* **Gate 2** passed: the two parts rebuild their label on every training and
+  validation row.
+
+**Comparability: PASS.** The bridge's ten-seed mean test AUROC is 0.7466
+(seeds 0.7437 to 0.7504), against their XGBoost's 0.7486. The gate is 0.7286
+to 0.7686.
+
+**Verdict: FAIL.** Sentinel as shipped falls far below their results.
+* AUROC: 0.5918 [0.5744, 0.6090] against 0.7857.
+* Lift: 2.10 [1.91, 2.32] against 6.81.
+
+Retrained on their label, Sentinel comes close to their multimodal AUROC but
+does not exceed it. Its lift is lower.
+
+| arm | AUROC [CI] | AUPRC [CI] | lift [CI] | recall / precision at 97.7% spec., threshold on V_freeze (realized spec.) | the same, threshold on test |
+| --- | --- | --- | --- | --- | --- |
+| **Sentinel as shipped (primary)** | **0.5918 [0.5744, 0.6090]** | 0.0700 [0.0639, 0.0767] | **2.10 [1.91, 2.32]** | 10.4% / 10.3% (96.9%) | 8.9% / 11.7% |
+| Sentinel, retrained heads | 0.7807 [0.7671, 0.7924] | 0.1846 [0.1706, 0.1988] | 5.54 [5.09, 6.05] | 19.3% / 26.1% (98.1%) | 21.3% / 24.2% |
+| bridge (their XGBoost, rebuilt) | 0.7466 [0.7320, 0.7614] | 0.1452 [0.1325, 0.1588] | 4.36 [3.98, 4.79] | 15.5% / 20.8% (98.0%) | 16.6% / 19.9% |
+| reference: all-features GBM on their label | 0.8101 [0.7983, 0.8222] | 0.2041 [0.1888, 0.2209] | 6.13 [5.61, 6.72] | 21.0% / 27.1% (98.1%) | 22.8% / 25.5% |
+| *their multimodal (preprint, no CIs)* | *0.7857* | *0.1908 at 2.8%* | *6.81* | — | *26.6% / 25.1% (97.7%)* |
+| *their structured-only / XGBoost* | *0.7603 / 0.7486* | *0.1371 / 0.1123* | *4.90 / 4.01* | — | — |
+
+The ten-seed ranges of AUROC:
+* shipped: 0.5786 to 0.5992;
+* retrained: 0.7772 to 0.7833;
+* reference: 0.8054 to 0.8124.
+
+The threshold-on-test column mirrors their Table 6 and is description only.
+
+**Sensitivity: hours with no therapy started yet** (256,467 hours, 4.81%
+positive). AUROC:
+* shipped: 0.6834 [0.6603, 0.7053];
+* retrained: 0.8045 [0.7877, 0.8194];
+* bridge: 0.7317 [0.7116, 0.7493];
+* reference: 0.8137 [0.7981, 0.8274].
+
+The lifts are 2.47, 5.23, 3.72 and 5.33.
+
+**Diagnostics, computed after the result (test scores, no pass rule).**
+* **The pipeline reproduces T42.** On the 212,178 test hours our cohort also
+  has, the shipped composite equals T42's to rounding (largest difference
+  3e-07 at seed 42). It gives the same AUROC with our label (0.7735 against
+  0.7736). So the low score is not a scoring error.
+* **Most of the cohort is hours Sentinel was never trained on.** The other
+  336,123 test hours (61%) are hours our cohort leaves out. 85% of them come
+  after a vasopressor or ventilation had already started, because our cohort
+  censors each stay at its first event.
+  * Shipped Sentinel scores those hours higher (mean 0.196 against 0.082),
+    but their label is positive in only 2.0% of them.
+  * Its AUROC with their label is 0.7424 on the shared hours and 0.6406 on
+    the others.
+* **The label's therapy part differs from our label.** On hours with no
+  therapy started, shipped Sentinel's AUROC is 0.82 against the death part
+  but 0.68 against the therapy part.
+  * Their code counts dobutamine as a vasopressor and uses its own
+    ventilation definition.
+  * On the shared hours, our label has 14,245 positives and theirs 11,328,
+    with 10,989 in common.
+
+**Reading.**
+* **Shipped Sentinel does not transfer to this outcome.** It was trained on
+  our label and only on hours before a stay's first event. Their samples
+  include hours after a therapy has started and define the therapies
+  differently.
+* **Retrained heads close most of the gap but do not exceed their model.**
+  On their label, with frozen agents, Sentinel reaches AUROC 0.7807. That is
+  just under their multimodal 0.7857, which lies inside its CI. Its point
+  values are above their structured-only (0.7603) and XGBoost (0.7486) models.
+  Its lift (5.54) is below their 6.81.
+* **The all-features GBM again does best.** Retrained on their label it
+  reaches AUROC 0.8101, with the CI above their multimodal 0.7857. That
+  repeats T43 and T47, where the all-features GBM also out-ranked Sentinel's
+  heads. Its lift (6.13 [5.61, 6.72]) is still below 6.81.
+* **Lift and prevalence.** Our scored rows have a higher positive rate
+  (3.33% against 2.8%), and that lowers the largest possible lift. AUPRC
+  moves the other way: the reference GBM's 0.2041 and the retrained heads'
+  0.1846 sit either side of their 0.1908.
+
+**Differences from their setup** (fixed in advance).
+* Their input reaches up to 1 h after t; ours stops strictly before t.
+* Their labs are binned by draw time; ours by storage time.
+* Their test set is a random split of their cohort; ours is the cohort's
+  patients in our test split.
+* Their numbers are from a preprint and have no CIs.
+
+**Claims row 18: not supported.** Sentinel as shipped falls far below the
+preprint's results. Retrained on its label, it comes close on AUROC but does
+not exceed it.
+
+**Run facts.**
+* Agent outputs: 2 to 3 min per split, CPU. Shipped heads: 1 min.
+* Retrained heads: 44 min, CPU, 1 worker (about 12 GB).
+* Bridge and reference GBMs: 87 min, GPU.
+* Evaluation: 26 min (two bootstraps of 40 scores × 1,000 resamples on 16
+  workers).
+* Envelopes: 5 min (agents), 20 s (vitals_tcn) and 6 min (heads).
+* Aggregates are in `data/cache/t49_eval.json`, with gate reports and
+  envelopes in `data/cache/t49/`. All pass `assert_aggregate_only`.
 
 ## Reproduce
 
@@ -5656,4 +5867,15 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t47_stack.py eval --race-thresholds m
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t43_gbm_agent.py agent --device cuda
 CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t43_gbm_agent.py heads --workers 3
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t43_gbm_agent.py eval --workers 16
+
+# T49: Sadanandan 2026 (preprint). Envelopes and gates first (CPU, one thread);
+# the GBM agent predicts on the GPU. Aggregates in data/cache/t49_eval.json.
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py envelope
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py envelope-tcn
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py envelope-heads
+for s in test val train; do OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py agents --split $s; done
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py shipped
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py heads --workers 1
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py gbms --device cuda
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py eval --workers 16
 ```

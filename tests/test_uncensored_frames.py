@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from uncensored_frames import pick_rows, uncensored_frame
+from uncensored_frames import pick_rows, sample_frame, shared_positions, uncensored_frame
 
 FEATURES = ["heart_rate", "resp_rate", "spo2", "sbp", "temperature",
             "heart_rate_hrs_since", "gcs", "news2", "on_oxygen"]
@@ -91,3 +91,55 @@ def test_reconcile_takes_old_values_on_shared_bins_only():
     assert np.isnan(out.loc[shared & (out.hour == 2), "spo2"]).all()
     pd.testing.assert_frame_equal(out[~shared].reset_index(drop=True),
                                   new[~shared].reset_index(drop=True), check_dtype=False)
+
+
+def _samples(spec):
+    """``{stay: (first, last)}`` -> sample keys with a synthetic label."""
+    rows = [(s, h) for s, (a, b) in spec.items() for h in range(a, b + 1)]
+    df = pd.DataFrame(rows, columns=["stay_id", "hour"])
+    df["label"] = (df["hour"] % 3 == 0).astype(np.int8)
+    return df.sample(frac=1.0, random_state=0)          # any input order
+
+
+def test_sample_frame_keeps_the_sample_rows_and_attaches_their_columns():
+    frame = uncensored_frame(_raw({1010: np.nan, 1020: 18.0}))
+    out = sample_frame(frame, _samples({1010: (6, 12), 1020: (6, 9)}))
+    assert list(zip(out.stay_id, out.hour)) == [(1010, h) for h in range(6, 13)] + \
+        [(1020, h) for h in range(6, 10)]
+    assert (out["label"] == (out["hour"] % 3 == 0)).all()
+    ref = frame.set_index(["stay_id", "hour"]).loc[list(zip(out.stay_id, out.hour))]
+    assert np.allclose(out["heart_rate"].to_numpy(), ref["heart_rate"].to_numpy())
+
+
+def test_sample_frame_rows_equal_the_full_frame_rows():
+    # truncating a stay after its last sample hour changes no earlier row
+    raw = _raw({1010: np.nan})
+    full = uncensored_frame(raw)
+    cut = uncensored_frame(raw[raw.hour <= 12])
+    out = sample_frame(full, _samples({1010: (6, 12)}))
+    pd.testing.assert_frame_equal(out[FEATURES], cut[FEATURES].reset_index(drop=True))
+
+
+@pytest.mark.parametrize("spec", [{1010: (7, 12)}, {1010: (6, 8), 1020: (6, 6)}])
+def test_sample_frame_refuses_runs_that_skip_hours(spec):
+    frame = uncensored_frame(_raw({1010: np.nan, 1020: np.nan}))
+    smp = _samples(spec)
+    if 1020 in spec:
+        smp = pd.concat([smp, pd.DataFrame({"stay_id": [1010], "hour": [10], "label": [0]})])
+    with pytest.raises(ValueError):
+        sample_frame(frame, smp)
+
+
+def test_sample_frame_raises_for_keys_outside_the_frame():
+    frame = uncensored_frame(_raw({1010: np.nan}, last_hour=10))
+    with pytest.raises(KeyError):
+        sample_frame(frame, _samples({1010: (6, 14)}))
+
+
+def test_shared_positions():
+    a = pd.DataFrame({"stay_id": [1010, 1010, 1020, 1030], "hour": [6, 7, 6, 9]})
+    b = pd.DataFrame({"stay_id": [1030, 1010, 1040], "hour": [9, 7, 6]})
+    pa, pb = shared_positions(a, b)
+    assert pa.tolist() == [1, 3] and pb.tolist() == [1, 0]
+    with pytest.raises(ValueError):
+        shared_positions(pd.concat([a, a]), b)

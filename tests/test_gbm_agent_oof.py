@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from gbm_agent_oof import logit, oof_scores, patient_halves
+from gbm_agent_oof import held_out_fold, logit, oof_scores, patient_halves
 
 
 def _rows(n_patients=37, seed=0):
@@ -70,3 +70,12 @@ def test_logit_matches_the_shipped_agent_formula():
     r = np.array([0.0, 1e-9, 0.2, 0.5, 0.97, 1.0])
     c = np.clip(r, 1e-6, 1 - 1e-6)
     np.testing.assert_allclose(logit(r), np.log(c / (1 - c)))
+
+
+def test_held_out_fold_names_the_half_that_holds_each_patient():
+    pid = _rows(seed=5)
+    a, b = patient_halves(pid)
+    new = np.array([min(a), min(b), min(a), max(b)])
+    assert held_out_fold(new, pid).tolist() == [0, 1, 0, 1]
+    with pytest.raises(ValueError):
+        held_out_fold(np.array([min(a), 999]), pid)        # 999 not in training

@@ -55,3 +55,18 @@ def logit(p, eps=1e-6):
     shipped agent clips it."""
     q = np.clip(np.asarray(p, dtype=float), eps, 1 - eps)
     return np.log(q / (1 - q))
+
+
+def held_out_fold(patient_ids, train_patient_ids, seed=FOLD_SEED):
+    """For new training rows of patients in our training split: the index of
+    the half that holds each row's patient, so row i is scored by the fold
+    model that never saw that patient (fold k scores ``patient_halves(...)[k]``).
+    Raises for a patient outside the training split."""
+    halves = patient_halves(train_patient_ids, seed)
+    pid = np.asarray(patient_ids)
+    fold = np.full(len(pid), -1)
+    for k, held in enumerate(halves):
+        fold[np.isin(pid, list(held))] = k
+    if (fold < 0).any():
+        raise ValueError(f"{int((fold < 0).sum())} rows belong to patients outside the training split")
+    return fold

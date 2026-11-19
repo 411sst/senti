@@ -64,3 +64,44 @@ def reconcile(new_raw, old_raw, columns):
         col[shared] = src[pos[shared]]
         out[c] = col
     return out, int(shared.sum())
+
+
+def sample_frame(frame, samples):
+    """The rows of ``frame`` at the ``(stay_id, hour)`` keys of ``samples``,
+    sorted by stay and hour, with ``samples``' other columns attached.
+
+    Each stay's sample hours must be one run of consecutive hours starting at
+    the stay's first frame row. Then every row the models read before a
+    sample hour is in the result, and dropping the rows after a stay's last
+    sample hour cannot change any output (every input at t is from before t).
+    Raises otherwise.
+    """
+    smp = samples.sort_values(["stay_id", "hour"]).reset_index(drop=True)
+    pos = pick_rows(frame, smp)
+    first = frame.groupby("stay_id", sort=False)["hour"].min()
+    st = smp["stay_id"].to_numpy(dtype="int64")
+    hr = smp["hour"].to_numpy(dtype="int64")
+    new_stay = np.r_[True, st[1:] != st[:-1]]
+    starts_ok = np.array_equal(hr[new_stay], first.reindex(st[new_stay]).to_numpy(dtype="int64"))
+    steps_ok = bool((hr[1:][~new_stay[1:]] - hr[:-1][~new_stay[1:]] == 1).all())
+    if not (starts_ok and steps_ok):
+        raise ValueError("sample hours are not one consecutive run from each stay's first row")
+    out = frame.iloc[pos].reset_index(drop=True)
+    for c in smp.columns:
+        if c not in ("stay_id", "hour"):
+            out[c] = smp[c].to_numpy()
+    return out
+
+
+def shared_positions(keys_a, keys_b):
+    """``(pos_a, pos_b)``: positions of the ``(stay_id, hour)`` keys the two
+    key frames have in common, in ``keys_a`` order."""
+    def index(k):
+        return pd.MultiIndex.from_arrays([np.asarray(k["stay_id"], dtype="int64"),
+                                          np.asarray(k["hour"], dtype="int64")])
+    a, b = index(keys_a), index(keys_b)
+    if not a.is_unique or not b.is_unique:
+        raise ValueError("repeated (stay_id, hour) keys")
+    pos_b = b.get_indexer(a)
+    hit = np.flatnonzero(pos_b >= 0)
+    return hit, pos_b[hit]

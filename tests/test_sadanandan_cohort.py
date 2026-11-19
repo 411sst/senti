@@ -136,3 +136,13 @@ def test_code_samples_label_counts_dobutamine_like_any_vasopressor():
                             "start_h": [40.0]})
     out = code_samples(s, first_starts(therapy)).set_index("hour")["label"]
     assert out.loc[16:39].eq(1).all() and out.loc[6:15].eq(0).all() and out.loc[40:].eq(0).all()
+
+
+def test_label_parts_split_therapy_from_death_and_rebuild_the_label():
+    s = _frame([_stay(1010, los_h=60.0, hospital_expire_flag=1, death_h=50.0)])
+    therapy = pd.DataFrame({"stay_id": [1010], "kind": ["vent"], "start_h": [20.0]})
+    out = samples(s, first_starts(therapy)).set_index("hour")
+    assert out.loc[6:19, "label_t"].eq(1).all() and out.loc[20:48, "label_t"].eq(0).all()
+    assert out.loc[6:25, "label_d"].eq(0).all() and out.loc[26:48, "label_d"].eq(1).all()
+    assert (out["label"] == (out["label_t"] | out["label_d"])).all()
+    assert out.loc[20:25, "label"].eq(0).all()   # vent started, death still > 24 h away

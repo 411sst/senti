@@ -131,8 +131,10 @@ def samples(stays, starts, first_hour=FIRST_HOUR, last_hour=LAST_HOUR, ends=None
     Hours run from ``first_hour`` to ``min(last_hour, floor(los_h))``;
     ``last_hour=None`` runs to discharge; ``ends`` (one per stay, in ``stays``
     order) overrides the last hour. Columns: ``stay_id``, ``subject_id``,
-    ``hour``, ``label`` and ``started`` (vasopressors or ventilation already
-    started at or before the hour).
+    ``hour``, ``label``, its two parts ``label_t`` (a first vasopressor or
+    ventilation start in the next 24 h) and ``label_d`` (ICU death in the next
+    24 h), with ``label = label_t | label_d``, and ``started`` (vasopressors or
+    ventilation already started at or before the hour).
     """
     s = stays.set_index("stay_id")
     los = np.floor(s["los_h"].to_numpy(float)).astype(int)
@@ -155,7 +157,11 @@ def samples(stays, starts, first_hour=FIRST_HOUR, last_hour=LAST_HOUR, ends=None
     def within(t):
         return (t > h) & (t <= h + HORIZON_H)       # NaN compares False
 
-    out["label"] = (within(death) | within(vaso) | within(vent)).astype(np.int8)
+    t_part = within(vaso) | within(vent)
+    d_part = within(death)
+    out["label"] = (t_part | d_part).astype(np.int8)
+    out["label_t"] = t_part.astype(np.int8)
+    out["label_d"] = d_part.astype(np.int8)
     out["started"] = ((vaso <= h) | (vent <= h)).astype(np.int8)
     return out
 
