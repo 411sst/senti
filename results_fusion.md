@@ -5283,6 +5283,74 @@ which passes `assert_aggregate_only`.
   from stay-level resamples pooled over seeds, must be above zero.
 * **Claims row 17** is added only if T48 runs.
 
+### T48 results (run 2026-11-19, asked for by the authors after T47 and T49)
+
+**Setup.** Budget b is NEWS2's achieved V_freeze volume at nominal b, as
+the dated clarification in the shared rules says: 1.23%, 2.62% and 5.05% at
+1%, 2% and 5%. Test has 1,540 event stays and 6,835 quiet stays.
+* **Catch.** An event stay counts as caught when the rule alarms at or before
+  its event hour (T38's method).
+* **Hysteresis.** It gives the same first alarms as k = 1 (unit-tested), so on
+  catches and quiet-stay share it equals k = 1. Ties go to the simpler rule,
+  so it is never chosen. This was stated in the plan before the run.
+* **The CI.** 1,000 patient-clustered resamples of stays (the shared
+  resamples). The GBM's quiet-stay share and every model's catch at that
+  share are recomputed in each resample.
+
+**Verdict: FAIL.** No Sentinel variant catches more test event stays than
+the GBM at equal quiet-stay share at 2% and 5%. The rule allowed any one of
+four variants to pass, and none did.
+
+**Persistence never helps.** Every model chose plain k = 1 on V_freeze, at
+every seed and every budget, the GBM included. On test too, k = 2 and k = 3
+catch fewer stays at the same quiet-stay share, for every model.
+* At 2%: Sentinel catches 55.5% with k = 1, 48.0% with k = 2 and 43.5% with
+  k = 3.
+* The GBM catches 58.6%, 49.4% and 44.8%.
+
+| model (rule chosen at every seed: k = 1) | catch at 2% | Δ catch vs GBM at 2% [CI], seeds ahead | catch at 5% | Δ catch vs GBM at 5% [CI], seeds ahead |
+| --- | --- | --- | --- | --- |
+| shipped Sentinel | 55.5% | −3.1 pts [−4.7, −1.3], 0/10 | 67.6% | −2.9 pts [−4.4, −1.5], 0/10 |
+| T43 variant | 55.7% | −2.8 pts [−4.2, −1.3], 0/10 | 69.4% | −1.1 pts [−2.2, −0.1], 0/10 |
+| T47 LOGIT3 stack | 58.7% | +0.1 pts [−0.6, +0.9], 8/10 | 70.5% | +0.0 pts [−0.7, +0.7], 6/10 |
+| T47 CONSTR-1H stack | 58.3% | −0.3 pts [−1.4, +0.7], 4/10 | 70.0% | −0.5 pts [−1.5, +0.5], 2/10 |
+| all-features GBM | 58.6% [56.4, 60.9] | — | 70.5% [68.3, 72.6] | — |
+
+The catches are read at the GBM's test quiet-stay share: 6.8% of quiet stays
+at 2% and 13.2% at 5%.
+
+**At 1%** (quiet-stay share 3.0%):
+* Sentinel −4.6 pts [−6.6, −2.6];
+* T43 −3.5 pts [−5.4, −2.1];
+* LOGIT3 −0.1 pts [−1.0, +0.6];
+* CONSTR-1H −0.8 pts [−2.1, +0.1].
+
+The GBM catches 45.5%.
+
+**Hysteresis alarm-hours** (test hours in alarm at the 2% volume; the same
+first alarms, longer episodes):
+* Sentinel: 2.76% with k = 1, 3.98% with hysteresis;
+* GBM: 2.55% and 3.53%.
+
+**Reading.**
+* **Persistence costs catches.** Waiting for 2 or 3 consecutive hours above
+  threshold costs every model 7 to 15 points of catch at equal quiet-stay
+  share. Requiring hours above threshold to persist removes event stays
+  faster than quiet stays, so single hours above threshold carry signal.
+* **Persistence doesn't change the ranking.** Shipped Sentinel and the T43
+  variant catch 3 points fewer stays than the GBM at 2%, with CIs below zero.
+  The T47 stacks tie the GBM, with CIs spanning zero. That matches the
+  catch-at-the-GBM's-quiet-share diagnostic under T43 and T47. Its catches
+  are lower there (GBM 53.9% at 2%) because those runs used the nominal 2%
+  volume, against NEWS2's 2.62% here.
+
+**Claims row 17: not supported.** No persistence rule lets Sentinel or a
+Sentinel variant catch more stays than the GBM at the same quiet-stay share.
+
+**Run facts.** CPU only, 18 s, of which the bootstrap took 10 s on 16
+workers. Aggregates are in `data/cache/t48_persistence.json` and pass
+`assert_aggregate_only`.
+
 ## T49 — Sadanandan 2026 (preprint), MIMIC-IV, on their cohort (pre-registered)
 
 *Pre-registered 2026-11-19, before any test-split scoring.*
@@ -5878,4 +5946,7 @@ CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py sh
 CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py heads --workers 1
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py gbms --device cuda
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t49_score.py eval --workers 16
+
+# T48: alarm-persistence rules (reads T47's selection and T43's heads). CPU only.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t48_persistence.py --workers 16
 ```
