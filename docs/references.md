@@ -50,6 +50,21 @@ paper found whose label is our label.
 - **Differences from our cohort:** they require stays ≥ 24 h and sample hours
   6–48 only; we require ≥ 12 h and score the whole stay, censoring at the first
   event. Their prevalence is 2.8 %, ours 4.74 %.
+- *Re-checked 2026-11-19 against the v1 PDF for T49, with table numbers.*
+  Cohort counts: Section 3.1 and Table 3 (94,459 ICU stays identified → 74,822
+  stays, 61,437 patients). Samples and positives: Table 4 (5,720,904 samples,
+  160,395 positive, 2.8 %; test 823,641 / 23,273). Model results: Table 5 (test
+  AUROC column; Table 5 also lists a validation AUROC, e.g. 0.7914 for the
+  multimodal model). Operating point: Table 6 (threshold 0.47; precision 25.1 %,
+  recall 26.6 %, specificity 97.7 %; ECE 0.2129). Trained on six NVIDIA A100
+  80 GB GPUs (Section 2.6). Event definitions (Section 2.3): vasopressors by
+  `inputevents` itemids 221906, 221289, 221662, 221749, 222315; ventilation by
+  `procedureevents` itemids 224385 (intubation) and 225792 (invasive
+  ventilation); ICU death = hospital expiry flag with the death time inside the
+  ICU stay. **Version note:** Section 2.1 says 2008–2019, but 94,459 stays is
+  the MIMIC-IV v3.x ICU-stay count (v3.1: 94,458; v2.2: 73,181), so the cohort
+  was probably drawn from v3.x. The paper does not state a version.
+  Local copy: `~/code/paper-sources/sadanandan2026_arxiv_v1.pdf`.
 
 ## 2. Clinical-deployment anchor
 
@@ -133,6 +148,74 @@ Config read from `rvandewater/YAIB`,
   | Sepsis | 77.1 / 4.6 | **77.5 / 5.9** | 83.6 / 9.1 | 82.0 / 8.0 | 82.7 / 8.8 | 80.0 / 6.6 |
 - **Difference from ours:** none of these labels is our composite. This entry
   anchors the *method*, not the task.
+- *Re-checked 2026-11-19 for T46 against arXiv:2306.05109v4 (19 March 2024),
+  whose first page reads "Published as a conference paper at ICLR 2024" (the
+  OpenReview PDF is behind a browser check).* All numbers ×100, mean ± SD over
+  runs, not confidence intervals. **Table 3**, ICU mortality:
+  | model | AUMCdb | HiRID | **eICU** | **MIMIC-IV** |
+  |---|---|---|---|---|
+  | LR | 83.7±0.6 / 52.9±1.2 | 84.0±0.3 / 36.9±1.1 | 84.8±0.2 / 33.0±0.7 | 86.1±0.1 / 39.7±0.6 |
+  | LGBM | 84.5±0.5 / 53.7±1.2 | 84.4±0.3 / 40.6±0.8 | 85.7±0.2 / **36.0±0.6** | **87.7±0.2 / 44.2±0.7** |
+  | GRU | 83.9±0.3 / 53.8±0.7 | 84.8±0.2 / 39.4±0.4 | **86.0±0.1** / 35.6±0.1 | 87.6±0.1 / 42.8±0.3 |
+  | LSTM | 83.7±0.7 / 53.6±1.4 | 84.0±0.7 / 37.8±1.0 | 85.5±0.2 / 35.7±0.8 | 86.7±0.4 / 41.0±0.7 |
+  | TCN | 84.0±0.6 / 54.2±1.4 | 84.6±0.7 / 39.2±1.3 | 85.4±0.2 / 34.3±0.6 | 87.1±0.3 / 41.4±0.8 |
+  | TF | 84.1±0.2 / 54.4±1.1 | 84.9±0.7 / 39.3±1.5 | 85.9±0.2 / 34.7±0.8 | 86.9±0.3 / 42.2±0.3 |
+
+  Best published eICU mortality AUROC: GRU 86.0. **Table 14**, cohorts: MIMIC-IV
+  (listed as version **2.0**) 52,045 included stays, 3,779 died (7.3 %); eICU
+  v2.0 113,382 stays, 6,253 died (5.5 %). Section 4: mortality uses data from
+  hours 0–24; exclusions are age < 18, missing discharge time, < 6 h in the ICU,
+  measurements in < 4 time bins, a gap of > 12 consecutive hours without a
+  measurement, plus the task's own criteria. **Version note:** the paper lists
+  MIMIC-IV 2.0, but the public cohort code (`rvandewater/YAIB-cohorts`, commit
+  74ac699) pins `ricu` 0.6.0 (`prockenschaub/ricu-package@0969a52`), whose
+  MIMIC-IV source is `physionet.org/files/mimiciv/2.2`. T46 rebuilds with the
+  code as published, so on v2.2; its count check against 52,045 uses a 10 %
+  tolerance for that reason (agreed 2026-11-19). The README also warns that
+  later `ricu` fixes can make cohorts differ slightly from the paper's.
+  Local copy: `~/code/paper-sources/yaib_arxiv_2306.05109v4.pdf`.
+
+**Sheikhalishahi, S., Balaraman, V., Osmani, V.** *Benchmarking machine
+learning models on multi-centre eICU critical care dataset.* PLOS ONE 15(7):
+e0235424, 2 July 2020. DOI 10.1371/journal.pone.0235424 (peer-reviewed).
+Also arXiv:1910.00964: v1 2 Oct 2019, v2 6 May 2020, **v3 5 Aug 2021**.
+Read 2026-11-19. Code: `github.com/mostafaalishahi/eICU_Benchmark_updated`.
+No correction notice was found for the PLOS ONE article.
+
+*Used for:* T44 (decompensation) and T45 (in-hospital mortality) on eICU.
+
+- Cohort (both versions, PLOS ONE Fig 1 and Table 3): eICU v2.0, 200,859 ICU
+  stays → exclude age ≤ 18 or ≥ 89 and more than one ICU stay → 96,212 →
+  exclude ≤ 15 or ≥ 200 records, missing gender or discharge status → 73,718
+  stays, 4,564,844 records. Decompensation (LoS ≥ 24 h): **55,933 stays,
+  2,800,711 records**, about 6.5 % positive (3,664 patients). Mortality (LoS ≥
+  48 h): **30,680 stays, 1,164,966 records**. Evaluation: 5-fold
+  cross-validation within eICU.
+- **The two versions report different decompensation tasks.** PLOS ONE: a
+  bidirectional LSTM labels every record of the stay (many-to-many), so each
+  prediction can draw on later records of the same stay. arXiv v3: the past
+  12 h ("derivation window") predicts on a 6-hour rolling window, with 95 % CIs.
+- **PLOS ONE, Table 8** (decompensation, AUROC ×100 ± SD over folds / AUPRC):
+  LR 67.63±5.89 / 16.53; ANN 80.59±0.60 / 22.86; **BiLSTM (num + cat, EMB)
+  95.35±0.60 / 68.69**; BiLSTM cat only 86.82±0.70 / 36.34; BiLSTM num only
+  95.15±0.16 / 68.28.
+- **arXiv v3, Table 8** (decompensation, rolling window, 95 % CI): LR 78.99
+  (77.06–80.95) / 22.78; **ANN 83.57 (82.31–84.87) / 27.86 (24.95–30.78)**;
+  **BiLSTM 83.78 (81.86–85.73) / 30.79 (28.09–33.49)**.
+- **PLOS ONE, Table 5** (in-hospital mortality, AUROC ± SD / AUPRC): first
+  24 h — APACHE 77.30 / 41.23; LR 79.88±0.67 / 40.50; ANN 82.60±0.58 / 46.17;
+  **BiLSTM (EMB) 83.80±0.42 / 48.72**; BiLSTM (OHE) 82.78±0.32 / 46.34. First
+  48 h — LR 82.34±0.65 / 45.39; ANN 85.36±0.66 / 52.59; **BiLSTM (EMB)
+  86.63±0.66 / 55.20**; BiLSTM (OHE) 84.96±0.63 / 51.63.
+- **arXiv v3, Table 5** (mortality, 95 % CI): 24 h BiLSTM 83.70 (83.07–84.40)
+  / 48.47; 48 h BiLSTM 86.55 (85.65–87.52) / 54.98; APACHE 77.30 / 41.23.
+- **Which numbers the paper tests use (agreed 2026-11-19).** T45 uses PLOS ONE
+  Table 5 (the task is the same in both versions), with v3 alongside. T44 uses
+  arXiv v3's task and Table 8, labelled "arXiv v3, not peer-reviewed", with the
+  PLOS ONE Table 8 result reported beside it: a model that sees later records
+  of the stay is not comparable with a forward-only one.
+  Local copies: `~/code/paper-sources/sheikhalishahi2020_plosone.pdf`,
+  `sheikhalishahi_arxiv_1910.00964v{1,2,3}.pdf`.
 
 **Yèche, H., Kuznetsova, R., Zimmermann, M., Hüser, M., Lyu, X., Faltys, M.,
 Rätsch, G.** *HiRID-ICU-Benchmark — A Comprehensive Machine Learning Benchmark on
