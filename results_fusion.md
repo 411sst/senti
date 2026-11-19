@@ -4738,6 +4738,426 @@ alarmed on a window hour falls by similar amounts for both systems:
 Aggregates are in `data/cache/t42_feed_outage.json`, which passes
 `assert_aggregate_only`.
 
+## T43–T49 — shared rules (pre-registered)
+
+*Pre-registered 2026-11-19, before any test-split scoring for T43–T49. Each
+test's results are added below its section whichever way they come out.*
+
+These hold for every test from T43 to T49 unless a section says otherwise.
+* **Order.** Tests are scored one at a time: T47, T43, T49, T44, T45, T46
+  (T42 is done). T48 runs only if asked after T47. No test's design changes
+  after another test's result is seen; a new idea becomes a new T number.
+* **Status at pre-registration.** Phase 1 preparation is done for T43, T47
+  and T49. The T44, T45 and T46 cohorts are not yet rebuilt, because their
+  PhysioNet files are still downloading. Each of those tests keeps its count
+  check as a stop rule: a count outside its tolerance stops the test before
+  any scoring, and it is shown to the authors.
+* **Seeds.** Seeds 42 and 1–9 for anything trained. Sentinel seed i is paired
+  with the GBM fit at seed i (T31 refits on our cohort, or the new fit at
+  seed i).
+* **Confidence intervals.** 95% intervals from 1,000 patient-clustered
+  resamples, shared by every score in a comparison. A ten-seed arm's statistic
+  in a resample is the mean of its ten per-seed values. Paired differences are
+  taken within each resample, seed i against seed i, then averaged.
+* **Fitting.** Anything new is fit on MIMIC training data only, early-stopped
+  as its recipe says, calibrated on V_fit (isotonic, then the rank tiebreak),
+  and thresholded on V_freeze. Nothing is fit on eICU.
+* **Leakage.** Every input at hour t uses only data recorded strictly before t.
+  New builders are unit-tested. On MIMIC, no patient in our training or
+  validation split is ever scored.
+* **Published numbers** are copied with their table numbers into
+  `docs/references.md` and used as written there.
+* **Output.** Aggregates only, through `assert_aggregate_only`.
+
+### Common measures
+
+* **Lead over NEWS2 at budget b.** Each model and NEWS2 sit at their own
+  (1 − b) V_freeze quantile. The paired first-alarm race on test event stays
+  (`paper_operating_points.race`) gives each seed's median lead in hours. The
+  arm's lead is the mean of the ten per-seed medians.
+* **Share-first.** Among event stays where the two first alarms differ, the
+  share where the model alarms first. Its CI uses the shared resamples, with
+  the ten-seed mean taken in each resample.
+* **Timing pass**, where a test uses it: a lead of at least +1 h at 2%, and a
+  share-first CI lower bound above 50%.
+* **Catch sweep.** Share of test event stays caught at 0.5, 1, 2, 3, 5, 7.5
+  and 10%, with the realized test alarm rate beside each (as in
+  `paper_operating_points.sweep`).
+* **Catches at the GBM's quiet-stay share.** The T38 method: the model's best
+  catch while alarming on no more quiet stays than the GBM does at its
+  protocol threshold. This is a test-score diagnostic, reported without a
+  pass rule.
+
+## T43 — The all-features GBM as Sentinel's GBM agent (pre-registered)
+
+*Pre-registered 2026-11-19, before any test-split scoring.*
+
+**Question.** If Sentinel's GBM agent is the all-features GBM instead of
+FAIR+TRAJ, does Sentinel beat the all-features GBM on ranking?
+
+**The new GBM agent** (`scripts/t43_gbm_agent.py`, `src/gbm_agent_oof.py`,
+built in Phase 1).
+* T30's winning settings on all 262 columns: depth 6, no class weight, the
+  tuner's fixed settings, seed 42, GPU.
+* Training rows are scored out of fold over the shipped agent's two
+  patient-level halves. Validation and test rows use T30's seed-42 fit on all
+  of train.
+* Latent: the log-odds. Risk: isotonic calibration fit on V_fit.
+* **Stated difference.** The shipped agent fits its calibrator on all of
+  validation. T43 follows the paper-test rule and uses V_fit.
+
+**Arms.**
+
+| arm | what it is | seeds |
+| --- | --- | --- |
+| **new Sentinel** | both heads refit with `two_head.fit_head` on the bank: the new GBM agent plus the other seven shipped agents' cached emissions, unchanged | 42, 1–9 |
+| all-features GBM | standalone, T31 refits (`t31_seeds_tab.npz`) | 42, 1–9 |
+| GBM agent alone (secondary) | both heads refit on a one-agent bank, the new GBM agent only | 42, 1–9 |
+
+Each Sentinel arm's score is the shipped composite: each head calibrated on
+V_fit against its own label, given the rank tiebreak, and combined by noisy-OR.
+
+**Measures.** AUPRC and AUROC, with the pooled paired difference against the
+standalone GBM and the count of seeds where it is positive; the GBM agent's
+mean attention share on test rows, per head; the lead over NEWS2 and the
+first-alarm races against the GBM at 1%, 2% and 5%; the catch sweep; catches
+at the GBM's quiet-stay share.
+
+**Pass rules.**
+* **Ranking (primary):** pooled paired ΔAUPRC (new Sentinel − GBM) CI above
+  zero.
+* **Timing (secondary):** the timing pass at 2%.
+
+**Gates.** The run stops if any fails.
+1. `fit_head` on the published bank at seed 42 reproduces `two_head.npz`
+   (val and test), as T42's gate 4.
+2. The seven unchanged agents' emissions in the T43 bank are byte-identical to
+   the shipped ones.
+3. The new agent's validation and test log-odds equal T30's seed-42 scores.
+
+**Caveat, fixed in advance.** This agent reads every feed, so it weakens the
+one-agent-per-data-type design (T42's feed analysis). The write-up says so.
+
+**Claims row 12** is added either way.
+
+## T44 — Sheikhalishahi et al., eICU decompensation (pre-registered)
+
+*Pre-registered 2026-11-19, before the cohort rebuild and before any scoring.*
+
+**Question.** On Sheikhalishahi et al.'s own eICU decompensation cohort,
+labels and prediction schedule, does Sentinel's MIMIC-trained death head beat
+their published models with no training on eICU?
+
+**Cohort and labels.** Their public code (`mostafaalishahi/
+eICU_Benchmark_updated` at cd9b83d), run locally in Docker with the package
+versions its readme pins. The label and window logic are unchanged.
+* One change, input only: their reader loads all of `nurseCharting.csv` at
+  once, which needs about 40 GB of RAM. It is replaced by a chunked reader
+  that keeps the same five columns and applies their item filter to each
+  chunk (`nc_chunked_patch.py`). It was shown identical to the original on
+  synthetic files at three chunk sizes, in their pinned environment.
+* As their code defines it (agreed 2026-11-19), the label is unit death with
+  the record within 48 h of the stay's last record (their variable is named
+  `label_24`). Windows are 12 records (charted hour bins), stride 6, with at
+  least 6 records after the window. The label is the window's last row's.
+* **Count check, stop rule.** Stays 55,933, records 2,800,711, and share of
+  stays ending in death 6.5% (3,664). If any differs by more than 5%, the
+  test stops and the counts are shown.
+
+**Prediction time.** A window ending at the record in hour bin r is scored at
+hour r + 1, so Sentinel's inputs cover everything up to the end of that bin
+and nothing after.
+* If r + 1 lies beyond a stay's hourly grid, the stay's last grid hour is
+  used.
+* If it lies before hour 6, Sentinel's first scored hour, hour 6 is used.
+* Both counts are reported.
+
+**Sentinel's inputs.** The eICU feature build is extended to every stay and
+hour of their cohort (`data/cache/t4x/eicu_frame_uncensored.parquet`, gated
+in Phase 1). It includes stays Sentinel's cohort excludes and hours after
+ventilation or vasopressors start. Their stays shorter than 24 h are fetched
+with the same query before scoring. Agents use their existing missing-data
+behaviour, and no record is dropped.
+
+**Arms.**
+
+| arm | what it is | seeds |
+| --- | --- | --- |
+| **Sentinel** | the D head of the zero-shot seven-agent two-head (T22), as rebuilt in Phase 1 (`models/t4x/eicu7`, accepted 2026-11-19). It is calibrated on MIMIC as in T22 | 42, 1–9 |
+| reference (no pass rule) | T35's no-cadence all-features GBM recipe, retrained on MIMIC for death within 24 h on T39's rows and label (`tune_gbm` grid). eICU features come from `src/eicu_allfeat.py` | 42, 1–9 |
+
+**Measures.** AUROC and AUPRC with CIs (resampling eICU patients), the
+record-level positive rate, and lift. As description only, the same metrics
+on records before and after each patient's first ventilation or vasopressor
+start.
+
+**Published targets.**
+* arXiv v3 Table 8, labelled "arXiv v3, not peer-reviewed": BiLSTM AUROC
+  0.8378 (0.8186–0.8573), AUPRC 0.3079. This version's task matches their
+  public code.
+* Reported beside it: PLOS ONE Table 8, BiLSTM 0.9535. That model sees later
+  records in the stay.
+
+**Pass rule.** Sentinel's AUROC CI lower bound is above 0.8378. Whether it also
+clears 0.8573 is reported. AUPRC is compared only if our record-level positive
+rate is within 0.5 points of theirs.
+
+**Caveat, fixed in advance.** Their pipeline shifts glucose one record back
+(`shift(-1)`), which hands the model a future value. Sentinel's inputs do not
+do this. Their published numbers are reported as published.
+
+**Claims row 13** is added either way.
+
+## T45 — Sheikhalishahi et al., eICU in-hospital mortality (pre-registered)
+
+*Pre-registered 2026-11-19, before the cohort rebuild and before any scoring.*
+
+**Question.** Does a Sentinel mortality head, trained on MIMIC with the agents
+frozen, beat their published in-hospital mortality models on their eICU
+cohort?
+
+**Cohort.** Their code, as in T44: hospital discharge status present, length
+of stay at least 48 hours, label = in-hospital death at discharge, prediction
+from the first 24 hours and separately from the first 48.
+* **Count check, stop rule:** 30,680 stays, with a tolerance of 5% (as T44;
+  the spec gives none).
+
+**Sentinel's mortality heads.** One per window, at hour H = 24 and H = 48.
+* Architecture: the flagship's head (`two_head.fit_head`, a causal TCN over
+  the per-hour attention-fused agent bank).
+* Bank: the seven eICU-capable agents of the Phase 1 rebuild
+  (`models/t4x/eicu7`; no cadence, which eICU lacks).
+* Training stays: MIMIC stays of our training split that meet their rules.
+  That means age 18–89, the patient's only ICU stay, ICU stay of at least
+  48 h, and hospital discharge status present. Inputs come from the
+  uncensored MIMIC extract (hours 0–48, gated in Phase 1).
+* Rows: hours 6 to H of each stay. Every row carries the stay's label. The
+  score is the head's output at hour H, which uses data from before H only.
+* Early stopping on the same rows of validation-split stays, isotonic on
+  V_fit stays at hour H, ten seeds.
+* Applied zero-shot to their eICU cohort at hour H.
+
+**Reference (no pass rule).** A no-cadence all-features GBM trained on MIMIC
+for the same label and windows. It uses one row per training stay at hour H,
+T30's recipe, ten seeds, and eICU features from `src/eicu_allfeat.py`.
+
+**Measures.** AUROC and AUPRC with CIs at 24 h and 48 h.
+
+**Published targets.** PLOS ONE Table 5:
+* 24 h BiLSTM (EMB) 0.8380 / 0.4872;
+* 48 h BiLSTM (EMB) 0.8663 / 0.5520.
+
+arXiv v3 Table 5 (0.8370 and 0.8655; APACHE 0.7730 at 24 h) is reported beside
+them.
+
+**Pass rule, per window.** Sentinel's AUROC CI lower bound is above the PLOS
+ONE target for that window.
+
+**Claims row 14** is added either way.
+
+## T46 — YAIB, ICU mortality on MIMIC-IV and eICU (pre-registered)
+
+*Pre-registered 2026-11-19, before the cohort rebuild and before any scoring.*
+
+**Question.** Does a Sentinel mortality head beat YAIB's published models, and
+YAIB's own pipeline run on our split?
+
+**Cohorts.** YAIB's cohort code (`rvandewater/YAIB-cohorts` at 74ac699; ricu
+0.6.0, which reads MIMIC-IV v2.2 and eICU v2.0), run locally in Docker. It
+uses the first 24 hours of data, excludes stays under 30 hours, and labels
+ICU mortality.
+* **Count check, stop rule:** MIMIC-IV 52,045 stays and eICU 113,382 stays
+  (YAIB Table 14), within 10% (agreed 2026-11-19).
+* The paper lists MIMIC-IV v2.0. The pinned code reads v2.2, which is used.
+* YAIB's v2.2 stays are matched to our v3.1 data by stay id, with the intime
+  checked. The matched share is reported.
+
+**Sentinel's mortality heads.** Built as in T45, at H = 24, label = YAIB's ICU
+mortality.
+* **MIMIC-IV (primary): eight agents.** The `models/t42` rebuild's agents,
+  which is Sentinel's full system on MIMIC. Trained on YAIB-cohort stays of
+  our training-split patients, and scored only on YAIB-cohort stays of our
+  test-split patients.
+* **eICU: seven agents.** A head trained the same way on the seven
+  eICU-capable agents (`models/t4x/eicu7`), applied zero-shot. An eight-agent
+  head cannot run on eICU, because eICU has no cadence feed.
+
+**YAIB's own pipeline (comparator).**
+* Release v1.0.8, LightGBM and GRU, their default configurations and
+  hyperparameter tuning, on their own features.
+* Only the split is replaced: YAIB-cohort patients in our training,
+  validation and test splits. Ten seeds each.
+* Expected to run on the CPU, because their pinned PyTorch build does not
+  support this GPU.
+* "Lands near" YAIB's published numbers means within 0.01 AUROC of 0.877
+  (LightGBM) and 0.876 (GRU). A miss is reported and flagged; it does not
+  stop the comparison, which is on the same split.
+* "YAIB's best own pipeline" is the model with the higher ten-seed mean
+  V_freeze AUROC.
+
+**Reference (no pass rule).** A no-cadence all-features GBM trained on MIMIC
+for the same label at hour 24, as in T45.
+
+**Measures.** AUROC and AUPRC with CIs; the paired ΔAUROC against YAIB's best
+own pipeline on the MIMIC split.
+
+**Published targets.** YAIB Table 3:
+* MIMIC-IV: LightGBM 0.877 / 0.442; GRU 0.876 / 0.428.
+* eICU: GRU 0.860 (best AUROC) / 0.356; LightGBM 0.857 / 0.360.
+
+**Pass rules.**
+* **MIMIC-IV:** AUROC CI lower bound above 0.877, AND paired ΔAUROC against
+  YAIB's best own pipeline above zero.
+* **eICU:** AUROC CI lower bound above 0.860.
+
+**Claims row 15** is added either way.
+
+## T47 — Stacking Sentinel with the all-features GBM (pre-registered)
+
+*Pre-registered 2026-11-19, before any test-split scoring.*
+
+**Question.** Does a two-model stack of Sentinel and the all-features GBM beat
+the GBM on ranking (arm A), or keep the GBM's ranking with Sentinel's lead
+(arm B)?
+
+**Inputs per seed pair i.**
+* Sentinel's calibrated composite: the cached flagship, `two_head.npz`
+  `val_s*` / `test_s*`.
+* The GBM's calibrated score: T31's refit, `t31_seeds_tab.npz`
+  `val_allfeat_s*` / `test_allfeat_s*`.
+* Both enter as logits, clipped to [1e-6, 1 − 1e-6], because isotonic
+  calibration outputs exact 0s and 1s.
+
+**Arms.**
+* **A, ranking stack (T1 LOGIT3).** An unpenalised logistic regression on the
+  two logits plus an intercept, fitted on V_fit against `label_24h`.
+* **B, timing-constrained stack (T1 CONSTR-1H).**
+  s = w · logit(Sentinel) + (1 − w) · logit(GBM), with w from 0 to 1 in steps
+  of 0.1.
+  * w is chosen on V_freeze: the highest V_freeze AUPRC among weights whose
+    V_freeze median lead over NEWS2 at 2% is at least +1 h.
+  * If no weight qualifies, arm B fails. There is no fallback weight.
+
+Each stack is thresholded at its own V_freeze quantile, with no further
+calibration (ranking and thresholds do not depend on it).
+
+**Measures.** AUPRC and AUROC with the pooled paired difference against the
+GBM and the count of seeds where it is positive; lead over NEWS2 and races
+against the GBM at 1%, 2% and 5%; the catch sweep; catches at the GBM's
+quiet-stay share (secondary).
+
+**Pass rules.**
+* **Arm A:** pooled paired ΔAUPRC (stack − GBM) CI above zero.
+* **Arm B:** the ΔAUPRC CI includes zero or lies above it, AND the timing pass
+  at 2%.
+
+**Caveat, fixed in advance.** Both parents early-stop on validation data, and
+the stacks are fit or chosen on validation halves. The write-up says so.
+
+**Claims row 16** is added either way.
+
+## T48 — Alarm-persistence rules (optional; pre-registered, runs only if asked after T47)
+
+*Pre-registered 2026-11-19. It runs only if the authors ask after T47.*
+
+* **Rules.** Alarm only after k consecutive hours above threshold (k = 1, 2,
+  3), or hysteresis. Under hysteresis the alarm turns on at the model's
+  (1 − b) V_freeze quantile and stays on until risk falls below its (1 − 2b)
+  quantile.
+* **Models.** Sentinel, the all-features GBM, the T43 variant and the T47
+  stacks, with the same options for each.
+* **Choice.** The GBM's quiet-stay share at budget b is fixed by its plain
+  k = 1 rule. Each model picks, on V_freeze, the rule with the most catches at
+  that quiet-stay share.
+* **Pass rule.** Sentinel or a Sentinel variant catches more test event stays
+  than the GBM at equal quiet-stay share at 2% and 5%. The difference's CI,
+  from stay-level resamples pooled over seeds, must be above zero.
+* **Claims row 17** is added only if T48 runs.
+
+## T49 — Sadanandan 2026 (preprint), MIMIC-IV, on their cohort (pre-registered)
+
+*Pre-registered 2026-11-19, before any test-split scoring.*
+
+**Question.** On the cohort, label and samples of the only published model for
+this exact outcome (Sadanandan 2026, arXiv 2603.14719v1, a preprint), does
+Sentinel exceed their results?
+
+**Cohort, label and samples.** Their public code's rules
+(`thedatasense/Patient_Early_Deterioration_Risk_Prediction` at 785d8d7;
+agreed 2026-11-19), rebuilt in `src/sadanandan_cohort.py` with unit tests.
+* **Stays:** ICU stays of at least 24 h, anchor age 18 or over, no ICU death
+  within 6 h, and admission and discharge times present. There is no
+  vitals or labs filter, and no year restriction.
+* **Samples:** one per hour from hour 6 to int(LoS) − 24.
+* **Label:** ICU death (the hospital death flag with the death time inside the
+  ICU stay), or a first vasopressor start (dobutamine included, as their
+  code), or a first ventilation start, within the next 24 h. A therapy already
+  started does not count.
+* **Counts (checked in Phase 1):**
+  * 74,822 stays and 5,720,904 samples, both exact;
+  * 158,460 positives (2.77%) against their 160,395 (−1.2%);
+  * 54,545 patients against their reported 61,437. The stays and samples
+    match theirs exactly, and those 74,822 stays belong to 54,545 patients,
+    so 61,437 is taken to be a reporting error.
+* **Scored rows:** cohort patients in our test split only. That is 548,301
+  hours from 4,614 patients, with 18,259 positive (3.33%; their test set is
+  823,641 hours at 2.8%). Lift adjusts for the prevalence difference.
+
+**Arms.**
+
+| arm | what it is | seeds |
+| --- | --- | --- |
+| **Sentinel as shipped (primary)** | the `models/t42` rebuild (eight agents, both heads; T42 gate: 0.3101 against the published 0.3087). Its inputs are rebuilt on the all-hours MIMIC extract (gated in Phase 1), including hours after a therapy started. The score is the shipped composite | 42, 1–9 |
+| Sentinel, retrained heads (secondary) | the agents frozen; two heads refit with `fit_head` on their label's two parts. T is a first vasopressor or ventilation start within 24 h; D is ICU death within 24 h. They are trained on their samples from our training split (2,583,857 hours), early-stopped on our validation split's samples, and combined as shipped (isotonic on V_fit, noisy-OR). The GBM agent's training rows are out of fold through the shipped folds | 42, 1–9 |
+| **bridge** (comparability gate) | our XGBoost rebuild of their baseline. It uses 132 features: for each of their 26 structured channels, the last value in the 48 h before t, its age in hours, and the window's mean, minimum and maximum; plus age and sex (`src/t49_bridge.py`). Inputs are strictly before t, and labs count from the time the result was stored. It is trained with T30's `tune_gbm` grid unchanged on the same rows as the retrained heads | 42, 1–9 |
+| reference (no pass rule) | the all-features GBM (262 columns, T30 recipe), retrained on their label on the same rows | 42, 1–9 |
+
+Their paper gives no XGBoost settings beyond "summary statistics" of the
+window, and their repository has no XGBoost code, so the bridge's features
+and recipe are ours.
+
+**Measures**, per arm.
+* AUROC, AUPRC, positive rate and lift (AUPRC ÷ positive rate, per resample).
+* Recall and precision at 97.7% specificity:
+  * The threshold is set on V_freeze, with the realized test specificity
+    reported.
+  * As description, it is also set on test, to mirror their Table 6.
+* **Sensitivity analysis:** the same metrics without the hours where a
+  vasopressor or ventilation had already started at or before t. The spec's
+  "three therapies" is read as their label's two therapies, death being an
+  outcome rather than a therapy.
+
+**Published targets** (arXiv v1, Tables 5 and 6; no CIs reported).
+* Multimodal: AUROC 0.7857, AUPRC 0.1908 at 2.8% (lift 6.81).
+* Structured-only: 0.7603 / 0.1371.
+* XGBoost: 0.7486 / 0.1123.
+* Operating point: recall 26.6%, precision 25.1%, specificity 97.7%.
+
+**Comparability rule.** Claim nothing unless the bridge's ten-seed mean test
+AUROC is within 0.02 of 0.7486, that is from 0.7286 to 0.7686. Outside that,
+every number is still reported, and claims row 18 says "not comparable".
+
+**Pass rule (primary arm, if comparable).** AUROC CI lower bound above 0.7857
+AND lift CI lower bound above 6.81. Recall at 97.7% specificity against their
+26.6% is secondary.
+
+**Gates.** The run stops if any fails.
+1. On (stay, hour) rows that our test cohort also has, every agent output and
+   head score of the shipped arm equals T42's intact reference exactly.
+2. The retrained heads' composite label equals their label on every training
+   and validation row.
+
+**Differences from their setup, fixed in advance.**
+* Their model's input includes the hour bin of the prediction time, up to
+  1 h after t. Ours stops strictly before t.
+* Their labs are binned by draw time; ours by the time the result was stored.
+* Their test set is a random split of their cohort; ours is the cohort's
+  patients in our test split.
+
+**Claims row 18** is added either way: "Sentinel exceeds the published results
+of the only model for this exact outcome (Sadanandan 2026, preprint)". The
+word "preprint" stays in the claim.
+
 ## Reproduce
 
 ```bash
