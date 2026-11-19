@@ -4854,6 +4854,108 @@ one-agent-per-data-type design (T42's feed analysis). The write-up says so.
 
 **Claims row 12** is added either way.
 
+### T43 results (run 2026-11-19)
+
+Run with the NEWS2-matched lead protocol (the dated clarification in the
+shared rules, made before scoring). Test split: 361,229 hours, 17,140
+positive, 6,335 patients.
+
+**Gates passed.**
+1. The head code on the published bank at seed 42 reproduces `two_head.npz`
+   exactly (val and test).
+2. The seven unchanged agents are byte-identical to the shipped ones.
+3. The new agent's validation and test log-odds equal T30's seed-42 scores.
+
+**Verdict: ranking FAIL, timing FAIL.**
+* **Ranking.** New Sentinel is below the all-features GBM on AUPRC, with the
+  pooled CI below zero, at all ten seeds.
+* **Timing.** Its lead over NEWS2 at 2% is +0.90 h, under the +1 h floor. The
+  share-first CI is clear of 50%.
+
+| arm | AUPRC [CI] | ΔAUPRC vs GBM [CI], seeds > 0 | AUROC | ΔAUROC vs GBM [CI], seeds > 0 | lead over NEWS2 at 2% | share-first at 2% [CI] |
+| --- | --- | --- | --- | --- | --- | --- |
+| **new Sentinel** (all-features GBM agent) | 0.3192 [0.2955, 0.3421] | **−0.0090 [−0.0175, −0.0012], 0/10** | 0.8328 | −0.0046 [−0.0072, −0.0021], 0/10 | **+0.90 h** (8 of 10 seeds ≥ +1 h) | 0.676 [0.636, 0.719] |
+| heads on the GBM agent alone (secondary) | 0.3198 [0.2979, 0.3440] | −0.0085 [−0.0134, −0.0039], 0/10 | 0.8342 | −0.0033 [−0.0052, −0.0013], 0/10 | +0.25 h | 0.589 [0.540, 0.640] |
+| shipped Sentinel (reference) | 0.3087 [0.2858, 0.3315] | −0.0195 [−0.0298, −0.0102], 0/10 | 0.8225 | −0.0149 [−0.0198, −0.0100], 0/10 | +0.95 h | 0.685 [0.645, 0.726] |
+| all-features GBM (T31 refits) | 0.3282 [0.3055, 0.3530] | — | 0.8374 | — | 0 h | 0.502 [0.456, 0.548] |
+
+Lead is the ten-seed mean of per-seed median leads. New Sentinel's per-seed
+medians at 2% are 1, 1, 1, 0, 0, 1, 2, 1, 1, 1 h.
+
+**New against shipped Sentinel.**
+* AUPRC: +0.0105 [+0.0064, +0.0146], 10/10 seeds.
+* AUROC: +0.0103 [+0.0072, +0.0134], 10/10 seeds.
+
+**Attention.** The GBM agent's mean attention share on test rows:
+* T head: 0.41 (seeds 0.27 to 0.54);
+* D head: 0.29 (0.22 to 0.37).
+
+An even split over eight agents would give 0.125.
+
+**Other budgets and races.**
+* **Lead over NEWS2 at 1% / 5%.**
+  * New Sentinel: 0 / +0.70 h; share-first 0.556 [0.499, 0.615] / 0.716.
+  * GBM agent alone: +0.10 / +0.40 h.
+  * Shipped: +0.10 / +0.80 h.
+* **Race against the GBM at 2%.** The median is 0 h for every arm. Among
+  stays where the first alarms differ, the share where each arm alarms first:
+  * new Sentinel: 71.9% [68.6, 75.2];
+  * shipped: 66.8% [63.2, 70.4];
+  * GBM agent alone: 52.9% [49.0, 57.0].
+
+  New Sentinel's share is 61.4% at 1% and 71.8% at 5%, with both CIs above
+  50%.
+* **Catch at 2%** (sweep thresholds; quiet stays alarmed in brackets):
+  * new 58.3% (7.7%);
+  * GBM agent alone 54.1% (6.1%);
+  * shipped 58.6% (8.0%);
+  * GBM 53.9% (5.1%).
+* **Catch at the GBM's quiet-stay share at 2%** (test-score diagnostic):
+  * new 50.4% against the GBM's 53.9% (0 of 10 seeds ahead);
+  * GBM agent alone 51.5% (0 of 10);
+  * shipped 49.9% (0 of 10).
+
+  New Sentinel is behind up to 5%, level at 7.5%, and slightly ahead at 10%
+  (83.3% against 83.1%, 7 of 10 seeds).
+
+**Reading.**
+* **The swap helps Sentinel but does not beat the GBM.** The stronger agent
+  lifts Sentinel by about +0.010 on both AUPRC and AUROC at every seed. That
+  halves the gap to the GBM but does not close it.
+* **The heads cost ranking.** Heads reading only the GBM agent score 0.0085
+  AUPRC below the GBM they read, with the CI below zero.
+* **The other seven agents add timing, not ranking.**
+  * Ranking: the full bank ties the one-agent bank (0.3192 against 0.3198).
+  * Lead over NEWS2 at 2%: +0.90 h against +0.25 h.
+  * Share alarming first against the GBM: 72% against 53%.
+* **Possible causes of the head cost (not tested here).**
+  * The heads are trained on out-of-fold training scores but read full-fit
+    scores at validation and test.
+  * The two-part label and its noisy-OR may also lose ranking.
+  * T47's LOGIT3 stack, which skips the heads and combines the two scores
+    directly, did beat the GBM.
+* **The timing rule fails narrowly, as the shipped model also would.**
+  Shipped Sentinel scores +0.95 h on the same measure. The rule takes the
+  mean of whole-hour per-seed medians. Here 8 of 10 seeds reach +1 h, and
+  two seeds give 0 h.
+
+**Caveats.**
+* The new agent reads every feed, which weakens the one-agent-per-data-type
+  design (T42's feed analysis).
+* The agent's calibrator is fit on V_fit, where the shipped agent's uses all
+  of validation (the stated difference).
+* Its validation and test rows come from T30's single seed-42 fit. The GBM
+  arm is T31's ten refits.
+
+**Run facts.**
+* Heads: 21 fits, CPU only, 3 workers, 19 min. A first launch with 4
+  workers ran out of memory headroom (about 7 GB per worker). It was stopped
+  before any fit finished and restarted with 3.
+* Evaluation: 12 min, of which the bootstrap (40 scores × 1,000 resamples,
+  16 workers) took 11 min.
+* Aggregates are in `data/cache/t43_eval.json` and pass
+  `assert_aggregate_only`.
+
 ## T44 — Sheikhalishahi et al., eICU decompensation (pre-registered)
 
 *Pre-registered 2026-11-19, before the cohort rebuild and before any scoring.*
@@ -5548,4 +5650,10 @@ OMP_NUM_THREADS=1 .venv/bin/python scripts/t42_feed_outage.py --stage eval --wor
 # validation only; eval scores test. Aggregates in data/cache/t47_stack.json.
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t47_stack.py select --race-thresholds matched
 OMP_NUM_THREADS=1 .venv/bin/python scripts/t47_stack.py eval --race-thresholds matched --workers 16
+
+# T43: the all-features GBM as Sentinel's GBM agent. The agent stage (GPU) was
+# run in Phase 1; heads are CPU only. Aggregates in data/cache/t43_eval.json.
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t43_gbm_agent.py agent --device cuda
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 .venv/bin/python scripts/t43_gbm_agent.py heads --workers 3
+OMP_NUM_THREADS=1 .venv/bin/python scripts/t43_gbm_agent.py eval --workers 16
 ```
